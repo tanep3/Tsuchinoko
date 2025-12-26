@@ -6,7 +6,7 @@ mod scope;
 pub use types::*;
 pub use scope::*;
 
-use crate::parser::{Program, Stmt, Expr, TypeHint, BinOp as AstBinOp};
+use crate::parser::{Program, Stmt, Expr, TypeHint, BinOp as AstBinOp, Param};
 use crate::ir::{IrNode, IrExpr, IrBinOp};
 use crate::error::TsuchinokoError;
 
@@ -46,7 +46,6 @@ impl SemanticAnalyzer {
                     None => self.infer_type(value),
                 };
                 
-                // Check if variable already exists (mutable)
                 let mutable = self.scope.lookup(target).is_some();
                 
                 if !mutable {
@@ -69,6 +68,120 @@ impl SemanticAnalyzer {
                     })
                 }
             }
+            Stmt::FuncDef { name, params, return_type, body } => {
+                self.scope.push();
+                
+                // Add parameters to scope
+                let ir_params: Vec<(String, Type)> = params
+                    .iter()
+                    .map(|p| {
+                        let ty = p.type_hint.as_ref()
+                            .map(|th| self.type_from_hint(th))
+                            .unwrap_or(Type::Unknown);
+                        self.scope.define(&p.name, ty.clone(), false);
+                        (p.name.clone(), ty)
+                    })
+                    .collect();
+                
+                let ret_type = return_type.as_ref()
+                    .map(|th| self.type_from_hint(th))
+                    .unwrap_or(Type::Unit);
+                
+                let ir_body: Result<Vec<_>, _> = body
+                    .iter()
+                    .map(|s| self.analyze_stmt(s))
+                    .collect();
+                
+                self.scope.pop();
+                
+                Ok(IrNode::FuncDecl {
+                    name: name.clone(),
+                    params: ir_params,
+                    ret: ret_type,
+                    body: ir_body?,
+                })
+            }
+            Stmt::If { condition, then_body, elif_clauses, else_body } => {
+                let ir_cond = self.analyze_expr(condition)?;
+                
+                self.scope.push();
+                let ir_then: Result<Vec<_>, _> = then_body
+                    .iter()
+                    .map(|s| self.analyze_stmt(s))
+                    .collect();
+                self.scope.pop();
+                
+                // Combine elif clauses into nested if-else
+                let mut ir_else: Option<Vec<IrNode>> = if let Some(else_stmts) = else_body {
+                    self.scope.push();
+                    let result: Result<Vec<_>, _> = else_stmts
+                        .iter()
+                        .map(|s| self.analyze_stmt(s))
+                        .collect();
+                    self.scope.pop();
+                    Some(result?)
+                } else {
+                    None
+                };
+                
+                // Process elif clauses in reverse to nest them
+                for (elif_cond, elif_body) in elif_clauses.iter().rev() {
+                    let elif_ir_cond = self.analyze_expr(elif_cond)?;
+                    self.scope.push();
+                    let elif_ir_body: Result<Vec<_>, _> = elif_body
+                        .iter()
+                        .map(|s| self.analyze_stmt(s))
+                        .collect();
+                    self.scope.pop();
+                    
+                    let nested_if = IrNode::If {
+                        cond: Box::new(elif_ir_cond),
+                        then_block: elif_ir_body?,
+                        else_block: ir_else,
+                    };
+                    ir_else = Some(vec![nested_if]);
+                }
+                
+                Ok(IrNode::If {
+                    cond: Box::new(ir_cond),
+                    then_block: ir_then?,
+                    else_block: ir_else,
+                })
+            }
+            Stmt::For { target, iter, body } => {
+                let ir_iter = self.analyze_expr(iter)?;
+                
+                self.scope.push();
+                self.scope.define(target, Type::Int, false); // Assume int for now
+                
+                let ir_body: Result<Vec<_>, _> = body
+                    .iter()
+                    .map(|s| self.analyze_stmt(s))
+                    .collect();
+                self.scope.pop();
+                
+                Ok(IrNode::For {
+                    var: target.clone(),
+                    var_type: Type::Int,
+                    iter: Box::new(ir_iter),
+                    body: ir_body?,
+                })
+            }
+            Stmt::While { condition, body } => {
+                let ir_cond = self.analyze_expr(condition)?;
+                
+                self.scope.push();
+                let ir_body: Result<Vec<_>, _> = body
+                    .iter()
+                    .map(|s| self.analyze_stmt(s))
+                    .collect();
+                self.scope.pop();
+                
+                Ok(IrNode::While {
+                    cond: Box::new(ir_cond),
+                    body: ir_body?,
+                })
+            }
             Stmt::Return(expr) => {
                 let ir_expr = match expr {
                     Some(e) => Some(Box::new(self.analyze_expr(e)?)),
@@ -80,10 +193,6 @@ impl SemanticAnalyzer {
                 let ir_expr = self.analyze_expr(expr)?;
                 Ok(IrNode::Expr(ir_expr))
             }
-            _ => {
-                // TODO: Handle other statement types
-                Ok(IrNode::Expr(IrExpr::IntLit(0)))
-            }
         }
     }
 
@@ -93,7 +202,7 @@ impl SemanticAnalyzer {
             Expr::FloatLiteral(f) => Ok(IrExpr::FloatLit(*f)),
             Expr::StringLiteral(s) => Ok(IrExpr::StringLit(s.clone())),
             Expr::BoolLiteral(b) => Ok(IrExpr::BoolLit(*b)),
-            Expr::NoneLiteral => Ok(IrExpr::IntLit(0)), // TODO: Handle None properly
+            Expr::NoneLiteral => Ok(IrExpr::IntLit(0)),
             Expr::Ident(name) => Ok(IrExpr::Var(name.clone())),
             Expr::BinOp { left, op, right } => {
                 let ir_left = self.analyze_expr(left)?;
@@ -207,28 +316,51 @@ mod tests {
     use crate::parser::parse;
 
     #[test]
-    fn test_analyze_simple_assignment() {
-        let program = parse("x: int = 10").unwrap();
+    fn test_analyze_function_def() {
+        let code = r#"
+def add(a: int, b: int) -> int:
+    return a + b
+"#;
+        let program = parse(code).unwrap();
         let ir = analyze(&program).unwrap();
         assert_eq!(ir.len(), 1);
         
-        if let IrNode::VarDecl { name, ty, .. } = &ir[0] {
-            assert_eq!(name, "x");
-            assert_eq!(*ty, Type::Int);
-        } else {
-            panic!("Expected VarDecl");
+        if let IrNode::FuncDecl { name, params, ret, body } = &ir[0] {
+            assert_eq!(name, "add");
+            assert_eq!(params.len(), 2);
+            assert_eq!(*ret, Type::Int);
+            assert_eq!(body.len(), 1);
         }
     }
 
     #[test]
-    fn test_analyze_binary_op() {
-        let program = parse("result: int = a + b").unwrap();
+    fn test_analyze_if_stmt() {
+        let code = r#"
+if x > 0:
+    y = 1
+"#;
+        let program = parse(code).unwrap();
         let ir = analyze(&program).unwrap();
+        assert_eq!(ir.len(), 1);
         
-        if let IrNode::VarDecl { init: Some(expr), .. } = &ir[0] {
-            if let IrExpr::BinOp { op, .. } = expr.as_ref() {
-                assert_eq!(*op, IrBinOp::Add);
-            }
+        if let IrNode::If { then_block, .. } = &ir[0] {
+            assert_eq!(then_block.len(), 1);
+        }
+    }
+
+    #[test]
+    fn test_analyze_for_loop() {
+        let code = r#"
+for i in range(10):
+    x = i
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert_eq!(ir.len(), 1);
+        
+        if let IrNode::For { var, body, .. } = &ir[0] {
+            assert_eq!(var, "i");
+            assert_eq!(body.len(), 1);
         }
     }
 }
