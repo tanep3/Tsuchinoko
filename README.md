@@ -36,10 +36,10 @@ Benchmarks include data generation (LCG) and sorting time.
 
 | Algorithm | N | Python | Tsuchinoko (Rust) | Speedup |
 |-----------|---|--------|-------------------|---------|
-| **Bubble Sort** | 30,000 | 50.313s | **0.436s** | **~115x** 🚀 |
-| **Radix Sort** | 10,000,000 | 9.480s | **0.402s** | **~24x** 🚀 |
+| **Bubble Sort** | 10,000 | 5.050s | **0.040s** | **~125x** 🚀 |
+| **Radix Sort** | 10,000,000 | 9.711s | **0.311s** | **~31x** 🚀 |
 
-*Measured on local environment (Linux x86_64).*
+*Measured using `hyperfine` on local environment (Linux x86_64).*
 
 ## Installation
 
