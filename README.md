@@ -12,13 +12,22 @@
 Tsuchinoko is a transpiler that converts type-hinted Python code to Rust.
 Write logic in Python's readable syntax and gain Rust's safety and performance.
 
+## Design Philosophy
+
+Tsuchinoko is **not** a general-purpose Python compiler. It is designed to:
+
+- **Preserve human-readable logic**: The generated Rust code should be readable and maintainable.
+- **Convert imperative Python into structural Rust**: Maps Python control flow directly to Rust equivalents.
+- **Prefer borrowing over ownership**: Automatically uses references (`&[T]`, `&str`) where possible to avoid unnecessary allocations.
+
 ## Features
 
-- ✅ **Type hints**: `int`, `str`, `list[int]`, `tuple[int, str]`, etc.
+- ✅ **Type hints**: `int`, `str`, `list[int]`, `tuple[int, str]`, `dict[str, int]`, `Optional[int]`
 - ✅ **Slice types**: Generates `&[T]` instead of `&Vec<T>` (idiomatic Rust)
 - ✅ **Ownership inference**: Automatic reference/ownership decision
 - ✅ **Minimal mut**: Only uses `mut` when reassignment is detected
 - ✅ **snake_case conversion**: `getOrder` → `get_order` automatic
+- ✅ **Rust Optimization**: Maps `dict` to `HashMap`, handles `None` as `Option::None`
 
 ## Installation
 
@@ -95,6 +104,29 @@ fn bubble_sort(lists: &[i64]) -> (Vec<i64>, i64) {
 | `x ** 2` | `x.pow(2)` | ✅ |
 | `x.append(y)` | `x.push(y)` | ✅ |
 | `x.extend(y)` | `x.extend(y)` | ✅ |
+| `dict[k, v]` | `HashMap<K, V>` | ✅ |
+| `x in d` | `d.contains_key(&x)` | ✅ |
+| `arr[-1]` | `arr[arr.len()-1]` | ✅ |
+| `Optional[T]` | `Option<T>` | ✅ |
+
+## Limitations / Unsupported Features
+
+Tsuchinoko intentionally does **not** support the full Python spec.
+
+- ❌ **Classes & OOP**: No class support (STRUCT-based design is planned).
+- ❌ **Exceptions**: No `try-except` (Rust `Result` mapping is planned).
+- ❌ **Dynamic Typing**: All variables must have type hints.
+- ❌ **Async/Await**: Not supported.
+- ❌ **Standard Library**: Most Python standard libraries are not available.
+- ❌ **Generators/Yield**: Not supported.
+- ❌ **List Comprehensions**: Only basic forms provided (no nested loops/conditionals).
+- ❌ **Global Variables**: Global mutable state is discouraged/unsupported.
+
+## Future Roadmap
+
+- [ ] **Benchmarks**: Performance comparison between Python, Tsuchinoko-Rust, and handwritten Rust.
+- [ ] **Structs**: Mapping Python classes to Rust structs (Data Classes).
+- [ ] **Error Handling**: `try-except` mapping to `Result`.
 
 ## Documentation
 

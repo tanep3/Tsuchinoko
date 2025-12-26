@@ -12,13 +12,22 @@
 TsuchinokoはPythonの型ヒント付きコードをRustに変換するトランスパイラです。
 Pythonの読みやすい構文でロジックを書き、Rustの安全性とパフォーマンスを得ることができます。
 
+## 設計理念 (Design Philosophy)
+
+Tsuchinokoは汎用的なPythonコンパイラではありません。以下の理念に基づいて設計されています：
+
+- **人間が読めるロジックの維持**: 生成されたRustコードは可読性が高く、保守可能であることを目指します。
+- **命令型Pythonから構造的Rustへの変換**: Pythonの制御フローをRustの等価な構造に直接マッピングします。
+- **所有権よりも借用を優先**: 不要な割り当てを避けるため、可能な限り参照 (`&[T]`, `&str`) を自動的に使用します。
+
 ## 特徴
 
-- ✅ **型ヒント活用**: `int`, `str`, `list[int]`, `tuple[int, str]` など
+- ✅ **型ヒント活用**: `int`, `str`, `list[int]`, `tuple[int, str]`, `dict[str, int]`, `Optional[int]`
 - ✅ **スライス型出力**: `&Vec<T>` ではなく `&[T]` を生成（Rustイディオム準拠）
 - ✅ **所有権自動推論**: 参照渡し/所有渡しを自動判定
 - ✅ **mut自動最小化**: 再代入がない変数は `mut` なしで宣言
 - ✅ **snake_case変換**: `getOrder` → `get_order` 自動変換
+- ✅ **Rust最適化**: `dict` → `HashMap` 変換, `None` → `Option::None` マッピング
 
 ## インストール
 
@@ -95,6 +104,29 @@ fn bubble_sort(lists: &[i64]) -> (Vec<i64>, i64) {
 | `x ** 2` | `x.pow(2)` | ✅ |
 | `x.append(y)` | `x.push(y)` | ✅ |
 | `x.extend(y)` | `x.extend(y)` | ✅ |
+| `dict[k, v]` | `HashMap<K, V>` | ✅ |
+| `x in d` | `d.contains_key(&x)` | ✅ |
+| `arr[-1]` | `arr[arr.len()-1]` | ✅ |
+| `Optional[T]` | `Option<T>` | ✅ |
+
+## 制限事項・未サポート機能 (Limitations)
+
+Tsuchinokoは意図的にフルセットのPython仕様をサポートしていません。
+
+- ❌ **クラス & OOP**: クラスはサポートされていません（構造体ベースの設計を計画中）。
+- ❌ **例外処理**: `try-except` は未サポート（Rustの `Result` へのマッピングを計画中）。
+- ❌ **動的型付け**: すべての変数に型ヒントが必要です。
+- ❌ **Async/Await**: 未対応です。
+- ❌ **標準ライブラリ**: ほとんどのPython標準ライブラリは利用できません。
+- ❌ **ジェネレータ/Yield**: 未対応です。
+- ❌ **リスト内包表記**: 基本的な形式のみサポート（ネストや条件付きは制限あり）。
+- ❌ **グローバル変数**: ミュータブルなグローバルステートは非推奨/未対応です。
+
+## 今後のロードマップ (Roadmap)
+
+- [ ] **ベンチマーク**: Python, Tsuchinoko-Rust, 手書きRustのパフォーマンス比較。
+- [ ] **構造体 (Structs)**: PythonクラスのRust構造体（Data Classes）へのマッピング。
+- [ ] **エラー処理**: `try-except` から `Result` への変換。
 
 ## ドキュメント
 
