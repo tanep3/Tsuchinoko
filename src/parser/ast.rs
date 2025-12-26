@@ -53,6 +53,13 @@ pub enum Expr {
     },
     /// Dict literal
     Dict(Vec<(Expr, Expr)>),
+    /// f-string literal f"..."
+    FString {
+        /// Static parts of the f-string
+        parts: Vec<String>,
+        /// Expressions to interpolate
+        values: Vec<Expr>,
+    },
 }
 
 /// Binary operators

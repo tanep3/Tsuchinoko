@@ -347,12 +347,32 @@ impl RustEmitter {
                             // For string keys, add .to_string()
                             let key_str = match k {
                                 IrExpr::StringLit(s) => format!("\"{}\".to_string()", s),
-                                _ => self.emit_expr(k),
+                                _ => self.emit_expr_internal(k),
                             };
-                            format!("({}, {})", key_str, self.emit_expr(v))
+                            format!("({}, {})", key_str, self.emit_expr_internal(v))
                         })
                         .collect();
                     format!("std::collections::HashMap::from([{}])", pairs.join(", "))
+                }
+            }
+            IrExpr::FString { parts, values } => {
+                // Generate format string: "{}{}{}" from parts
+                let format_str: String = parts.iter().enumerate().map(|(i, part)| {
+                    if i < parts.len() - 1 {
+                        format!("{}{{}}", part)
+                    } else {
+                        part.clone()
+                    }
+                }).collect();
+                
+                let value_strs: Vec<_> = values.iter()
+                    .map(|v| self.emit_expr_internal(v))
+                    .collect();
+                
+                if values.is_empty() {
+                    format!("\"{}\"", parts.join(""))
+                } else {
+                    format!("format!(\"{}\", {})", format_str, value_strs.join(", "))
                 }
             }
             IrExpr::ListComp { elt, target, iter } => {

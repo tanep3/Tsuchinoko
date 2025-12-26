@@ -146,6 +146,11 @@ pub enum IrExpr {
         value_type: Type,
         entries: Vec<(IrExpr, IrExpr)>,
     },
+    /// f-string (format! macro)
+    FString {
+        parts: Vec<String>,
+        values: Vec<IrExpr>,
+    },
 }
 
 /// IR binary operators

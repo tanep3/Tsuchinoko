@@ -850,6 +850,16 @@ impl SemanticAnalyzer {
                     entries: ir_entries,
                 })
             }
+            Expr::FString { parts, values } => {
+                let ir_values: Vec<IrExpr> = values
+                    .iter()
+                    .map(|v| self.analyze_expr(v))
+                    .collect::<Result<_, _>>()?;
+                Ok(IrExpr::FString {
+                    parts: parts.clone(),
+                    values: ir_values,
+                })
+            }
             Expr::Index { target, index } => {
                 let ir_target = self.analyze_expr(target)?;
                 let ir_index = self.analyze_expr(index)?;

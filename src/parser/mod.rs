@@ -740,6 +740,66 @@ fn parse_type_hint(type_str: &str) -> Result<TypeHint, TsuchinokoError> {
     }
 }
 
+/// Parse an f-string literal (content without the f"" quotes)
+/// f"{x}: {y}" -> parts: ["", ": ", ""], values: [x, y]
+fn parse_fstring(content: &str, line_num: usize) -> Result<Expr, TsuchinokoError> {
+    let mut parts = Vec::new();
+    let mut values = Vec::new();
+    let mut current_part = String::new();
+    let mut chars = content.chars().peekable();
+    
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            // Check for escaped brace {{
+            if chars.peek() == Some(&'{') {
+                chars.next();
+                current_part.push('{');
+                continue;
+            }
+            
+            // Start of expression
+            parts.push(current_part.clone());
+            current_part = String::new();
+            
+            // Extract expression until closing brace
+            let mut expr_str = String::new();
+            let mut depth = 1;
+            while let Some(c2) = chars.next() {
+                if c2 == '{' {
+                    depth += 1;
+                    expr_str.push(c2);
+                } else if c2 == '}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                    expr_str.push(c2);
+                } else {
+                    expr_str.push(c2);
+                }
+            }
+            
+            // Parse the expression inside {}
+            let expr = parse_expr(&expr_str, line_num)?;
+            values.push(expr);
+        } else if c == '}' {
+            // Check for escaped brace }}
+            if chars.peek() == Some(&'}') {
+                chars.next();
+                current_part.push('}');
+            } else {
+                current_part.push(c);
+            }
+        } else {
+            current_part.push(c);
+        }
+    }
+    
+    parts.push(current_part);
+    
+    Ok(Expr::FString { parts, values })
+}
+
 /// Parse an expression
 fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> {
     let expr_str = expr_str.trim();
@@ -772,6 +832,12 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
     // Try to parse as None
     if expr_str == "None" {
         return Ok(Expr::NoneLiteral);
+    }
+    
+    // Try to parse as f-string (f"..." or f'...')
+    if (expr_str.starts_with("f\"") && expr_str.ends_with('"')) ||
+       (expr_str.starts_with("f'") && expr_str.ends_with('\'')) {
+        return parse_fstring(&expr_str[2..expr_str.len() - 1], line_num);
     }
     
     // Try to parse as string literal
