@@ -42,4 +42,10 @@ src_v0.1/
 src_v0.2/
 src_v0.3/
 src_v0.4/
+src_v0.5/
+docs_old/
 test/
+
+# Added by cargo
+
+/target

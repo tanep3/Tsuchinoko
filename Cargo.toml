@@ -1,0 +1,28 @@
+[package]
+name = "tsuchinoko"
+version = "0.5.0"
+edition = "2021"
+authors = ["Tane Channel Technology"]
+description = "Python to Rust transpiler"
+license = "MIT"
+repository = "https://github.com/tanechannel/tsuchinoko"
+keywords = ["python", "rust", "transpiler", "compiler"]
+categories = ["development-tools", "compilers"]
+
+[[bin]]
+name = "tnk"
+path = "src/main.rs"
+
+[lib]
+name = "tsuchinoko"
+path = "src/lib.rs"
+
+[dependencies]
+pest = "2.7"
+pest_derive = "2.7"
+clap = { version = "4.4", features = ["derive"] }
+thiserror = "1.0"
+anyhow = "1.0"
+
+[dev-dependencies]
+pretty_assertions = "1.4"

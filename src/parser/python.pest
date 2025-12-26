@@ -1,0 +1,105 @@
+// python.pest - Python grammar for Tsuchinoko Phase 1
+
+// Entry point
+program = { SOI ~ NEWLINE* ~ (statement ~ NEWLINE*)* ~ EOI }
+
+// Statements
+statement = {
+    func_def |
+    if_stmt |
+    for_stmt |
+    while_stmt |
+    return_stmt |
+    assign_stmt |
+    expr_stmt
+}
+
+func_def = {
+    "def" ~ ident ~ "(" ~ param_list? ~ ")" ~ return_annotation? ~ ":" ~ block
+}
+
+param_list = { param ~ ("," ~ param)* }
+param = { ident ~ type_annotation? }
+
+return_annotation = { "->" ~ type_expr }
+type_annotation = { ":" ~ type_expr }
+
+type_expr = { ident ~ ("[" ~ type_expr_list ~ "]")? }
+type_expr_list = { type_expr ~ ("," ~ type_expr)* }
+
+if_stmt = {
+    "if" ~ expr ~ ":" ~ block ~ elif_clause* ~ else_clause?
+}
+
+elif_clause = { "elif" ~ expr ~ ":" ~ block }
+else_clause = { "else" ~ ":" ~ block }
+
+for_stmt = { "for" ~ ident ~ "in" ~ expr ~ ":" ~ block }
+while_stmt = { "while" ~ expr ~ ":" ~ block }
+return_stmt = { "return" ~ expr? }
+
+assign_stmt = { target ~ type_annotation? ~ "=" ~ expr }
+expr_stmt = { expr }
+
+target = { ident }
+
+block = { NEWLINE ~ INDENT ~ statement+ ~ DEDENT | statement }
+
+// Expressions
+expr = { or_expr }
+or_expr = { and_expr ~ ("or" ~ and_expr)* }
+and_expr = { not_expr ~ ("and" ~ not_expr)* }
+not_expr = { "not"* ~ comparison }
+comparison = { arith_expr ~ (comp_op ~ arith_expr)* }
+arith_expr = { term ~ (add_op ~ term)* }
+term = { factor ~ (mul_op ~ factor)* }
+factor = { unary_op? ~ power }
+power = { primary ~ ("**" ~ factor)? }
+primary = { 
+    "(" ~ expr ~ ")" |
+    list_expr |
+    call_expr |
+    literal |
+    ident
+}
+
+call_expr = { ident ~ "(" ~ arg_list? ~ ")" }
+arg_list = { expr ~ ("," ~ expr)* }
+
+list_expr = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
+
+// Operators
+comp_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
+add_op = { "+" | "-" }
+mul_op = { "*" | "//" | "/" | "%" }
+unary_op = { "-" | "+" }
+
+// Literals
+literal = { float_literal | int_literal | string_literal | bool_literal | none_literal }
+
+int_literal = @{ ASCII_DIGIT+ }
+float_literal = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+string_literal = @{ 
+    "\"" ~ (!"\"" ~ ANY)* ~ "\"" |
+    "'" ~ (!"'" ~ ANY)* ~ "'"
+}
+bool_literal = { "True" | "False" }
+none_literal = { "None" }
+
+// Identifiers
+ident = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+keyword = {
+    "def" | "return" | "if" | "elif" | "else" |
+    "for" | "while" | "in" | "and" | "or" | "not" |
+    "True" | "False" | "None" | "class" | "try" |
+    "except" | "finally" | "raise" | "import" | "from" |
+    "as" | "pass" | "break" | "continue"
+}
+
+// Whitespace and comments
+WHITESPACE = _{ " " | "\t" }
+COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* }
+NEWLINE = { "\r\n" | "\n" | "\r" }
+INDENT = { "    " | "\t" }
+DEDENT = { "" }
