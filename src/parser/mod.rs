@@ -27,6 +27,14 @@ pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
             continue;
         }
         
+        // Try to parse class definition (with optional @dataclass decorator)
+        if line.starts_with("@") || line.starts_with("class ") {
+            let (stmt, consumed) = parse_class_def(&lines, i)?;
+            statements.push(stmt);
+            i += consumed;
+            continue;
+        }
+        
         // Try to parse function definition
         if line.starts_with("def ") {
             let (stmt, consumed) = parse_function_def(&lines, i)?;
@@ -67,6 +75,131 @@ pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
     }
     
     Ok(Program { statements })
+}
+
+/// Parse a class definition (@dataclass class Name: ...)
+fn parse_class_def(lines: &[&str], start: usize) -> Result<(Stmt, usize), TsuchinokoError> {
+    let mut i = start;
+    let line_num = start + 1;
+    
+    // Skip @dataclass decorator if present
+    let line = lines[i].trim();
+    if line.starts_with('@') {
+        // Just skip the decorator line for now
+        i += 1;
+        if i >= lines.len() {
+            return Err(TsuchinokoError::ParseError {
+                line: line_num,
+                message: "Expected class definition after decorator".to_string(),
+            });
+        }
+    }
+    
+    let class_line = lines[i].trim();
+    let line_num = i + 1;
+    
+    // Parse: class ClassName:
+    if !class_line.starts_with("class ") {
+        return Err(TsuchinokoError::ParseError {
+            line: line_num,
+            message: format!("Expected 'class' keyword, got: {}", class_line),
+        });
+    }
+    
+    let class_part = class_line.strip_prefix("class ").unwrap();
+    let colon_pos = class_part.rfind(':').ok_or_else(|| TsuchinokoError::ParseError {
+        line: line_num,
+        message: "Missing colon in class definition".to_string(),
+    })?;
+    
+    let name = class_part[..colon_pos].trim().to_string();
+    
+    // Parse class body (fields)
+    let (fields, body_consumed) = parse_class_body(lines, i + 1)?;
+    
+    let consumed = (i - start) + 1 + body_consumed;
+    
+    Ok((
+        Stmt::ClassDef { name, fields },
+        consumed,
+    ))
+}
+
+/// Parse class body (field definitions)
+fn parse_class_body(lines: &[&str], start: usize) -> Result<(Vec<Field>, usize), TsuchinokoError> {
+    let mut fields = Vec::new();
+    let mut i = start;
+    
+    if i >= lines.len() {
+        return Err(TsuchinokoError::ParseError {
+            line: start + 1,
+            message: "Expected class body".to_string(),
+        });
+    }
+    
+    // Determine expected indentation level
+    let first_line = lines[i];
+    let indent_level = first_line.len() - first_line.trim_start().len();
+    
+    while i < lines.len() {
+        let line = lines[i];
+        let line_trim = line.trim();
+        
+        // Skip empty lines
+        if line_trim.is_empty() {
+            i += 1;
+            continue;
+        }
+        
+        // Skip comment lines
+        if line_trim.starts_with('#') {
+            i += 1;
+            continue;
+        }
+        
+        // Check indentation
+        let current_indent = line.len() - line.trim_start().len();
+        if current_indent < indent_level {
+            // Dedent - end of class body
+            break;
+        }
+        
+        // Parse field: field_name: type
+        let line_num = i + 1;
+        if let Some(colon_pos) = line_trim.find(':') {
+            let field_name = line_trim[..colon_pos].trim().to_string();
+            let type_str = line_trim[colon_pos + 1..].trim();
+            
+            // Handle field with default value (x: int = 0)
+            let type_str = if let Some(eq_pos) = type_str.find('=') {
+                type_str[..eq_pos].trim()
+            } else {
+                type_str
+            };
+            
+            let type_hint = parse_type_hint(type_str)?;
+            fields.push(Field {
+                name: field_name,
+                type_hint,
+            });
+        } else {
+            return Err(TsuchinokoError::ParseError {
+                line: line_num,
+                message: format!("Expected field definition with type hint: {}", line_trim),
+            });
+        }
+        
+        i += 1;
+    }
+    
+    if fields.is_empty() {
+        return Err(TsuchinokoError::ParseError {
+            line: start + 1,
+            message: "Class must have at least one field".to_string(),
+        });
+    }
+    
+    Ok((fields, i - start))
 }
 
 /// Parse a function definition

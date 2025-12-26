@@ -5,6 +5,7 @@ program = { SOI ~ NEWLINE* ~ (statement ~ NEWLINE*)* ~ EOI }
 
 // Statements
 statement = {
+    class_def |
     func_def |
     if_stmt |
     for_stmt |
@@ -13,6 +14,16 @@ statement = {
     assign_stmt |
     expr_stmt
 }
+
+// Class definition with optional @dataclass decorator
+class_def = {
+    decorator? ~ "class" ~ ident ~ ":" ~ class_body
+}
+
+decorator = { "@" ~ ident }
+
+class_body = { NEWLINE ~ INDENT ~ class_field+ ~ DEDENT }
+class_field = { ident ~ type_annotation ~ NEWLINE* }
 
 func_def = {
     "def" ~ ident ~ "(" ~ param_list? ~ ")" ~ return_annotation? ~ ":" ~ block

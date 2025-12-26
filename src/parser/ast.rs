@@ -133,6 +133,11 @@ pub enum Stmt {
     Return(Option<Expr>),
     /// Expression statement
     Expr(Expr),
+    /// Class definition (dataclass -> struct)
+    ClassDef {
+        name: String,
+        fields: Vec<Field>,
+    },
 }
 
 /// Function parameter
@@ -147,6 +152,13 @@ pub struct Param {
 pub struct TypeHint {
     pub name: String,
     pub params: Vec<TypeHint>,
+}
+
+/// Class field (for dataclass -> struct)
+#[derive(Debug, Clone, PartialEq)]
+pub struct Field {
+    pub name: String,
+    pub type_hint: TypeHint,
 }
 
 /// Program (collection of statements)

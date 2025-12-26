@@ -62,6 +62,11 @@ pub enum IrNode {
     Return(Option<Box<IrExpr>>),
     /// Expression statement
     Expr(IrExpr),
+    /// Struct definition (from @dataclass)
+    StructDef {
+        name: String,
+        fields: Vec<(String, Type)>,
+    },
 }
 
 /// IR expression types

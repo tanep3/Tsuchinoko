@@ -636,6 +636,24 @@ impl SemanticAnalyzer {
                 let ir_expr = self.analyze_expr(expr)?;
                 Ok(IrNode::Expr(ir_expr))
             }
+            Stmt::ClassDef { name, fields } => {
+                // Convert AST fields to IR fields with types
+                let ir_fields: Vec<(String, Type)> = fields
+                    .iter()
+                    .map(|f| {
+                        let ty = self.type_from_hint(&f.type_hint);
+                        (f.name.clone(), ty)
+                    })
+                    .collect();
+                
+                // Register this struct type in scope (for use in type hints)
+                self.scope.define(name, Type::Struct(name.clone()), false);
+                
+                Ok(IrNode::StructDef {
+                    name: name.clone(),
+                    fields: ir_fields,
+                })
+            }
         }
     }
 

@@ -17,6 +17,7 @@ pub enum Type {
         ret: Box<Type>,
     },
     Unit,     // ()
+    Struct(String),  // User-defined struct
     Unknown,  // Not yet inferred
 }
 
@@ -43,6 +44,10 @@ impl Type {
                 Type::Optional(Box::new(inner))
             }
             "None" => Type::Unit,
+            // Check if it's a user-defined type (capitalized name)
+            name if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) => {
+                Type::Struct(name.to_string())
+            }
             _ => Type::Unknown,
         }
     }
@@ -76,6 +81,7 @@ impl Type {
                 format!("fn({}) -> {}", p.join(", "), ret.to_rust_string())
             }
             Type::Unit => "()".to_string(),
+            Type::Struct(name) => name.clone(),
             Type::Unknown => "_".to_string(),
         }
     }

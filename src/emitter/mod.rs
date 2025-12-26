@@ -2,6 +2,7 @@
 
 use crate::ir::{IrNode, IrExpr, IrBinOp, IrUnaryOp};
 use crate::semantic::Type;
+use std::collections::HashMap;
 
 /// Emit Rust code from IR
 pub fn emit(nodes: &[IrNode]) -> String {
@@ -12,6 +13,8 @@ pub fn emit(nodes: &[IrNode]) -> String {
 /// Rust code emitter
 pub struct RustEmitter {
     indent: usize,
+    /// Map of struct name -> field names (in order)
+    struct_defs: HashMap<String, Vec<String>>,
 }
 
 /// Convert camelCase/PascalCase to snake_case
@@ -32,7 +35,7 @@ fn to_snake_case(s: &str) -> String {
 
 impl RustEmitter {
     pub fn new() -> Self {
-        Self { indent: 0 }
+        Self { indent: 0, struct_defs: HashMap::new() }
     }
 
     pub fn emit_nodes(&mut self, nodes: &[IrNode]) -> String {
@@ -176,6 +179,20 @@ impl RustEmitter {
             IrNode::Expr(expr) => {
                 format!("{}{};", indent, self.emit_expr(expr))
             }
+            IrNode::StructDef { name, fields } => {
+                // Register struct definition for constructor emission
+                let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+                self.struct_defs.insert(name.clone(), field_names);
+                
+                let mut result = format!("{}#[derive(Clone, Debug)]\n", indent);
+                result.push_str(&format!("{}struct {} {{\n", indent, name));
+                for (field_name, field_type) in fields {
+                    let rust_type = field_type.to_rust_string();
+                    result.push_str(&format!("{}    {}: {},\n", indent, to_snake_case(field_name), rust_type));
+                }
+                result.push_str(&format!("{}}}", indent));
+                result
+            }
         }
     }
 
@@ -262,14 +279,24 @@ impl RustEmitter {
                         format!("println!(\"{}\", {})", format_string, cleaned_args.join(", "))
                     }
                 } else {
-                    let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_no_outer_parens(a)).collect();
-                    // Don't snake_case built-in Rust expressions like Some, None, Ok, Err
-                    let func_name = if func == "Some" || func == "None" || func == "Ok" || func == "Err" {
-                        func.clone()
+                    // Check if this is a struct constructor
+                    if let Some(field_names) = self.struct_defs.get(func) {
+                        // Emit as struct literal: Point { x: 0, y: 0 }
+                        let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_no_outer_parens(a)).collect();
+                        let field_inits: Vec<String> = field_names.iter().zip(args_str.iter())
+                            .map(|(name, value)| format!("{}: {}", to_snake_case(name), value))
+                            .collect();
+                        format!("{} {{ {} }}", func, field_inits.join(", "))
                     } else {
-                        to_snake_case(func)
-                    };
-                    format!("{}({})", func_name, args_str.join(", "))
+                        let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_no_outer_parens(a)).collect();
+                        // Don't snake_case built-in Rust expressions like Some, None, Ok, Err
+                        let func_name = if func == "Some" || func == "None" || func == "Ok" || func == "Err" {
+                            func.clone()
+                        } else {
+                            to_snake_case(func)
+                        };
+                        format!("{}({})", func_name, args_str.join(", "))
+                    }
                 }
             }
             IrExpr::List { elem_type: _, elements } => {
