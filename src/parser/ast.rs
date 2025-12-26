@@ -51,6 +51,8 @@ pub enum Expr {
         value: Box<Expr>,
         attr: String,
     },
+    /// Dict literal
+    Dict(Vec<(Expr, Expr)>),
 }
 
 /// Binary operators
@@ -71,6 +73,7 @@ pub enum BinOp {
     GtEq,
     And,
     Or,
+    In,  // x in dict
 }
 
 /// Unary operators

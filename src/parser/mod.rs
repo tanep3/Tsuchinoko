@@ -558,6 +558,32 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         return Ok(Expr::List(parsed?));
     }
     
+    // Try to parse as dict literal {key: value, ...}
+    if expr_str.starts_with('{') && find_matching_bracket(expr_str, 0, '{', '}') == Some(expr_str.len() - 1) {
+        let inner = &expr_str[1..expr_str.len() - 1];
+        if inner.is_empty() {
+            return Ok(Expr::Dict(vec![]));
+        }
+        
+        let entries = split_by_comma_balanced(inner);
+        let mut parsed_entries = Vec::new();
+        for entry in entries {
+            let entry = entry.trim();
+            // Find the colon that separates key: value
+            if let Some(colon_pos) = entry.find(':') {
+                let key = parse_expr(entry[..colon_pos].trim(), line_num)?;
+                let value = parse_expr(entry[colon_pos + 1..].trim(), line_num)?;
+                parsed_entries.push((key, value));
+            } else {
+                return Err(TsuchinokoError::ParseError {
+                    line: line_num,
+                    message: format!("Invalid dict entry: {}", entry),
+                });
+            }
+        }
+        return Ok(Expr::Dict(parsed_entries));
+    }
+    
     // Try to parse as binary operation (lowest precedence first)
     for (op_str, op) in [
         (" or ", BinOp::Or),
@@ -582,6 +608,7 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         (" <= ", BinOp::LtEq),
         (" > ", BinOp::Gt),
         (" < ", BinOp::Lt),
+        (" in ", BinOp::In),
     ] {
         if let Some(pos) = find_operator_balanced(expr_str, op_str) {
             let left = parse_expr(&expr_str[..pos], line_num)?;

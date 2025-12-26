@@ -19,12 +19,14 @@ pub fn analyze(program: &Program) -> Result<Vec<IrNode>, TsuchinokoError> {
 /// Semantic analyzer
 pub struct SemanticAnalyzer {
     scope: ScopeStack,
+    current_return_type: Option<Type>,
 }
 
 impl SemanticAnalyzer {
     pub fn new() -> Self {
         Self {
             scope: ScopeStack::new(),
+            current_return_type: None,
         }
     }
 
@@ -443,7 +445,14 @@ impl SemanticAnalyzer {
                       ir_params.push((p.name.clone(), ty.clone()));
                  }
                  
+                 // Store the return type for use in Return statement processing
+                 let old_return_type = self.current_return_type.take();
+                 self.current_return_type = Some(ret_type.clone());
+                 
                  let ir_body = self.analyze_stmts(body)?;
+                 
+                 // Restore old return type
+                 self.current_return_type = old_return_type;
                  
                  self.scope.pop();
                  
@@ -577,23 +586,40 @@ impl SemanticAnalyzer {
                     Some(e) => {
                         let ir = self.analyze_expr(e)?;
                         let ty = self.infer_type(e);
+                        
+                        // Check if we're returning from an Optional function
+                        let is_optional_return = matches!(
+                            &self.current_return_type,
+                            Some(Type::Optional(_))
+                        );
+                        
                         // If returning a Reference to a List (slice), use .to_vec() to return owned
-                        if let Type::Ref(inner) = &ty {
+                        let ir = if let Type::Ref(inner) = &ty {
                             if matches!(inner.as_ref(), Type::List(_)) {
-                                Some(Box::new(IrExpr::MethodCall {
+                                IrExpr::MethodCall {
                                     target: Box::new(ir),
                                     method: "to_vec".to_string(),
                                     args: vec![],
-                                }))
+                                }
                             } else {
-                                Some(Box::new(IrExpr::MethodCall {
+                                IrExpr::MethodCall {
                                     target: Box::new(ir),
                                     method: "clone".to_string(),
                                     args: vec![],
-                                }))
+                                }
                             }
                         } else {
-                             Some(Box::new(ir))
+                            ir
+                        };
+                        
+                        // Wrap in Some() if returning to Optional and value is not None
+                        if is_optional_return && !matches!(ir, IrExpr::NoneLit) {
+                            Some(Box::new(IrExpr::Call {
+                                func: "Some".to_string(),
+                                args: vec![ir],
+                            }))
+                        } else {
+                            Some(Box::new(ir))
                         }
                     },
                     None => None,
@@ -613,7 +639,7 @@ impl SemanticAnalyzer {
             Expr::FloatLiteral(f) => Ok(IrExpr::FloatLit(*f)),
             Expr::StringLiteral(s) => Ok(IrExpr::StringLit(s.clone())),
             Expr::BoolLiteral(b) => Ok(IrExpr::BoolLit(*b)),
-            Expr::NoneLiteral => Ok(IrExpr::IntLit(0)), // Python None -> Rust 0 (temporary hack)
+            Expr::NoneLiteral => Ok(IrExpr::NoneLit),
             Expr::Ident(name) => Ok(IrExpr::Var(name.clone())),
             Expr::BinOp { left, op, right } => {
                 let ir_left = self.analyze_expr(left)?;
@@ -768,6 +794,22 @@ impl SemanticAnalyzer {
                 }
                 Ok(IrExpr::Tuple(ir_elements))
             }
+            Expr::Dict(entries) => {
+                let mut ir_entries = Vec::new();
+                for (k, v) in entries {
+                    ir_entries.push((self.analyze_expr(k)?, self.analyze_expr(v)?));
+                }
+                let (key_type, value_type) = if let Some((k, v)) = entries.first() {
+                    (self.infer_type(k), self.infer_type(v))
+                } else {
+                    (Type::Unknown, Type::Unknown)
+                };
+                Ok(IrExpr::Dict {
+                    key_type,
+                    value_type,
+                    entries: ir_entries,
+                })
+            }
             Expr::Index { target, index } => {
                 let ir_target = self.analyze_expr(target)?;
                 let ir_index = self.analyze_expr(index)?;
@@ -855,7 +897,7 @@ impl SemanticAnalyzer {
                         self.infer_type(left)
                     }
                     AstBinOp::Eq | AstBinOp::NotEq | AstBinOp::Lt | AstBinOp::Gt | 
-                    AstBinOp::LtEq | AstBinOp::GtEq | AstBinOp::And | AstBinOp::Or => {
+                    AstBinOp::LtEq | AstBinOp::GtEq | AstBinOp::And | AstBinOp::Or | AstBinOp::In => {
                         Type::Bool
                     }
                 }
@@ -887,6 +929,7 @@ impl SemanticAnalyzer {
             AstBinOp::GtEq => IrBinOp::GtEq,
             AstBinOp::And => IrBinOp::And,
             AstBinOp::Or => IrBinOp::Or,
+            AstBinOp::In => IrBinOp::Contains,
         }
     }
 }

@@ -185,6 +185,7 @@ impl RustEmitter {
             IrExpr::FloatLit(f) => format!("{:.1}", f),
             IrExpr::StringLit(s) => format!("\"{}\"", s),
             IrExpr::BoolLit(b) => b.to_string(),
+            IrExpr::NoneLit => "None".to_string(),
             IrExpr::Var(name) => to_snake_case(name),
             IrExpr::BinOp { left, op, right } => {
                 if let IrBinOp::Pow = op {
@@ -207,6 +208,10 @@ impl RustEmitter {
                     IrBinOp::Or => "||",
                     IrBinOp::FloorDiv => "/",
                     IrBinOp::Pow => unreachable!(),
+                    IrBinOp::Contains => {
+                        // x in dict -> dict.contains_key(&x)
+                        return format!("{}.contains_key(&{})", self.emit_expr(right), self.emit_expr(left));
+                    }
                 };
                 format!("({} {} {})", self.emit_expr(left), op_str, self.emit_expr(right))
             }
@@ -258,12 +263,35 @@ impl RustEmitter {
                     }
                 } else {
                     let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_no_outer_parens(a)).collect();
-                    format!("{}({})", to_snake_case(func), args_str.join(", "))
+                    // Don't snake_case built-in Rust expressions like Some, None, Ok, Err
+                    let func_name = if func == "Some" || func == "None" || func == "Ok" || func == "Err" {
+                        func.clone()
+                    } else {
+                        to_snake_case(func)
+                    };
+                    format!("{}({})", func_name, args_str.join(", "))
                 }
             }
             IrExpr::List { elem_type: _, elements } => {
                 let elems: Vec<_> = elements.iter().map(|e| self.emit_expr(e)).collect();
                 format!("vec![{}]", elems.join(", "))
+            }
+            IrExpr::Dict { key_type: _, value_type: _, entries } => {
+                if entries.is_empty() {
+                    "std::collections::HashMap::new()".to_string()
+                } else {
+                    let pairs: Vec<_> = entries.iter()
+                        .map(|(k, v)| {
+                            // For string keys, add .to_string()
+                            let key_str = match k {
+                                IrExpr::StringLit(s) => format!("\"{}\".to_string()", s),
+                                _ => self.emit_expr(k),
+                            };
+                            format!("({}, {})", key_str, self.emit_expr(v))
+                        })
+                        .collect();
+                    format!("std::collections::HashMap::from([{}])", pairs.join(", "))
+                }
             }
             IrExpr::ListComp { elt, target, iter } => {
                 // Map strategy: IntoIterator::into_iter(iter).map(|target| elt).collect::<Vec<_>>()
@@ -286,6 +314,21 @@ impl RustEmitter {
                 format!("({})", elems.join(", "))
             }
             IrExpr::Index { target, index } => {
+                // Handle negative index: arr[-1] -> arr[arr.len()-1]
+                // Case 1: UnaryOp { Neg, IntLit(n) }
+                if let IrExpr::UnaryOp { op: IrUnaryOp::Neg, operand } = index.as_ref() {
+                    if let IrExpr::IntLit(n) = operand.as_ref() {
+                        let target_str = self.emit_expr(target);
+                        return format!("{}[{}.len() - {}]", target_str, target_str, n);
+                    }
+                }
+                // Case 2: IntLit with negative value
+                if let IrExpr::IntLit(n) = index.as_ref() {
+                    if *n < 0 {
+                        let target_str = self.emit_expr(target);
+                        return format!("{}[{}.len() - {}]", target_str, target_str, n.abs());
+                    }
+                }
                 format!("{}[{} as usize]", self.emit_expr(target), self.emit_expr(index))
             }
             IrExpr::Range { start, end } => {

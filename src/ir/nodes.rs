@@ -72,6 +72,8 @@ pub enum IrExpr {
     FloatLit(f64),
     StringLit(String),
     BoolLit(bool),
+    /// None literal (Rust None)
+    NoneLit,
     /// Variable reference
     Var(String),
     /// Binary operation
@@ -128,6 +130,12 @@ pub enum IrExpr {
     Reference {
         target: Box<IrExpr>,
     },
+    /// Dict/HashMap literal
+    Dict {
+        key_type: Type,
+        value_type: Type,
+        entries: Vec<(IrExpr, IrExpr)>,
+    },
 }
 
 /// IR binary operators
@@ -148,6 +156,7 @@ pub enum IrBinOp {
     GtEq,
     And,
     Or,
+    Contains,  // x in dict -> dict.contains_key(&x)
 }
 
 /// IR unary operators

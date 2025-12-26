@@ -57,6 +57,7 @@ factor = { unary_op? ~ power }
 power = { primary ~ ("**" ~ factor)? }
 primary = { 
     "(" ~ expr ~ ")" |
+    dict_expr |
     list_expr |
     call_expr |
     literal |
@@ -67,9 +68,11 @@ call_expr = { ident ~ "(" ~ arg_list? ~ ")" }
 arg_list = { expr ~ ("," ~ expr)* }
 
 list_expr = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
+dict_expr = { "{" ~ (dict_entry ~ ("," ~ dict_entry)*)? ~ "}" }
+dict_entry = { expr ~ ":" ~ expr }
 
 // Operators
-comp_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
+comp_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" | "in" }
 add_op = { "+" | "-" }
 mul_op = { "*" | "//" | "/" | "%" }
 unary_op = { "-" | "+" }

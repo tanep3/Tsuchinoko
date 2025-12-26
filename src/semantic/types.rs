@@ -60,7 +60,7 @@ impl Type {
                 format!("({})", inner.join(", "))
             }
             Type::Dict(k, v) => {
-                format!("HashMap<{}, {}>", k.to_rust_string(), v.to_rust_string())
+                format!("std::collections::HashMap<{}, {}>", k.to_rust_string(), v.to_rust_string())
             }
             Type::Optional(inner) => format!("Option<{}>", inner.to_rust_string()),
             Type::Ref(inner) => {
