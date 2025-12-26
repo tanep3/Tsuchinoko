@@ -17,8 +17,6 @@ def bubbleSort(lists: list[int]) -> tuple[list[int], int]:
 def program_start() -> None:
     test_list: list[int] = [64, 34, 25, 12, 22, 11, 90]
     print("元のリスト:", test_list)
-    sorted_lists: list[int] = []
-    length: int = 0
     sorted_lists, length = bubbleSort(test_list)
     print("ソート後のリスト:", sorted_lists)
 

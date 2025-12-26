@@ -28,15 +28,28 @@ pub enum Expr {
     },
     /// Function call
     Call {
-        func: String,
+        func: Box<Expr>,
         args: Vec<Expr>,
     },
     /// List literal
     List(Vec<Expr>),
+    /// List comprehension [elt for target in iter]
+    ListComp {
+        elt: Box<Expr>,
+        target: String,
+        iter: Box<Expr>,
+    },
+    /// Tuple literal
+    Tuple(Vec<Expr>),
     /// Index access
     Index {
         target: Box<Expr>,
         index: Box<Expr>,
+    },
+    /// Attribute access (obj.attr)
+    Attribute {
+        value: Box<Expr>,
+        attr: String,
     },
 }
 
@@ -75,6 +88,17 @@ pub enum Stmt {
     Assign {
         target: String,
         type_hint: Option<TypeHint>,
+        value: Expr,
+    },
+    /// Index assignment (arr[i] = val)
+    IndexAssign {
+        target: Expr,
+        index: Expr,
+        value: Expr,
+    },
+    /// Tuple unpacking assignment (a, b = func())
+    TupleAssign {
+        targets: Vec<String>,
         value: Expr,
     },
     /// Function definition

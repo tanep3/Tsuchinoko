@@ -17,6 +17,12 @@ pub enum TsuchinokoError {
     #[error("Unsupported syntax at line {line}: {syntax}")]
     UnsupportedSyntax { syntax: String, line: usize },
 
+    #[error("Semantic error: {message}")]
+    SemanticError { message: String },
+
+    #[error("Compile error: {0}")]
+    CompileError(String),
+
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 }

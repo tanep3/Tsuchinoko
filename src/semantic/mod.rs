@@ -6,8 +6,8 @@ mod scope;
 pub use types::*;
 pub use scope::*;
 
-use crate::parser::{Program, Stmt, Expr, TypeHint, BinOp as AstBinOp, Param};
-use crate::ir::{IrNode, IrExpr, IrBinOp};
+use crate::parser::{Program, Stmt, Expr, TypeHint, BinOp as AstBinOp, UnaryOp as AstUnaryOp, Param};
+use crate::ir::{IrNode, IrExpr, IrBinOp, IrUnaryOp};
 use crate::error::TsuchinokoError;
 
 /// Analyze a program and convert to IR
@@ -32,6 +32,33 @@ impl SemanticAnalyzer {
         let mut ir_nodes = Vec::new();
         
         for stmt in &program.statements {
+            // Check for if __name__ == "__main__" pattern
+            if let Stmt::If { condition, then_body, elif_clauses, else_body } = stmt {
+                if elif_clauses.is_empty() && else_body.is_none() {
+                    if let Expr::BinOp { left, op, right } = condition {
+                        if let (Expr::Ident(l), AstBinOp::Eq, Expr::StringLiteral(r)) = (left.as_ref(), op, right.as_ref()) {
+                            if l == "__name__" && r == "__main__" {
+                                // Convert to fn main()
+                                self.scope.push();
+                                let mut body_nodes = Vec::new();
+                                for s in then_body {
+                                    body_nodes.push(self.analyze_stmt(s)?);
+                                }
+                                self.scope.pop();
+                                
+                                ir_nodes.push(IrNode::FuncDecl {
+                                    name: "main".to_string(),
+                                    params: vec![],
+                                    ret: Type::Unit,
+                                    body: body_nodes,
+                                });
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            
             ir_nodes.push(self.analyze_stmt(stmt)?);
         }
         
@@ -46,15 +73,21 @@ impl SemanticAnalyzer {
                     None => self.infer_type(value),
                 };
                 
-                let mutable = self.scope.lookup(target).is_some();
+                // Check if variable is already defined (re-assignment)
+                let is_reassign = self.scope.lookup(target).is_some();
                 
-                if !mutable {
+                // In Python, lists are always mutable. In Rust, we should make them mutable by default
+                // to allow modification (like push, index assign).
+                // Also respect re-assignment.
+                let should_be_mutable = is_reassign || matches!(ty, Type::List(_));
+                
+                if !is_reassign {
                     self.scope.define(target, ty.clone(), false);
                 }
                 
                 let ir_value = self.analyze_expr(value)?;
                 
-                if mutable {
+                if is_reassign {
                     Ok(IrNode::Assign {
                         target: target.clone(),
                         value: Box::new(ir_value),
@@ -63,80 +96,147 @@ impl SemanticAnalyzer {
                     Ok(IrNode::VarDecl {
                         name: target.clone(),
                         ty,
-                        mutable: false,
+                        mutable: should_be_mutable,
                         init: Some(Box::new(ir_value)),
                     })
                 }
             }
-            Stmt::FuncDef { name, params, return_type, body } => {
-                self.scope.push();
-                
-                // Add parameters to scope
-                let ir_params: Vec<(String, Type)> = params
-                    .iter()
-                    .map(|p| {
-                        let ty = p.type_hint.as_ref()
-                            .map(|th| self.type_from_hint(th))
-                            .unwrap_or(Type::Unknown);
-                        self.scope.define(&p.name, ty.clone(), false);
-                        (p.name.clone(), ty)
-                    })
-                    .collect();
-                
-                let ret_type = return_type.as_ref()
-                    .map(|th| self.type_from_hint(th))
-                    .unwrap_or(Type::Unit);
-                
-                let ir_body: Result<Vec<_>, _> = body
-                    .iter()
-                    .map(|s| self.analyze_stmt(s))
-                    .collect();
-                
-                self.scope.pop();
-                
-                Ok(IrNode::FuncDecl {
-                    name: name.clone(),
-                    params: ir_params,
-                    ret: ret_type,
-                    body: ir_body?,
+            Stmt::IndexAssign { target, index, value } => {
+                let ir_target = self.analyze_expr(target)?;
+                let ir_index = self.analyze_expr(index)?;
+                let ir_value = self.analyze_expr(value)?;
+                Ok(IrNode::IndexAssign {
+                    target: Box::new(ir_target),
+                    index: Box::new(ir_index),
+                    value: Box::new(ir_value),
                 })
             }
+            Stmt::TupleAssign { targets, value } => {
+                // Determine if this is a declaration or assignment based on first variable
+                // (Simplified logic: if first var is not in scope, assume declaration for all)
+                let is_decl = self.scope.lookup(&targets[0]).is_none();
+                let ir_value = self.analyze_expr(value)?;
+                
+                if is_decl {
+                    // Try to infer types if possible, otherwise Unknown
+                    // If value is a call, we might not know the return type yet without a better symbol table
+                    let result_type = self.infer_type(value);
+                    let elem_types = if let Type::Tuple(types) = result_type {
+                        if types.len() == targets.len() {
+                            types
+                        } else {
+                            vec![Type::Unknown; targets.len()]
+                        }
+                    } else {
+                        vec![Type::Unknown; targets.len()]
+                    };
+                    
+                    let mut decl_targets = Vec::new();
+                    for (i, target) in targets.iter().enumerate() {
+                        let ty = elem_types.get(i).unwrap_or(&Type::Unknown).clone();
+                        self.scope.define(target, ty.clone(), false);
+                        decl_targets.push((target.clone(), ty, false));
+                    }
+                    
+                    Ok(IrNode::MultiVarDecl {
+                        targets: decl_targets,
+                        value: Box::new(ir_value),
+                    })
+                } else {
+                    // Assignment to existing variables
+                    Ok(IrNode::MultiAssign {
+                        targets: targets.clone(),
+                        value: Box::new(ir_value),
+                    })
+                }
+            }
+            Stmt::FuncDef { name, params, return_type, body } => {
+                 self.scope.push();
+                 
+                 // Add parameters to scope
+                 let mut ir_params = Vec::new();
+                 for p in params {
+                     let ty = p.type_hint.as_ref()
+                         .map(|th| self.type_from_hint(th))
+                         .unwrap_or(Type::Unknown);
+                     self.scope.define(&p.name, ty.clone(), false);
+                     ir_params.push((p.name.clone(), ty));
+                 }
+                 
+                 let ret_type = return_type.as_ref()
+                     .map(|th| self.type_from_hint(th))
+                     .unwrap_or(Type::Unit);
+                 
+                 let mut ir_body = Vec::new();
+                 for s in body {
+                     ir_body.push(self.analyze_stmt(s)?);
+                 }
+                 
+                 self.scope.pop();
+                 
+                 let ir_name = if name == "main" { "user_main".to_string() } else { name.clone() };
+                 Ok(IrNode::FuncDecl {
+                     name: ir_name,
+                     params: ir_params,
+                     ret: ret_type,
+                     body: ir_body,
+                 })
+            }
             Stmt::If { condition, then_body, elif_clauses, else_body } => {
+                // Check for main block
+                if let Expr::BinOp { left, op, right } = condition {
+                    if let (Expr::Ident(l), AstBinOp::Eq, Expr::StringLiteral(r)) = (left.as_ref(), op, right.as_ref()) {
+                        if l == "__name__" && r == "__main__" {
+                             self.scope.push();
+                             let mut ir_body = Vec::new();
+                             for s in then_body {
+                                 ir_body.push(self.analyze_stmt(s)?);
+                             }
+                             self.scope.pop();
+                             
+                             return Ok(IrNode::FuncDecl {
+                                 name: "main".to_string(),
+                                 params: vec![],
+                                 ret: Type::Unit,
+                                 body: ir_body,
+                             });
+                        }
+                    }
+                }
+
                 let ir_cond = self.analyze_expr(condition)?;
                 
                 self.scope.push();
-                let ir_then: Result<Vec<_>, _> = then_body
-                    .iter()
-                    .map(|s| self.analyze_stmt(s))
-                    .collect();
+                let mut ir_then = Vec::new();
+                for s in then_body {
+                    ir_then.push(self.analyze_stmt(s)?);
+                }
                 self.scope.pop();
                 
-                // Combine elif clauses into nested if-else
-                let mut ir_else: Option<Vec<IrNode>> = if let Some(else_stmts) = else_body {
+                let mut ir_else = if let Some(else_stmts) = else_body {
                     self.scope.push();
-                    let result: Result<Vec<_>, _> = else_stmts
-                        .iter()
-                        .map(|s| self.analyze_stmt(s))
-                        .collect();
+                    let mut stmts = Vec::new();
+                    for s in else_stmts {
+                        stmts.push(self.analyze_stmt(s)?);
+                    }
                     self.scope.pop();
-                    Some(result?)
+                    Some(stmts)
                 } else {
                     None
                 };
                 
-                // Process elif clauses in reverse to nest them
                 for (elif_cond, elif_body) in elif_clauses.iter().rev() {
                     let elif_ir_cond = self.analyze_expr(elif_cond)?;
                     self.scope.push();
-                    let elif_ir_body: Result<Vec<_>, _> = elif_body
-                        .iter()
-                        .map(|s| self.analyze_stmt(s))
-                        .collect();
+                    let mut elif_ir_body = Vec::new();
+                    for s in elif_body {
+                        elif_ir_body.push(self.analyze_stmt(s)?);
+                    }
                     self.scope.pop();
                     
                     let nested_if = IrNode::If {
                         cond: Box::new(elif_ir_cond),
-                        then_block: elif_ir_body?,
+                        then_block: elif_ir_body,
                         else_block: ir_else,
                     };
                     ir_else = Some(vec![nested_if]);
@@ -144,7 +244,7 @@ impl SemanticAnalyzer {
                 
                 Ok(IrNode::If {
                     cond: Box::new(ir_cond),
-                    then_block: ir_then?,
+                    then_block: ir_then,
                     else_block: ir_else,
                 })
             }
@@ -152,34 +252,34 @@ impl SemanticAnalyzer {
                 let ir_iter = self.analyze_expr(iter)?;
                 
                 self.scope.push();
-                self.scope.define(target, Type::Int, false); // Assume int for now
+                self.scope.define(target, Type::Int, false);
                 
-                let ir_body: Result<Vec<_>, _> = body
-                    .iter()
-                    .map(|s| self.analyze_stmt(s))
-                    .collect();
+                let mut ir_body = Vec::new();
+                for s in body {
+                    ir_body.push(self.analyze_stmt(s)?);
+                }
                 self.scope.pop();
                 
                 Ok(IrNode::For {
                     var: target.clone(),
                     var_type: Type::Int,
                     iter: Box::new(ir_iter),
-                    body: ir_body?,
+                    body: ir_body,
                 })
             }
             Stmt::While { condition, body } => {
                 let ir_cond = self.analyze_expr(condition)?;
                 
                 self.scope.push();
-                let ir_body: Result<Vec<_>, _> = body
-                    .iter()
-                    .map(|s| self.analyze_stmt(s))
-                    .collect();
+                let mut ir_body = Vec::new();
+                for s in body {
+                    ir_body.push(self.analyze_stmt(s)?);
+                }
                 self.scope.pop();
                 
                 Ok(IrNode::While {
                     cond: Box::new(ir_cond),
-                    body: ir_body?,
+                    body: ir_body,
                 })
             }
             Stmt::Return(expr) => {
@@ -196,13 +296,13 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn analyze_expr(&self, expr: &Expr) -> Result<IrExpr, TsuchinokoError> {
+    fn analyze_expr(&mut self, expr: &Expr) -> Result<IrExpr, TsuchinokoError> {
         match expr {
             Expr::IntLiteral(n) => Ok(IrExpr::IntLit(*n)),
             Expr::FloatLiteral(f) => Ok(IrExpr::FloatLit(*f)),
             Expr::StringLiteral(s) => Ok(IrExpr::StringLit(s.clone())),
             Expr::BoolLiteral(b) => Ok(IrExpr::BoolLit(*b)),
-            Expr::NoneLiteral => Ok(IrExpr::IntLit(0)),
+            Expr::NoneLiteral => Ok(IrExpr::IntLit(0)), // Python None -> Rust 0 (temporary hack)
             Expr::Ident(name) => Ok(IrExpr::Var(name.clone())),
             Expr::BinOp { left, op, right } => {
                 let ir_left = self.analyze_expr(left)?;
@@ -215,38 +315,96 @@ impl SemanticAnalyzer {
                 })
             }
             Expr::Call { func, args } => {
-                // Special handling for range()
-                if func == "range" {
-                    if args.len() == 1 {
-                        let end = self.analyze_expr(&args[0])?;
-                        return Ok(IrExpr::Range {
-                            start: Box::new(IrExpr::IntLit(0)),
-                            end: Box::new(end),
-                        });
-                    } else if args.len() == 2 {
-                        let start = self.analyze_expr(&args[0])?;
-                        let end = self.analyze_expr(&args[1])?;
-                        return Ok(IrExpr::Range {
-                            start: Box::new(start),
-                            end: Box::new(end),
-                        });
+                 match func.as_ref() {
+                    Expr::Ident(name) => {
+                         // Range handling
+                        if name == "range" {
+                            if args.len() == 1 {
+                                let start = IrExpr::IntLit(0);
+                                let end = self.analyze_expr(&args[0])?;
+                                return Ok(IrExpr::Range {
+                                    start: Box::new(start),
+                                    end: Box::new(end),
+                                });
+                            } else if args.len() == 2 {
+                                let start = self.analyze_expr(&args[0])?;
+                                let end = self.analyze_expr(&args[1])?;
+                                return Ok(IrExpr::Range {
+                                    start: Box::new(start),
+                                    end: Box::new(end),
+                                });
+                            }
+                        }
+                        
+                         // Built-in functions
+                        if name == "len" && args.len() == 1 {
+                            let arg = self.analyze_expr(&args[0])?;
+                            return Ok(IrExpr::MethodCall { target: Box::new(arg), method: "len".to_string(), args: vec![] });
+                        }
+                        if name == "list" && args.len() == 1 {
+                            let arg = self.analyze_expr(&args[0])?;
+                            return Ok(IrExpr::MethodCall { target: Box::new(arg), method: "clone".to_string(), args: vec![] });
+                        }
+                        if name == "str" && args.len() == 1 {
+                            let arg = self.analyze_expr(&args[0])?;
+                            return Ok(IrExpr::MethodCall { target: Box::new(arg), method: "to_string".to_string(), args: vec![] });
+                        }
+                        if name == "max" && args.len() == 1 {
+                            let arg = self.analyze_expr(&args[0])?;
+                            let iter_call = IrExpr::MethodCall { target: Box::new(arg), method: "iter".to_string(), args: vec![] };
+                            let max_call = IrExpr::MethodCall { target: Box::new(iter_call), method: "max".to_string(), args: vec![] };
+                            let copied_call = IrExpr::MethodCall { target: Box::new(max_call), method: "cloned".to_string(), args: vec![] };
+                            let unwrap_call = IrExpr::MethodCall { target: Box::new(copied_call), method: "unwrap".to_string(), args: vec![] };
+                            return Ok(unwrap_call);
+                        }
+                        
+                        let mut ir_args = Vec::new();
+                        for a in args {
+                            let ir_arg = self.analyze_expr(a)?;
+                            let ty = self.infer_type(a);
+                            if !ty.is_copy() {
+                                ir_args.push(IrExpr::MethodCall {
+                                    target: Box::new(ir_arg),
+                                    method: "clone".to_string(),
+                                    args: vec![],
+                                });
+                            } else {
+                                ir_args.push(ir_arg);
+                            }
+                        }
+                        
+                        let func_name = if name == "main" { "user_main".to_string() } else { name.clone() };
+                        Ok(IrExpr::Call {
+                            func: func_name, 
+                            args: ir_args,
+                        })
                     }
-                }
-                
-                let ir_args: Result<Vec<_>, _> = args
-                    .iter()
-                    .map(|a| self.analyze_expr(a))
-                    .collect();
-                Ok(IrExpr::Call {
-                    func: func.clone(),
-                    args: ir_args?,
-                })
+                    Expr::Attribute { value, attr } => {
+                        let method_name = match attr.as_str() {
+                            "append" => "push",
+                            _ => attr.as_str(),
+                        };
+                        let ir_target = self.analyze_expr(value)?;
+                        let mut ir_args = Vec::new();
+                        for a in args {
+                            ir_args.push(self.analyze_expr(a)?);
+                        }
+                        Ok(IrExpr::MethodCall {
+                            target: Box::new(ir_target),
+                            method: method_name.to_string(),
+                            args: ir_args,
+                        })
+                    }
+                    _ => Err(TsuchinokoError::SemanticError {
+                        message: format!("Complex function calls not supported yet: {:?}", func),
+                    })
+                 }
             }
             Expr::List(elements) => {
-                let ir_elements: Result<Vec<_>, _> = elements
-                    .iter()
-                    .map(|e| self.analyze_expr(e))
-                    .collect();
+                let mut ir_elements = Vec::new();
+                for e in elements {
+                    ir_elements.push(self.analyze_expr(e)?);
+                }
                 let elem_type = if let Some(first) = elements.first() {
                     self.infer_type(first)
                 } else {
@@ -254,10 +412,61 @@ impl SemanticAnalyzer {
                 };
                 Ok(IrExpr::List {
                     elem_type,
-                    elements: ir_elements?,
+                    elements: ir_elements,
                 })
             }
-            _ => Ok(IrExpr::IntLit(0)),
+            Expr::ListComp { elt, target, iter } => {
+                let ir_iter = self.analyze_expr(iter)?;
+                self.scope.push();
+                self.scope.define(target, Type::Unknown, false);
+                let ir_elt = self.analyze_expr(elt)?;
+                self.scope.pop();
+                Ok(IrExpr::ListComp {
+                    elt: Box::new(ir_elt),
+                    target: target.clone(),
+                    iter: Box::new(ir_iter),
+                })
+            }
+            Expr::Tuple(elements) => {
+                let mut ir_elements = Vec::new();
+                for e in elements {
+                    ir_elements.push(self.analyze_expr(e)?);
+                }
+                Ok(IrExpr::Tuple(ir_elements))
+            }
+            Expr::Index { target, index } => {
+                let ir_target = self.analyze_expr(target)?;
+                let ir_index = self.analyze_expr(index)?;
+                Ok(IrExpr::Index {
+                    target: Box::new(ir_target),
+                    index: Box::new(ir_index),
+                })
+            }
+            Expr::Attribute { value, attr } => {
+                // Standalone attribute access (not call)
+                // Could be field access.
+                let ir_target = self.analyze_expr(value)?;
+                Ok(IrExpr::FieldAccess {
+                    target: Box::new(ir_target),
+                    field: attr.clone(),
+                })
+            }
+            Expr::UnaryOp { op, operand } => {
+                let ir_operand = self.analyze_expr(operand)?;
+                if let AstUnaryOp::Pos = op {
+                    Ok(ir_operand)
+                } else {
+                    let ir_op = match op {
+                        AstUnaryOp::Not => IrUnaryOp::Not,
+                        AstUnaryOp::Neg => IrUnaryOp::Neg,
+                        AstUnaryOp::Pos => unreachable!(),
+                    };
+                    Ok(IrExpr::UnaryOp {
+                        op: ir_op,
+                        operand: Box::new(ir_operand),
+                    })
+                }
+            }
         }
     }
 
@@ -286,6 +495,25 @@ impl SemanticAnalyzer {
                     Type::Unknown
                 }
             }
+            Expr::Index { target, index: _ } => {
+                let target_ty = self.infer_type(target);
+                if let Type::List(inner) = target_ty {
+                    *inner
+                } else {
+                    Type::Unknown
+                }
+            }
+            Expr::Call { func, args: _ } => {
+                 // Try to resolve return type
+                 if let Expr::Ident(name) = func.as_ref() {
+                     if let Some(info) = self.scope.lookup(name) {
+                         if let Type::Func { params: _, ret } = &info.ty {
+                             return *ret.clone();
+                         }
+                     }
+                 }
+                 Type::Unknown
+            }
             _ => Type::Unknown,
         }
     }
@@ -296,7 +524,9 @@ impl SemanticAnalyzer {
             AstBinOp::Sub => IrBinOp::Sub,
             AstBinOp::Mul => IrBinOp::Mul,
             AstBinOp::Div => IrBinOp::Div,
+            AstBinOp::FloorDiv => IrBinOp::FloorDiv,
             AstBinOp::Mod => IrBinOp::Mod,
+            AstBinOp::Pow => IrBinOp::Pow,
             AstBinOp::Eq => IrBinOp::Eq,
             AstBinOp::NotEq => IrBinOp::NotEq,
             AstBinOp::Lt => IrBinOp::Lt,
@@ -305,7 +535,6 @@ impl SemanticAnalyzer {
             AstBinOp::GtEq => IrBinOp::GtEq,
             AstBinOp::And => IrBinOp::And,
             AstBinOp::Or => IrBinOp::Or,
-            _ => IrBinOp::Add,
         }
     }
 }

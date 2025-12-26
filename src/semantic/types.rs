@@ -70,6 +70,14 @@ impl Type {
             Type::Unknown => "_".to_string(),
         }
     }
+
+    /// Check if type is Copy
+    pub fn is_copy(&self) -> bool {
+        match self {
+            Type::Int | Type::Float | Type::Bool | Type::Unit => true,
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]

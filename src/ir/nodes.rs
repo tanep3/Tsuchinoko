@@ -17,6 +17,22 @@ pub enum IrNode {
         target: String,
         value: Box<IrExpr>,
     },
+    /// Index assignment (arr[i] = val)
+    IndexAssign {
+        target: Box<IrExpr>,
+        index: Box<IrExpr>,
+        value: Box<IrExpr>,
+    },
+    /// Multiple assignment (a, b = val) - used for tuple unpacking
+    MultiAssign {
+        targets: Vec<String>,
+        value: Box<IrExpr>,
+    },
+    /// Multiple variable declaration (let (a, b) = val)
+    MultiVarDecl {
+        targets: Vec<(String, Type, bool)>, // (name, type, mutable)
+        value: Box<IrExpr>,
+    },
     /// Function declaration
     FuncDecl {
         name: String,
@@ -79,10 +95,34 @@ pub enum IrExpr {
         elem_type: Type,
         elements: Vec<IrExpr>,
     },
+    /// Tuple literal
+    Tuple(Vec<IrExpr>),
+    /// List comprehension [elt for target in iter]
+    ListComp {
+        elt: Box<IrExpr>,
+        target: String,
+        iter: Box<IrExpr>,
+    },
+    /// Index access
+    Index {
+        target: Box<IrExpr>,
+        index: Box<IrExpr>,
+    },
     /// Range (for loops)
     Range {
         start: Box<IrExpr>,
         end: Box<IrExpr>,
+    },
+    /// Method call (e.g., arr.len())
+    MethodCall {
+        target: Box<IrExpr>,
+        method: String,
+        args: Vec<IrExpr>,
+    },
+    /// Field access (e.g., obj.field)
+    FieldAccess {
+        target: Box<IrExpr>,
+        field: String,
     },
 }
 
@@ -93,7 +133,9 @@ pub enum IrBinOp {
     Sub,
     Mul,
     Div,
+    FloorDiv,
     Mod,
+    Pow,
     Eq,
     NotEq,
     Lt,
