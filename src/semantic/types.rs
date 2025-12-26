@@ -43,7 +43,28 @@ impl Type {
                 let inner = params.first().cloned().unwrap_or(Type::Unknown);
                 Type::Optional(Box::new(inner))
             }
+            // Internal: [int, int] parsed as param list for Callable
+            "__param_list__" => Type::Tuple(params.to_vec()),
             "None" => Type::Unit,
+            // Callable[[Param1, Param2], ReturnType] -> fn(Param1, Param2) -> ReturnType
+            "Callable" => {
+                // params[0] should be a Tuple-like list of param types
+                // params[1] should be the return type
+                let param_types = if let Some(Type::List(inner)) = params.first() {
+                    // If it's a list, extract the inner type (simplified - single type)
+                    vec![*inner.clone()]
+                } else if let Some(Type::Tuple(types)) = params.first() {
+                    types.clone()
+                } else {
+                    // Default: no params
+                    vec![]
+                };
+                let ret = params.get(1).cloned().unwrap_or(Type::Unknown);
+                Type::Func {
+                    params: param_types,
+                    ret: Box::new(ret),
+                }
+            }
             // Check if it's a user-defined type (capitalized name)
             name if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) => {
                 Type::Struct(name.to_string())

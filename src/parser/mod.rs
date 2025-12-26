@@ -297,12 +297,12 @@ fn parse_function_def(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsu
     let name = signature[..paren_start].trim().to_string();
     let params_str = &signature[paren_start + 1..paren_end];
     
-    // Parse parameters
+    // Parse parameters (use balanced split for nested brackets like Callable[[int], int])
     let params = if params_str.trim().is_empty() {
         vec![]
     } else {
-        params_str
-            .split(',')
+        split_by_comma_balanced(params_str)
+            .iter()
             .map(|p| parse_param(p.trim(), line_num))
             .collect::<Result<Vec<_>, _>>()?
     };
@@ -689,11 +689,42 @@ fn parse_return(line: &str, line_num: usize) -> Result<Stmt, TsuchinokoError> {
 /// Parse a type hint
 fn parse_type_hint(type_str: &str) -> Result<TypeHint, TsuchinokoError> {
     let type_str = type_str.trim();
+    
+    // Special case: [int, int] (bare list literal for Callable params)
+    // This represents a tuple of types, not a list type
+    if type_str.starts_with('[') && type_str.ends_with(']') {
+        let inner = &type_str[1..type_str.len() - 1];
+        let param_strs = split_by_comma_balanced(inner);
+        let params: Result<Vec<_>, _> = param_strs
+            .iter()
+            .map(|s| parse_type_hint(s.trim()))
+            .collect();
+        
+        // Return as "__param_list__" which we'll handle specially in from_python_hint
+        return Ok(TypeHint {
+            name: "__param_list__".to_string(),
+            params: params?,
+        });
+    }
+    
+    // Find the first '[' that starts type parameters (not nested)
     if let Some(bracket_pos) = type_str.find('[') {
+        // Find matching closing bracket
+        let closing_pos = find_matching_bracket(type_str, bracket_pos, '[', ']');
+        if closing_pos.is_none() {
+            return Ok(TypeHint {
+                name: type_str.to_string(),
+                params: vec![],
+            });
+        }
+        
         let name = type_str[..bracket_pos].trim();
         let params_str = &type_str[bracket_pos + 1..type_str.len() - 1];
-        let params: Result<Vec<_>, _> = params_str
-            .split(',')
+        
+        // Use balanced comma split for nested brackets like Callable[[int, int], bool]
+        let param_strs = split_by_comma_balanced(params_str);
+        let params: Result<Vec<_>, _> = param_strs
+            .iter()
             .map(|s| parse_type_hint(s.trim()))
             .collect();
         
