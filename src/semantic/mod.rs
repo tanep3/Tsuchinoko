@@ -136,6 +136,7 @@ impl SemanticAnalyzer {
         stmt: &Stmt,
         reassigned_vars: &mut std::collections::HashSet<String>,
         mutated_vars: &mut std::collections::HashSet<String>,
+        seen_vars: &mut std::collections::HashSet<String>,
     ) {
         fn extract_base_var(expr: &Expr) -> Option<String> {
             match expr {
@@ -148,9 +149,13 @@ impl SemanticAnalyzer {
         match stmt {
             // Check for reassignment (x = ... where x already exists)
             Stmt::Assign { target, .. } => {
-                if self.scope.lookup(target).is_some() {
+                let exists_in_scope = self.scope.lookup(target).is_some();
+                let seen_in_current_pass = seen_vars.contains(target);
+                
+                if exists_in_scope || seen_in_current_pass {
                     reassigned_vars.insert(target.clone());
                 }
+                seen_vars.insert(target.clone());
             }
             // Check for index assignment (x[i] = ...)
             Stmt::IndexAssign { target, .. } => {
@@ -171,28 +176,28 @@ impl SemanticAnalyzer {
             // Recurse into for loop body
             Stmt::For { body, .. } => {
                 for s in body {
-                    self.collect_mutations(s, reassigned_vars, mutated_vars);
+                    self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
                 }
             }
             // Recurse into while loop body
             Stmt::While { body, .. } => {
                 for s in body {
-                    self.collect_mutations(s, reassigned_vars, mutated_vars);
+                    self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
                 }
             }
             // Recurse into if/elif/else bodies
             Stmt::If { then_body, elif_clauses, else_body, .. } => {
                 for s in then_body {
-                    self.collect_mutations(s, reassigned_vars, mutated_vars);
+                    self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
                 }
                 for (_, elif_body) in elif_clauses {
                     for s in elif_body {
-                        self.collect_mutations(s, reassigned_vars, mutated_vars);
+                        self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
                     }
                 }
                 if let Some(eb) = else_body {
                     for s in eb {
-                        self.collect_mutations(s, reassigned_vars, mutated_vars);
+                        self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
                     }
                 }
             }
@@ -205,9 +210,10 @@ impl SemanticAnalyzer {
         // First pass: collect variables that are reassigned or mutated
         let mut reassigned_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut mutated_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut seen_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
         
         for stmt in stmts {
-            self.collect_mutations(stmt, &mut reassigned_vars, &mut mutated_vars);
+            self.collect_mutations(stmt, &mut reassigned_vars, &mut mutated_vars, &mut seen_vars);
         }
         
         let mut ir_nodes = Vec::new();

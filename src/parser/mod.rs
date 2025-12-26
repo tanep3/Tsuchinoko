@@ -273,8 +273,22 @@ fn parse_block(lines: &[&str], start: usize) -> Result<(Vec<Stmt>, usize), Tsuch
         let line = lines[i];
         let line_trim = line.trim();
         
+        let line_trim = line.trim();
+        
         // Skip empty lines within block
         if line_trim.is_empty() {
+            i += 1;
+            continue;
+        }
+        
+        // Skip comment lines
+        if line_trim.starts_with('#') {
+            i += 1;
+            continue;
+        }
+        
+        // Skip comment lines
+        if line_trim.starts_with('#') {
             i += 1;
             continue;
         }
@@ -361,20 +375,73 @@ fn parse_line(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoErr
     Ok(None)
 }
 
+/// Find first occurrence of a char respecting bracket balance and strings (Left to Right)
+fn find_char_balanced(s: &str, target: char) -> Option<usize> {
+    let mut depth_paren = 0;
+    let mut depth_bracket = 0;
+    let mut depth_brace = 0;
+    let mut in_string = false;
+    let mut string_quote = '\0';
+    let mut escaped = false;
+    
+    for (i, c) in s.char_indices() {
+        if in_string {
+             if escaped {
+                 escaped = false;
+             } else if c == '\\' {
+                 escaped = true;
+             } else if c == string_quote {
+                 in_string = false;
+             }
+             continue;
+        }
+        
+        match c {
+            '"' | '\'' => {
+                in_string = true;
+                string_quote = c;
+            }
+            '(' => depth_paren += 1,
+            ')' => if depth_paren > 0 { depth_paren -= 1 },
+            '[' => depth_bracket += 1,
+            ']' => if depth_bracket > 0 { depth_bracket -= 1 },
+            '{' => depth_brace += 1,
+            '}' => if depth_brace > 0 { depth_brace -= 1 },
+            _ if c == target && depth_paren == 0 && depth_bracket == 0 && depth_brace == 0 => {
+                 return Some(i);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Try to parse an assignment statement
 fn try_parse_assignment(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoError> {
-    if !line.contains('=') || line.contains("==") || line.contains("!=") || 
-       line.contains("<=") || line.contains(">=") {
-        return Ok(None);
+    // Find assignment operator '=' respecting quotes and brackets
+    // We need a helper for LTR balanced search
+    let eq_pos = match find_char_balanced(line, '=') {
+        Some(pos) => pos,
+        None => return Ok(None),
+    };
+    
+    // Ensure it's not '==', '!=', '<=', '>='
+    let bytes = line.as_bytes();
+    if eq_pos > 0 {
+        let prev = bytes[eq_pos - 1] as char;
+        if prev == '!' || prev == '<' || prev == '>' || prev == '=' {
+             return Ok(None);
+        }
+    }
+    if eq_pos + 1 < bytes.len() {
+        let next = bytes[eq_pos + 1] as char;
+        if next == '=' {
+             return Ok(None);
+        }
     }
     
-    let parts: Vec<&str> = line.splitn(2, '=').collect();
-    if parts.len() != 2 {
-        return Ok(None);
-    }
-    
-    let left = parts[0].trim();
-    let right = parts[1].trim();
+    let left = line[..eq_pos].trim();
+    let right = line[eq_pos + 1..].trim();
     
     // Check for tuple unpacking: a, b = func()
     let left_parts = split_by_comma_balanced(left);
@@ -746,20 +813,43 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
 
 /// Find matching bracket starting from a position
 /// Find matching opening bracket starting from a position (moving Left)
-fn find_matching_bracket_rtl(s: &str, start: usize, close_char: char, open_char: char) -> Option<usize> {
-    let mut depth = 0;
+fn find_matching_bracket_rtl(s: &str, end_pos: usize, close_char: char, open_char: char) -> Option<usize> {
+    // Scan from left to respect string literals
+    let mut stack = Vec::new();
+    let mut in_string = false;
+    let mut string_quote = '\0';
+    let mut escaped = false;
     
-    for (i, c) in s.char_indices().rev() {
-        if i > start {
+    for (i, c) in s.char_indices() {
+        if i > end_pos {
+            break; 
+        }
+
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == string_quote {
+                in_string = false;
+            }
             continue;
         }
         
-        if c == close_char {
-            depth += 1;
-        } else if c == open_char {
-            depth -= 1;
-            if depth == 0 {
-                return Some(i);
+        if c == '"' || c == '\'' {
+            in_string = true;
+            string_quote = c;
+            escaped = false;
+            continue;
+        }
+        
+        if c == open_char {
+            stack.push(i);
+        } else if c == close_char {
+            if let Some(open_pos) = stack.pop() {
+                if i == end_pos {
+                    return Some(open_pos);
+                }
             }
         }
     }
