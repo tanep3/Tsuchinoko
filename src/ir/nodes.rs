@@ -67,6 +67,11 @@ pub enum IrNode {
         name: String,
         fields: Vec<(String, Type)>,
     },
+    /// Try-except block (maps to match Result)
+    TryBlock {
+        try_body: Vec<IrNode>,
+        except_body: Vec<IrNode>,
+    },
 }
 
 /// IR expression types

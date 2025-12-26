@@ -67,6 +67,14 @@ pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
             continue;
         }
         
+        // Try to parse try-except
+        if line.starts_with("try:") || line == "try:" {
+            let (stmt, consumed) = parse_try_stmt(&lines, i)?;
+            statements.push(stmt);
+            i += consumed;
+            continue;
+        }
+        
         // Try to parse single-line statement
         if let Some(stmt) = parse_line(line, i + 1)? {
             statements.push(stmt);
@@ -75,6 +83,59 @@ pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
     }
     
     Ok(Program { statements })
+}
+
+/// Parse a try-except statement
+fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), TsuchinokoError> {
+    // First line should be "try:"
+    let line_num = start + 1;
+    
+    // Parse try body
+    let (try_body, try_consumed) = parse_block(lines, start + 1)?;
+    
+    // Find except clause
+    let except_start = start + 1 + try_consumed;
+    if except_start >= lines.len() {
+        return Err(TsuchinokoError::ParseError {
+            line: line_num,
+            message: "Expected 'except' after try block".to_string(),
+        });
+    }
+    
+    let except_line = lines[except_start].trim();
+    if !except_line.starts_with("except") {
+        return Err(TsuchinokoError::ParseError {
+            line: except_start + 1,
+            message: format!("Expected 'except', got: {}", except_line),
+        });
+    }
+    
+    // Parse exception type (optional)
+    let except_type = if except_line.starts_with("except ") && except_line.contains(':') {
+        let colon_pos = except_line.find(':').unwrap();
+        let type_str = except_line[7..colon_pos].trim();
+        if type_str.is_empty() {
+            None
+        } else {
+            Some(type_str.to_string())
+        }
+    } else {
+        None
+    };
+    
+    // Parse except body
+    let (except_body, except_consumed) = parse_block(lines, except_start + 1)?;
+    
+    let total_consumed = 1 + try_consumed + 1 + except_consumed;
+    
+    Ok((
+        Stmt::TryExcept {
+            try_body,
+            except_type,
+            except_body,
+        },
+        total_consumed,
+    ))
 }
 
 /// Parse a class definition (@dataclass class Name: ...)
@@ -449,6 +510,14 @@ fn parse_block(lines: &[&str], start: usize) -> Result<(Vec<Stmt>, usize), Tsuch
         
         if line_trim.starts_with("while ") {
             let (stmt, consumed) = parse_while_stmt(lines, i)?;
+            statements.push(stmt);
+            i += consumed;
+            continue;
+        }
+        
+        // Parse try-except
+        if line_trim.starts_with("try:") || line_trim == "try:" {
+            let (stmt, consumed) = parse_try_stmt(lines, i)?;
             statements.push(stmt);
             i += consumed;
             continue;

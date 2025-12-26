@@ -193,6 +193,22 @@ impl RustEmitter {
                 result.push_str(&format!("{}}}", indent));
                 result
             }
+            IrNode::TryBlock { try_body, except_body } => {
+                // For now, emit as a comment explaining the limitation
+                // In a full implementation, we would need to analyze the try body
+                // to determine what operations return Result and wrap them accordingly
+                let mut result = format!("{}// try-except: simplified translation\n", indent);
+                result.push_str(&format!("{}// Try block:\n", indent));
+                for node in try_body {
+                    result.push_str(&self.emit_node(node));
+                    result.push('\n');
+                }
+                result.push_str(&format!("{}// Except block (fallback - not automatically invoked):\n", indent));
+                for node in except_body {
+                    result.push_str(&format!("{}// {}\n", indent, self.emit_node(node).trim()));
+                }
+                result
+            }
         }
     }
 

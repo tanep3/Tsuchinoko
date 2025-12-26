@@ -654,6 +654,22 @@ impl SemanticAnalyzer {
                     fields: ir_fields,
                 })
             }
+            Stmt::TryExcept { try_body, except_type: _, except_body } => {
+                // Analyze try body
+                let ir_try_body: Vec<IrNode> = try_body.iter()
+                    .map(|s| self.analyze_stmt(s))
+                    .collect::<Result<Vec<_>, _>>()?;
+                
+                // Analyze except body
+                let ir_except_body: Vec<IrNode> = except_body.iter()
+                    .map(|s| self.analyze_stmt(s))
+                    .collect::<Result<Vec<_>, _>>()?;
+                
+                Ok(IrNode::TryBlock {
+                    try_body: ir_try_body,
+                    except_body: ir_except_body,
+                })
+            }
         }
     }
 

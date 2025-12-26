@@ -7,6 +7,7 @@ program = { SOI ~ NEWLINE* ~ (statement ~ NEWLINE*)* ~ EOI }
 statement = {
     class_def |
     func_def |
+    try_stmt |
     if_stmt |
     for_stmt |
     while_stmt |
@@ -47,6 +48,8 @@ else_clause = { "else" ~ ":" ~ block }
 
 for_stmt = { "for" ~ ident ~ "in" ~ expr ~ ":" ~ block }
 while_stmt = { "while" ~ expr ~ ":" ~ block }
+try_stmt = { "try" ~ ":" ~ block ~ except_clause }
+except_clause = { "except" ~ ident? ~ ":" ~ block }
 return_stmt = { "return" ~ expr? }
 
 assign_stmt = { target ~ type_annotation? ~ "=" ~ expr }

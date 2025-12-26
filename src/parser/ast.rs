@@ -138,6 +138,12 @@ pub enum Stmt {
         name: String,
         fields: Vec<Field>,
     },
+    /// Try-except statement
+    TryExcept {
+        try_body: Vec<Stmt>,
+        except_type: Option<String>,
+        except_body: Vec<Stmt>,
+    },
 }
 
 /// Function parameter
