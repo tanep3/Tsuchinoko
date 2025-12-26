@@ -10,7 +10,26 @@ pub fn emit(nodes: &[IrNode]) -> String {
     emitter.emit_nodes(nodes)
 }
 
-/// Rust code emitter
+/// Code emitter trait - enables multiple output formats
+/// Implementations: RustEmitter (default), could add DebugEmitter, etc.
+pub trait CodeEmitter {
+    /// Emit a single IR node
+    fn emit_node(&mut self, node: &IrNode) -> String;
+    
+    /// Emit an IR expression
+    fn emit_expr(&self, expr: &IrExpr) -> String;
+    
+    /// Emit multiple nodes
+    fn emit_nodes(&mut self, nodes: &[IrNode]) -> String {
+        nodes
+            .iter()
+            .map(|n| self.emit_node(n))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Rust code emitter - implements CodeEmitter for Rust output
 pub struct RustEmitter {
     indent: usize,
     /// Map of struct name -> field names (in order)
@@ -46,7 +65,7 @@ impl RustEmitter {
             .join("\n")
     }
 
-    fn emit_node(&mut self, node: &IrNode) -> String {
+    fn emit_node_internal(&mut self, node: &IrNode) -> String {
         let indent = "    ".repeat(self.indent);
         match node {
             IrNode::VarDecl { name, ty, mutable, init } => {
@@ -212,7 +231,7 @@ impl RustEmitter {
         }
     }
 
-    fn emit_expr(&self, expr: &IrExpr) -> String {
+    fn emit_expr_internal(&self, expr: &IrExpr) -> String {
         match expr {
             IrExpr::IntLit(n) => n.to_string(),
             IrExpr::FloatLit(f) => format!("{:.1}", f),
@@ -430,6 +449,19 @@ impl RustEmitter {
             }
         }
         s
+    }
+}
+
+/// Implementation of CodeEmitter trait for RustEmitter
+impl CodeEmitter for RustEmitter {
+    fn emit_node(&mut self, node: &IrNode) -> String {
+        // Delegate to the internal implementation
+        RustEmitter::emit_node_internal(self, node)
+    }
+    
+    fn emit_expr(&self, expr: &IrExpr) -> String {
+        // Delegate to the internal implementation  
+        RustEmitter::emit_expr_internal(self, expr)
     }
 }
 
