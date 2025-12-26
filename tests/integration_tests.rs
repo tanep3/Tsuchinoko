@@ -89,7 +89,8 @@ fn test_if_statement_to_rust() {
     ];
     
     let result = emit(&ir);
-    assert!(result.contains("if (x > 0)"));
+    // Parentheses around conditions are now stripped
+    assert!(result.contains("if x > 0"));
     assert!(result.contains("y = 1"));
     assert!(result.contains("else"));
     assert!(result.contains("y = 0"));
@@ -118,7 +119,8 @@ fn test_for_loop_to_rust() {
     ];
     
     let result = emit(&ir);
-    assert!(result.contains("for i in 0..10"));
+    // Integer literal ranges now emit with usize suffix
+    assert!(result.contains("for i in 0usize..10usize"));
 }
 
 /// Test: List/Vec creation

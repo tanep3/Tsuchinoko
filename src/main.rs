@@ -75,9 +75,15 @@ fn main() -> Result<()> {
 
     // Single file transpilation
     let output_path = cli.output.unwrap_or_else(|| {
+        // Default: output to current directory with same filename.rs
         let mut p = cli.input.clone();
         p.set_extension("rs");
-        p
+        // If input has a path, use just the filename in current dir
+        if let Some(filename) = p.file_name() {
+            std::path::PathBuf::from(filename)
+        } else {
+            p
+        }
     });
 
     std::fs::write(&output_path, &rust_code)?;

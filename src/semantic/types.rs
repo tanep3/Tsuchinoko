@@ -11,6 +11,7 @@ pub enum Type {
     Tuple(Vec<Type>),          // (T, U, ...)
     Dict(Box<Type>, Box<Type>), // HashMap<K, V>
     Optional(Box<Type>),        // Option<T>
+    Ref(Box<Type>),             // &T
     Func {
         params: Vec<Type>,
         ret: Box<Type>,
@@ -62,6 +63,14 @@ impl Type {
                 format!("HashMap<{}, {}>", k.to_rust_string(), v.to_rust_string())
             }
             Type::Optional(inner) => format!("Option<{}>", inner.to_rust_string()),
+            Type::Ref(inner) => {
+                // For List types, emit &[T] slice instead of &Vec<T> (more idiomatic)
+                if let Type::List(elem_type) = inner.as_ref() {
+                    format!("&[{}]", elem_type.to_rust_string())
+                } else {
+                    format!("&{}", inner.to_rust_string())
+                }
+            }
             Type::Func { params, ret } => {
                 let p: Vec<_> = params.iter().map(|t| t.to_rust_string()).collect();
                 format!("fn({}) -> {}", p.join(", "), ret.to_rust_string())
@@ -74,7 +83,7 @@ impl Type {
     /// Check if type is Copy
     pub fn is_copy(&self) -> bool {
         match self {
-            Type::Int | Type::Float | Type::Bool | Type::Unit => true,
+            Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Ref(_) => true,
             _ => false,
         }
     }

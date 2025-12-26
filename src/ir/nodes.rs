@@ -124,6 +124,10 @@ pub enum IrExpr {
         target: Box<IrExpr>,
         field: String,
     },
+    /// Reference (&expr)
+    Reference {
+        target: Box<IrExpr>,
+    },
 }
 
 /// IR binary operators

@@ -49,3 +49,6 @@ test/
 # Added by cargo
 
 /target
+
+# Transpiler outputs
+examples/outputs/

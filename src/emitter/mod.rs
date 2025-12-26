@@ -14,6 +14,22 @@ pub struct RustEmitter {
     indent: usize,
 }
 
+/// Convert camelCase/PascalCase to snake_case
+fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 {
+                result.push('_');
+            }
+            result.push(c.to_lowercase().next().unwrap());
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 impl RustEmitter {
     pub fn new() -> Self {
         Self { indent: 0 }
@@ -33,20 +49,21 @@ impl RustEmitter {
             IrNode::VarDecl { name, ty, mutable, init } => {
                 let mut_kw = if *mutable { "mut " } else { "" };
                 let ty_str = ty.to_rust_string();
+                let snake_name = to_snake_case(name);
                 match init {
                     Some(expr) => {
-                        format!("{}let {}{}: {} = {};", indent, mut_kw, name, ty_str, self.emit_expr(expr))
+                        format!("{}let {}{}: {} = {};", indent, mut_kw, snake_name, ty_str, self.emit_expr_no_outer_parens(expr))
                     }
                     None => {
-                        format!("{}let {}{}: {};", indent, mut_kw, name, ty_str)
+                        format!("{}let {}{}: {};", indent, mut_kw, snake_name, ty_str)
                     }
                 }
             }
             IrNode::Assign { target, value } => {
-                format!("{}{} = {};", indent, target, self.emit_expr(value))
+                format!("{}{} = {};", indent, to_snake_case(target), self.emit_expr(value))
             }
             IrNode::IndexAssign { target, index, value } => {
-                format!("{}{}[({} as usize)] = {};", indent, self.emit_expr(target), self.emit_expr(index), self.emit_expr(value))
+                format!("{}{}[{} as usize] = {};", indent, self.emit_expr(target), self.emit_expr(index), self.emit_expr(value))
             }
             IrNode::MultiAssign { targets, value } => {
                 let targets_str = targets.join(", ");
@@ -78,9 +95,10 @@ impl RustEmitter {
                 )
             }
             IrNode::FuncDecl { name, params, ret, body } => {
+                let snake_name = if name == "main" { name.clone() } else { to_snake_case(name) };
                 let params_str: Vec<_> = params
                     .iter()
-                    .map(|(n, t)| format!("{}: {}", n, t.to_rust_string()))
+                    .map(|(n, t)| format!("{}: {}", to_snake_case(n), t.to_rust_string()))
                     .collect();
                 let ret_str = ret.to_rust_string();
                 
@@ -91,7 +109,7 @@ impl RustEmitter {
                 format!(
                     "{}fn {}({}) -> {} {{\n{}\n{}}}",
                     indent,
-                    name,
+                    snake_name,
                     params_str.join(", "),
                     ret_str,
                     body_str,
@@ -116,7 +134,7 @@ impl RustEmitter {
                 format!(
                     "{}if {} {{\n{}\n{}}}{}",
                     indent,
-                    self.emit_expr(cond),
+                    self.emit_expr_no_outer_parens(cond),
                     then_str,
                     indent,
                     else_str
@@ -130,7 +148,7 @@ impl RustEmitter {
                 format!(
                     "{}for {} in {} {{\n{}\n{}}}",
                     indent,
-                    var,
+                    to_snake_case(var),
                     self.emit_expr(iter),
                     body_str,
                     indent
@@ -144,7 +162,7 @@ impl RustEmitter {
                 format!(
                     "{}while {} {{\n{}\n{}}}",
                     indent,
-                    self.emit_expr(cond),
+                    self.emit_expr_no_outer_parens(cond),
                     body_str,
                     indent
                 )
@@ -167,10 +185,10 @@ impl RustEmitter {
             IrExpr::FloatLit(f) => format!("{:.1}", f),
             IrExpr::StringLit(s) => format!("\"{}\"", s),
             IrExpr::BoolLit(b) => b.to_string(),
-            IrExpr::Var(name) => name.clone(),
+            IrExpr::Var(name) => to_snake_case(name),
             IrExpr::BinOp { left, op, right } => {
                 if let IrBinOp::Pow = op {
-                     return format!("(({} as f64).powf({} as f64) as i64)", self.emit_expr(left), self.emit_expr(right));
+                     return format!("({} as i64).pow(({}) as u32)", self.emit_expr(left), self.emit_expr(right));
                 }
                 
                 let op_str = match op {
@@ -200,13 +218,35 @@ impl RustEmitter {
                 format!("({}{})", op_str, self.emit_expr(operand))
             }
             IrExpr::Call { func, args } => {
-                let args_str: Vec<_> = args.iter().map(|a| self.emit_expr(a)).collect();
-                
                 if func == "print" {
-                    // Handle print("msg", arg) -> println!("msg {:?}", arg) or similar
-                    // Simplified: just join with spaces, using debug print for non-strings if possible
-                    // But format! string is tricky.
-                    // For now, let's just emit println!("{:?} {:?}", arg1, arg2)
+                    // Handle print("msg", arg) -> println!("msg {:?}", arg)
+                    // Clean up: remove .to_string() for string literals and .clone() for println
+                    let cleaned_args: Vec<_> = args.iter().map(|a| {
+                        // Unwrap unnecessary MethodCall wrappers
+                        let unwrapped = match a {
+                            IrExpr::MethodCall { target, method, args: mc_args } 
+                                if mc_args.is_empty() && (method == "clone" || method == "to_string") => 
+                            {
+                                target.as_ref()
+                            }
+                            other => other,
+                        };
+                        
+                        // For string literals, emit directly
+                        match unwrapped {
+                            IrExpr::StringLit(s) => format!("\"{}\"", s),
+                            _ => {
+                                // Just pass by ref for println
+                                let expr_str = self.emit_expr(unwrapped);
+                                if expr_str.starts_with('&') {
+                                    expr_str
+                                } else {
+                                    format!("&{}", expr_str)
+                                }
+                            }
+                        }
+                    }).collect();
+                    
                     let format_string = std::iter::repeat("{:?}")
                         .take(args.len())
                         .collect::<Vec<_>>()
@@ -214,10 +254,11 @@ impl RustEmitter {
                     if args.is_empty() {
                          "println!()".to_string()
                     } else {
-                        format!("println!(\"{}\", {})", format_string, args_str.join(", "))
+                        format!("println!(\"{}\", {})", format_string, cleaned_args.join(", "))
                     }
                 } else {
-                    format!("{}({})", func, args_str.join(", "))
+                    let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_no_outer_parens(a)).collect();
+                    format!("{}({})", to_snake_case(func), args_str.join(", "))
                 }
             }
             IrExpr::List { elem_type: _, elements } => {
@@ -226,10 +267,18 @@ impl RustEmitter {
             }
             IrExpr::ListComp { elt, target, iter } => {
                 // Map strategy: IntoIterator::into_iter(iter).map(|target| elt).collect::<Vec<_>>()
+                // If elt doesn't reference target, use _ to avoid unused variable warning
+                let elt_str = self.emit_expr(elt);
+                let target_snake = to_snake_case(target);
+                let closure_var = if elt_str.contains(&target_snake) {
+                    target_snake
+                } else {
+                    "_".to_string()
+                };
                 format!("IntoIterator::into_iter({}).map(|{}| {}).collect::<Vec<_>>()",
                     self.emit_expr(iter),
-                    target,
-                    self.emit_expr(elt)
+                    closure_var,
+                    elt_str
                 )
             }
             IrExpr::Tuple(elements) => {
@@ -237,15 +286,23 @@ impl RustEmitter {
                 format!("({})", elems.join(", "))
             }
             IrExpr::Index { target, index } => {
-                format!("{}[({} as usize)]", self.emit_expr(target), self.emit_expr(index))
+                format!("{}[{} as usize]", self.emit_expr(target), self.emit_expr(index))
             }
             IrExpr::Range { start, end } => {
-                format!("{}..{}", self.emit_expr(start), self.emit_expr(end))
+                // If both start and end are integer literals, emit as usize range
+                // This allows for i in 0..10 to produce usize loop variable
+                let start_lit = matches!(start.as_ref(), IrExpr::IntLit(_));
+                let end_lit = matches!(end.as_ref(), IrExpr::IntLit(_));
+                if start_lit && end_lit {
+                    format!("{}usize..{}usize", self.emit_expr(start), self.emit_expr(end))
+                } else {
+                    format!("{}..{}", self.emit_expr(start), self.emit_expr(end))
+                }
             }
             IrExpr::MethodCall { target, method, args } => {
                 if args.is_empty() {
                     if method == "len" {
-                        format!("({}.{}() as i64)", self.emit_expr(target), method)
+                        format!("{}.{}() as i64", self.emit_expr(target), method)
                     } else {
                         format!("{}.{}()", self.emit_expr(target), method)
                     }
@@ -257,7 +314,36 @@ impl RustEmitter {
             IrExpr::FieldAccess { target, field } => {
                 format!("{}.{}", self.emit_expr(target), field)
             }
+            IrExpr::Reference { target } => {
+                format!("&{}", self.emit_expr(target))
+            }
         }
+    }
+
+    /// Emit expression without outer parentheses (for if/while conditions)
+    fn emit_expr_no_outer_parens(&self, expr: &IrExpr) -> String {
+        let s = self.emit_expr(expr);
+        if s.starts_with('(') && s.ends_with(')') {
+            // Check if these are matching outer parens
+            let inner = &s[1..s.len()-1];
+            // Simple check: if inner has balanced parens, strip outer
+            let mut depth = 0;
+            let mut valid = true;
+            for c in inner.chars() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth < 0 { valid = false; break; }
+                    }
+                    _ => {}
+                }
+            }
+            if valid && depth == 0 {
+                return inner.to_string();
+            }
+        }
+        s
     }
 }
 
