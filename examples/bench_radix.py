@@ -1,5 +1,5 @@
 # Radix Sort Benchmark
-# N = 100000
+# N = 10000000
 
 def lcg(seed: int) -> int:
     return (1664525 * seed + 1013904223) % 4294967296
@@ -47,8 +47,8 @@ def recursiveRadixSort(lists: list[int]) -> list[int]:
     return sorted_list
 
 def main() -> None:
-    print("Generating data (N=100000)...")
-    data: list[int] = generate_random_list(100000)
+    print("Generating data (N=10000000)...")
+    data: list[int] = generate_random_list(10000000)
     
     print("Sorting...")
     sorted_data: list[int] = recursiveRadixSort(data)

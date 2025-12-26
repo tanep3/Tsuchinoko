@@ -1,5 +1,5 @@
 # Bubble Sort Benchmark
-# N = 3000
+# N = 30000
 
 def lcg(seed: int) -> int:
     # A simple LCG: x = (a * x + c) % m
@@ -27,8 +27,8 @@ def bubbleSort(lists: list[int]) -> list[int]:
     return sorted_list
 
 def main() -> None:
-    print("Generating data (N=3000)...")
-    data: list[int] = generate_random_list(3000)
+    print("Generating data (N=30000)...")
+    data: list[int] = generate_random_list(30000)
     
     print("Sorting...")
     # We won't measure time inside python script as we don't have time module

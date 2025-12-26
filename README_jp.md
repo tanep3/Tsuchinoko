@@ -29,6 +29,18 @@ Tsuchinokoは汎用的なPythonコンパイラではありません。以下の�
 - ✅ **snake_case変換**: `getOrder` → `get_order` 自動変換
 - ✅ **Rust最適化**: `dict` → `HashMap` 変換, `None` → `Option::None` マッピング
 
+## ベンチマーク 🚀
+
+Python (3.x) と Tsuchinoko生成Rustコード (`rustc -O`でコンパイル) の速度比較です。
+データ生成(LCG)とソート処理を含みます。
+
+| アルゴリズム | データ数 (N) | Python | Tsuchinoko (Rust) | 高速化率 |
+|-----------|---|--------|-------------------|---------|
+| **Bubble Sort** | 30,000 | 50.313s | **0.436s** | **約115倍** 🚀 |
+| **Radix Sort** | 10,000,000 | 9.480s | **0.402s** | **約24倍** 🚀 |
+
+*ローカル環境 (Linux x86_64) での計測結果。*
+
 ## インストール
 
 ```bash

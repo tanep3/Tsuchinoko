@@ -29,6 +29,18 @@ Tsuchinoko is **not** a general-purpose Python compiler. It is designed to:
 - ✅ **snake_case conversion**: `getOrder` → `get_order` automatic
 - ✅ **Rust Optimization**: Maps `dict` to `HashMap`, handles `None` as `Option::None`
 
+## Benchmarks 🚀
+
+Comparison between Python (3.x) and Tsuchinoko-generated Rust code (compiled with `rustc -O`).
+Benchmarks include data generation (LCG) and sorting time.
+
+| Algorithm | N | Python | Tsuchinoko (Rust) | Speedup |
+|-----------|---|--------|-------------------|---------|
+| **Bubble Sort** | 30,000 | 50.313s | **0.436s** | **~115x** 🚀 |
+| **Radix Sort** | 10,000,000 | 9.480s | **0.402s** | **~24x** 🚀 |
+
+*Measured on local environment (Linux x86_64).*
+
 ## Installation
 
 ```bash
