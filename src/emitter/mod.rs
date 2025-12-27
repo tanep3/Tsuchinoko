@@ -17,7 +17,7 @@ pub trait CodeEmitter {
     fn emit_node(&mut self, node: &IrNode) -> String;
     
     /// Emit an IR expression
-    fn emit_expr(&self, expr: &IrExpr) -> String;
+    fn emit_expr(&mut self, expr: &IrExpr) -> String;
     
     /// Emit multiple nodes
     fn emit_nodes(&mut self, nodes: &[IrNode]) -> String {
@@ -195,6 +195,9 @@ impl RustEmitter {
                     None => format!("{}return;", indent),
                 }
             }
+            IrNode::TypeAlias { name, ty } => {
+                format!("{}type {} = {};", indent, name, ty.to_rust_string())
+            }
             IrNode::Expr(expr) => {
                 format!("{}{};", indent, self.emit_expr(expr))
             }
@@ -231,9 +234,9 @@ impl RustEmitter {
         }
     }
 
-    fn emit_expr_internal(&self, expr: &IrExpr) -> String {
+    fn emit_expr_internal(&mut self, expr: &IrExpr) -> String {
         match expr {
-            IrExpr::IntLit(n) => n.to_string(),
+            IrExpr::IntLit(n) => format!("{}i64", n),
             IrExpr::FloatLit(f) => format!("{:.1}", f),
             IrExpr::StringLit(s) => format!("\"{}\"", s),
             IrExpr::BoolLit(b) => b.to_string(),
@@ -271,11 +274,18 @@ impl RustEmitter {
                 let op_str = match op {
                     IrUnaryOp::Neg => "-",
                     IrUnaryOp::Not => "!",
+                    IrUnaryOp::Deref => "*",
                 };
                 format!("({}{})", op_str, self.emit_expr(operand))
             }
             IrExpr::Call { func, args } => {
-                if func == "print" {
+                let is_print = if let IrExpr::Var(name) = func.as_ref() {
+                    name == "print"
+                } else {
+                    false
+                };
+
+                if is_print {
                     // Handle print("msg", arg) -> println!("msg {:?}", arg)
                     // Clean up: remove .to_string() for string literals and .clone() for println
                     let cleaned_args: Vec<_> = args.iter().map(|a| {
@@ -314,23 +324,41 @@ impl RustEmitter {
                         format!("println!(\"{}\", {})", format_string, cleaned_args.join(", "))
                     }
                 } else {
-                    // Check if this is a struct constructor
-                    if let Some(field_names) = self.struct_defs.get(func) {
-                        // Emit as struct literal: Point { x: 0, y: 0 }
-                        let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_no_outer_parens(a)).collect();
-                        let field_inits: Vec<String> = field_names.iter().zip(args_str.iter())
-                            .map(|(name, value)| format!("{}: {}", to_snake_case(name), value))
-                            .collect();
-                        format!("{} {{ {} }}", func, field_inits.join(", "))
+                    // Check if variable (possible struct constructor or function name)
+                    let func_name_opt = if let IrExpr::Var(name) = func.as_ref() {
+                        Some(name.clone())
                     } else {
-                        let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_no_outer_parens(a)).collect();
-                        // Don't snake_case built-in Rust expressions like Some, None, Ok, Err
-                        let func_name = if func == "Some" || func == "None" || func == "Ok" || func == "Err" {
-                            func.clone()
+                        None
+                    };
+
+                    if let Some(name) = func_name_opt {
+                        // Check if this is a struct constructor
+                        let _defs = self.struct_defs.clone(); // Clone expensive map? Or name lookups?
+                        // Better: Get field names and clone result
+                        // self.struct_defs is HashMap<String, Vec<String>>.
+                        // Clone Vec<String> is fine for struct def.
+                        if let Some(field_names) = self.struct_defs.get(&name).cloned() {
+                            // Emit as struct literal: Point { x: 0, y: 0 }
+                            let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_no_outer_parens(a)).collect();
+                            let field_inits: Vec<String> = field_names.iter().zip(args_str.iter())
+                                .map(|(name, value)| format!("{}: {}", to_snake_case(name), value))
+                                .collect();
+                            format!("{} {{ {} }}", name, field_inits.join(", "))
                         } else {
-                            to_snake_case(func)
-                        };
-                        format!("{}({})", func_name, args_str.join(", "))
+                            let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_no_outer_parens(a)).collect();
+                            // Don't snake_case built-in Rust expressions like Some, None, Ok, Err
+                            let func_name = if name == "Some" || name == "None" || name == "Ok" || name == "Err" {
+                                name.clone()
+                            } else {
+                                to_snake_case(&name)
+                            };
+                            format!("{}({})", func_name, args_str.join(", "))
+                        }
+                    } else {
+                        // Generic function call (func is expression)
+                        let func_str = self.emit_expr(func);
+                        let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_no_outer_parens(a)).collect();
+                        format!("{}({})", func_str, args_str.join(", "))
                     }
                 }
             }
@@ -375,12 +403,32 @@ impl RustEmitter {
                     format!("format!(\"{}\", {})", format_str, value_strs.join(", "))
                 }
             }
+            IrExpr::IfExp { test, body, orelse } => {
+                format!("if {} {{ {} }} else {{ {} }}",
+                    self.emit_expr_internal(test),
+                    self.emit_expr_internal(body),
+                    self.emit_expr_internal(orelse)
+                )
+            }
             IrExpr::ListComp { elt, target, iter, condition } => {
                 // Map strategy: IntoIterator::into_iter(iter).filter(|target| cond).map(|target| elt).collect::<Vec<_>>()
                 // If no condition: IntoIterator::into_iter(iter).map(|target| elt).collect::<Vec<_>>()
                 let elt_str = self.emit_expr_internal(elt);
-                let target_snake = to_snake_case(target);
-                let closure_var = if elt_str.contains(&target_snake) {
+                
+                let target_has_comma = target.contains(',');
+                let target_snake = if target_has_comma {
+                    let parts: Vec<String> = target.split(',')
+                        .map(|s| to_snake_case(s.trim()))
+                        .collect();
+                    format!("({})", parts.join(", "))
+                } else {
+                    to_snake_case(target)
+                };
+                
+                // For tuple unpacking, always use the target name to avoid partial usage check complexity
+                let closure_var = if target_has_comma {
+                    target_snake.clone()
+                } else if elt_str.contains(&target_snake) {
                     target_snake.clone()
                 } else {
                     "_".to_string()
@@ -401,9 +449,57 @@ impl RustEmitter {
                     format!("IntoIterator::into_iter({}).map(|{}| {}).collect::<Vec<_>>()",
                         iter_str,
                         closure_var,
+
                         elt_str
                     )
                 }
+            }
+            IrExpr::Closure { params, body, ret_type } => {
+                let params_str: Vec<String> = params.iter().map(|p| to_snake_case(p)).collect();
+                
+                // Increase indent for closure body is tricky because emit_expr_internal doesn't mutate state?
+                // But emit_node uses self.indent_level.
+                // Assuming we can't mutate self here easily if reference is shared?
+                // Wait, emit_expr takes &self.
+                // If indent_level is in RefCell checking struct def will tell.
+                // If not, we might produce ugly indentation or need refactoring.
+                // For now, let's assume we just emit body directly and let rustfmt handle it, 
+                // OR clean code manually processing lines?
+                // "    " + line.
+                
+                let mut body_str = String::new();
+                for (i, stmt) in body.iter().enumerate() {
+                    let is_last = i == body.len() - 1;
+                    let stmt_str = if is_last {
+                        match stmt {
+                            IrNode::Expr(e) => format!("{}{}", "    ".repeat(self.indent + 1), self.emit_expr(e)),
+                            _ => self.emit_node(stmt),
+                        }
+                    } else {
+                        self.emit_node(stmt)
+                    };
+                    for line in stmt_str.lines() {
+                         body_str.push_str("    "); 
+                         body_str.push_str(line);
+                         body_str.push('\n');
+                    }
+                }
+                
+                let ret_str = if let Type::Unit = ret_type {
+                    "".to_string()
+                } else if let Type::Unknown = ret_type {
+                    "".to_string()
+                } else {
+                    format!(" -> {}", ret_type.to_rust_string())
+                };
+                
+                format!("move |{}|{} {{\n{}\n}}", params_str.join(", "), ret_str, body_str)
+            }
+            IrExpr::BoxNew(arg) => {
+                format!("Box::new({})", self.emit_expr(arg))
+            }
+            IrExpr::Cast { target, ty } => {
+                format!("({} as {})", self.emit_expr(target), ty)
             }
             IrExpr::Tuple(elements) => {
                 let elems: Vec<_> = elements.iter().map(|e| self.emit_expr(e)).collect();
@@ -428,15 +524,7 @@ impl RustEmitter {
                 format!("{}[{} as usize]", self.emit_expr(target), self.emit_expr(index))
             }
             IrExpr::Range { start, end } => {
-                // If both start and end are integer literals, emit as usize range
-                // This allows for i in 0..10 to produce usize loop variable
-                let start_lit = matches!(start.as_ref(), IrExpr::IntLit(_));
-                let end_lit = matches!(end.as_ref(), IrExpr::IntLit(_));
-                if start_lit && end_lit {
-                    format!("{}usize..{}usize", self.emit_expr(start), self.emit_expr(end))
-                } else {
-                    format!("{}..{}", self.emit_expr(start), self.emit_expr(end))
-                }
+                format!("{}..{}", self.emit_expr(start), self.emit_expr(end))
             }
             IrExpr::MethodCall { target, method, args } => {
                 if args.is_empty() {
@@ -460,7 +548,7 @@ impl RustEmitter {
     }
 
     /// Emit expression without outer parentheses (for if/while conditions)
-    fn emit_expr_no_outer_parens(&self, expr: &IrExpr) -> String {
+    fn emit_expr_no_outer_parens(&mut self, expr: &IrExpr) -> String {
         let s = self.emit_expr(expr);
         if s.starts_with('(') && s.ends_with(')') {
             // Check if these are matching outer parens
@@ -493,7 +581,7 @@ impl CodeEmitter for RustEmitter {
         RustEmitter::emit_node_internal(self, node)
     }
     
-    fn emit_expr(&self, expr: &IrExpr) -> String {
+    fn emit_expr(&mut self, expr: &IrExpr) -> String {
         // Delegate to the internal implementation  
         RustEmitter::emit_expr_internal(self, expr)
     }
@@ -512,7 +600,7 @@ mod tests {
             init: Some(Box::new(IrExpr::IntLit(42))),
         };
         let result = emit(&[node]);
-        assert_eq!(result, "let x: i64 = 42;");
+        assert_eq!(result, "let x: i64 = 42i64;");
     }
 
     #[test]

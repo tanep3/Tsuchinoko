@@ -11,7 +11,6 @@ use utils::{
     find_keyword_balanced, split_by_comma_balanced,
 };
 
-use pest::Parser;
 use pest_derive::Parser;
 use crate::error::TsuchinokoError;
 
@@ -473,8 +472,7 @@ fn parse_block(lines: &[&str], start: usize) -> Result<(Vec<Stmt>, usize), Tsuch
     while i < lines.len() {
         let line = lines[i];
         let line_trim = line.trim();
-        
-        let line_trim = line.trim();
+        let _line_trim = line.trim();
         
         // Skip empty lines within block
         if line_trim.is_empty() {
@@ -501,6 +499,13 @@ fn parse_block(lines: &[&str], start: usize) -> Result<(Vec<Stmt>, usize), Tsuch
         }
         
         // Parse nested structures
+        if line_trim.starts_with("def ") {
+            let (stmt, consumed) = parse_function_def(lines, i)?;
+            statements.push(stmt);
+            i += consumed;
+            continue;
+        }
+
         if line_trim.starts_with("if ") {
             let (stmt, consumed) = parse_if_stmt(lines, i)?;
             statements.push(stmt);
@@ -927,6 +932,62 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         return Ok(Expr::Dict(parsed_entries));
     }
     
+    // Check for "bare" generator expression: expression for target in iter [if condition]
+    // This is for cases like tuple(x for x in y) or (x for x in y) where outer parens are stripped
+    if let Some(for_pos) = find_keyword_balanced(expr_str, "for") {
+        let left_part = &expr_str[..for_pos];
+        let right_part = &expr_str[for_pos + 3..]; // skip "for"
+        
+        // In right_part, we need " in "
+        if let Some(in_pos) = find_keyword_balanced(right_part, "in") {
+            let target_str = &right_part[..in_pos].trim();
+            let after_in = &right_part[in_pos + 2..].trim(); // skip "in"
+             
+             // Check for " if " condition
+            let (iter_str, condition) = if let Some(if_pos) = find_keyword_balanced(after_in, "if") {
+                let iter_part = &after_in[..if_pos].trim();
+                let cond_part = &after_in[if_pos + 2..].trim(); // skip "if"
+                let cond_expr = parse_expr(cond_part, line_num)?;
+                (iter_part.to_string(), Some(Box::new(cond_expr)))
+            } else {
+                (after_in.to_string(), None)
+            };
+            
+            let elt = parse_expr(left_part.trim(), line_num)?;
+            let iter = parse_expr(&iter_str, line_num)?;
+            
+
+            return Ok(Expr::GenExpr {
+                elt: Box::new(elt),
+                target: target_str.to_string(),
+                iter: Box::new(iter),
+                condition,
+            });
+        }
+    }
+
+    // Conditional Expression: body if test else orelse
+    // Priority is lower than binary ops, so check here (before binary ops).
+    if let Some(if_pos) = find_keyword_balanced(expr_str, "if") {
+        let after_if = &expr_str[if_pos + 2..];
+        if let Some(else_pos) = find_keyword_balanced(after_if, "else") {
+             // Found " if ... else ..." pattern
+             let body_str = &expr_str[..if_pos];
+             let test_str = &after_if[..else_pos];
+             let orelse_str = &after_if[else_pos + 4..];
+             
+             let body = parse_expr(body_str.trim(), line_num)?;
+             let test = parse_expr(test_str.trim(), line_num)?;
+             let orelse = parse_expr(orelse_str.trim(), line_num)?;
+             
+             return Ok(Expr::IfExp {
+                 test: Box::new(test),
+                 body: Box::new(body),
+                 orelse: Box::new(orelse),
+             });
+        }
+    }
+
     // Try to parse as binary operation (lowest precedence first)
     for (op_str, op) in [
         (" or ", BinOp::Or),
@@ -943,15 +1004,14 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         }
     }
     
-    // Comparison operators
+    // Comparison operators (check longer ones first)
     for (op_str, op) in [
-        (" == ", BinOp::Eq),
-        (" != ", BinOp::NotEq),
-        (" >= ", BinOp::GtEq),
-        (" <= ", BinOp::LtEq),
-        (" > ", BinOp::Gt),
-        (" < ", BinOp::Lt),
-        (" in ", BinOp::In),
+        ("==", BinOp::Eq),
+        ("!=", BinOp::NotEq),
+        (">=", BinOp::GtEq),
+        ("<=", BinOp::LtEq),
+        (">", BinOp::Gt),
+        ("<", BinOp::Lt),
     ] {
         if let Some(pos) = find_operator_balanced(expr_str, op_str) {
             let left = parse_expr(&expr_str[..pos], line_num)?;
@@ -964,10 +1024,22 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         }
     }
     
+    // "in" operator (keyword, needs spaces)
+    if let Some(pos) = find_operator_balanced(expr_str, " in ") {
+        let left = parse_expr(&expr_str[..pos], line_num)?;
+        let right = parse_expr(&expr_str[pos + 4..], line_num)?;
+        return Ok(Expr::BinOp {
+            left: Box::new(left),
+            op: BinOp::In,
+            right: Box::new(right),
+        });
+    }
+
+    
     // Additive operators (left to right, find rightmost)
     for (op_str, op) in [
-        (" + ", BinOp::Add),
-        (" - ", BinOp::Sub),
+        ("+", BinOp::Add),
+        ("-", BinOp::Sub),
     ] {
         if let Some(pos) = find_operator_balanced_rtl(expr_str, op_str) {
             let left = parse_expr(&expr_str[..pos], line_num)?;
@@ -982,10 +1054,10 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
     
     // Multiplicative operators
     for (op_str, op) in [
-        (" * ", BinOp::Mul),
-        (" // ", BinOp::FloorDiv),
-        (" / ", BinOp::Div),
-        (" % ", BinOp::Mod),
+        ("//", BinOp::FloorDiv), // longest match first
+        ("*", BinOp::Mul),
+        ("/", BinOp::Div),
+        ("%", BinOp::Mod),
     ] {
         if let Some(pos) = find_operator_balanced_rtl(expr_str, op_str) {
             let left = parse_expr(&expr_str[..pos], line_num)?;
@@ -999,9 +1071,9 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
     }
     
     // Power operator (right to left)
-    if let Some(pos) = find_operator_balanced(expr_str, " ** ") {
+    if let Some(pos) = find_operator_balanced(expr_str, "**") {
         let left = parse_expr(&expr_str[..pos], line_num)?;
-        let right = parse_expr(&expr_str[pos + 4..], line_num)?;
+        let right = parse_expr(&expr_str[pos + 2..], line_num)?;
         return Ok(Expr::BinOp {
             left: Box::new(left),
             op: BinOp::Pow,
@@ -1023,7 +1095,23 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
                  let args = if args_part.trim().is_empty() {
                      vec![]
                  } else {
-                     let arg_parts = split_by_comma_balanced(args_part);
+                     // Check if this is a generator expression being passed as a single argument
+                     // e.g. join(x for x in y) or func(a for a in b if c)
+                     // If we find a top-level "for" and NO top-level comma before it, it's a single gen expr.
+                     let is_single_gen_expr = if let Some(for_pos) = find_keyword_balanced(args_part, "for") {
+                         let left_part = &args_part[..for_pos];
+                         // Check if left_part has a comma
+                         split_by_comma_balanced(left_part).len() == 1
+                     } else {
+                         false
+                     };
+
+                     let arg_parts = if is_single_gen_expr {
+                         vec![args_part.to_string()]
+                     } else {
+                         split_by_comma_balanced(args_part)
+                     };
+                     
                      arg_parts.iter().map(|s| parse_expr(s.trim(), line_num)).collect::<Result<Vec<_>,_>>()?
                  };
                  

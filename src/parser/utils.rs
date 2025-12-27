@@ -227,6 +227,18 @@ pub fn find_operator_balanced(s: &str, op: &str) -> Option<usize> {
                 if i + op_chars.len() <= chars.len() {
                     let slice: String = chars[i..i + op_chars.len()].iter().collect();
                     if slice == op {
+                         // Avoid matching * inside ** and / inside //
+                         if op == "*" {
+                             let next_idx = i + op_chars.len();
+                             if next_idx < chars.len() && chars[next_idx] == '*' { continue; }
+                             if i > 0 && chars[i-1] == '*' { continue; }
+                         }
+                         if op == "/" {
+                             let next_idx = i + op_chars.len();
+                             if next_idx < chars.len() && chars[next_idx] == '/' { continue; }
+                             if i > 0 && chars[i-1] == '/' { continue; }
+                         }
+
                         return Some(i);
                     }
                 }
@@ -272,6 +284,18 @@ pub fn find_operator_balanced_rtl(s: &str, op: &str) -> Option<usize> {
                 if i + op_chars.len() <= chars.len() {
                     let slice: String = chars[i..i + op_chars.len()].iter().collect();
                     if slice == op {
+                         // Avoid matching * inside ** and / inside //
+                         if op == "*" {
+                             let next_idx = i + op_chars.len();
+                             if next_idx < chars.len() && chars[next_idx] == '*' { continue; }
+                             if i > 0 && chars[i-1] == '*' { continue; }
+                         }
+                         if op == "/" {
+                             let next_idx = i + op_chars.len();
+                             if next_idx < chars.len() && chars[next_idx] == '/' { continue; }
+                             if i > 0 && chars[i-1] == '/' { continue; }
+                         }
+
                         last_found = Some(i);
                     }
                 }

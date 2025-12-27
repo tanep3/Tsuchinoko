@@ -72,6 +72,11 @@ pub enum IrNode {
         try_body: Vec<IrNode>,
         except_body: Vec<IrNode>,
     },
+    /// Type alias (type Alias = T)
+    TypeAlias {
+        name: String,
+        ty: Type,
+    },
 }
 
 /// IR expression types
@@ -99,8 +104,14 @@ pub enum IrExpr {
     },
     /// Function call
     Call {
-        func: String,
+        func: Box<IrExpr>,
         args: Vec<IrExpr>,
+    },
+    /// Closure (lambda / nested function)
+    Closure {
+        params: Vec<String>,
+        body: Vec<IrNode>,
+        ret_type: Type,
     },
     /// List/Vec literal
     List {
@@ -152,6 +163,19 @@ pub enum IrExpr {
         parts: Vec<String>,
         values: Vec<IrExpr>,
     },
+    /// Conditional Expression (if test { body } else { orelse })
+    IfExp {
+        test: Box<IrExpr>,
+        body: Box<IrExpr>,
+        orelse: Box<IrExpr>,
+    },
+    /// Box::new helper
+    BoxNew(Box<IrExpr>),
+    /// Explicit cast (expr as type)
+    Cast {
+        target: Box<IrExpr>,
+        ty: String,
+    },
 }
 
 /// IR binary operators
@@ -180,6 +204,7 @@ pub enum IrBinOp {
 pub enum IrUnaryOp {
     Neg,
     Not,
+    Deref, // *expr
 }
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ pub enum Type {
     Func {
         params: Vec<Type>,
         ret: Box<Type>,
+        is_boxed: bool,
     },
     Unit,     // ()
     Struct(String),  // User-defined struct
@@ -33,7 +34,13 @@ impl Type {
                 let inner = params.first().cloned().unwrap_or(Type::Unknown);
                 Type::List(Box::new(inner))
             }
-            "tuple" | "Tuple" => Type::Tuple(params.to_vec()),
+            "tuple" | "Tuple" => {
+                if params.is_empty() {
+                    Type::List(Box::new(Type::Unknown)) 
+                } else {
+                    Type::Tuple(params.to_vec())
+                }
+            }
             "dict" | "Dict" => {
                 let key = params.first().cloned().unwrap_or(Type::Unknown);
                 let val = params.get(1).cloned().unwrap_or(Type::Unknown);
@@ -63,6 +70,7 @@ impl Type {
                 Type::Func {
                     params: param_types,
                     ret: Box::new(ret),
+                    is_boxed: true, // Callable implies generic/boxed function object
                 }
             }
             // Check if it's a user-defined type (capitalized name)
@@ -93,13 +101,21 @@ impl Type {
                 // For List types, emit &[T] slice instead of &Vec<T> (more idiomatic)
                 if let Type::List(elem_type) = inner.as_ref() {
                     format!("&[{}]", elem_type.to_rust_string())
+                } else if let Type::String = inner.as_ref() {
+                    "&str".to_string()
                 } else {
                     format!("&{}", inner.to_rust_string())
                 }
             }
-            Type::Func { params, ret } => {
+            Type::Func { params, ret, is_boxed } => {
                 let p: Vec<_> = params.iter().map(|t| t.to_rust_string()).collect();
-                format!("fn({}) -> {}", p.join(", "), ret.to_rust_string())
+                if *is_boxed {
+                    // Use Box<dyn Fn(...) + Send + Sync> to support closures and generics loosely
+                    format!("Box<dyn Fn({}) -> {} + Send + Sync>", p.join(", "), ret.to_rust_string())
+                } else {
+                    // Use fn(...) -> ... for raw function pointers (items)
+                    format!("fn({}) -> {}", p.join(", "), ret.to_rust_string())
+                }
             }
             Type::Unit => "()".to_string(),
             Type::Struct(name) => name.clone(),
@@ -111,6 +127,31 @@ impl Type {
     pub fn is_copy(&self) -> bool {
         match self {
             Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Ref(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Check if this type is compatible with another type (considering Unknown as wildcard)
+    pub fn is_compatible_with(&self, other: &Type) -> bool {
+        if self == other || *self == Type::Unknown || *other == Type::Unknown {
+            return true;
+        }
+
+        match (self, other) {
+            (Type::List(a), Type::List(b)) => a.is_compatible_with(b),
+            (Type::Tuple(a), Type::Tuple(b)) => {
+                if a.len() != b.len() { return false; }
+                a.iter().zip(b.iter()).all(|(x, y)| x.is_compatible_with(y))
+            }
+            (Type::Dict(k1, v1), Type::Dict(k2, v2)) => {
+                k1.is_compatible_with(k2) && v1.is_compatible_with(v2)
+            }
+            (Type::Optional(a), Type::Optional(b)) => a.is_compatible_with(b),
+            (Type::Ref(a), Type::Ref(b)) => a.is_compatible_with(b),
+            (Type::Func { params: p1, ret: r1, .. }, Type::Func { params: p2, ret: r2, .. }) => {
+                if p1.len() != p2.len() { return false; }
+                p1.iter().zip(p2.iter()).all(|(x, y)| x.is_compatible_with(y)) && r1.is_compatible_with(r2)
+            }
             _ => false,
         }
     }

@@ -47,6 +47,10 @@ pub struct ScopeStack {
 }
 
 impl ScopeStack {
+    pub fn depth(&self) -> usize {
+        self.scopes.len().saturating_sub(1)
+    }
+
     pub fn new() -> Self {
         Self {
             scopes: vec![Scope::new()], // Global scope

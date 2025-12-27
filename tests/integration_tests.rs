@@ -21,7 +21,7 @@ fn test_simple_assignment_to_rust() {
     ];
     
     let result = emit(&ir);
-    assert_eq!(result.trim(), "let x: i64 = 10;");
+    assert_eq!(result.trim(), "let x: i64 = 10i64;");
 }
 
 /// Test: Function definition
@@ -111,7 +111,7 @@ fn test_for_loop_to_rust() {
             }),
             body: vec![
                 IrNode::Expr(IrExpr::Call {
-                    func: "println".to_string(),
+                    func: Box::new(IrExpr::Var("println".to_string())),
                     args: vec![IrExpr::Var("i".to_string())],
                 }),
             ],
@@ -119,8 +119,8 @@ fn test_for_loop_to_rust() {
     ];
     
     let result = emit(&ir);
-    // Integer literal ranges now emit with usize suffix
-    assert!(result.contains("for i in 0usize..10usize"));
+    // Range currently emits with i64 suffixes
+    assert!(result.contains("for i in 0i64..10i64"));
 }
 
 /// Test: List/Vec creation
@@ -145,7 +145,7 @@ fn test_list_to_vec() {
     ];
     
     let result = emit(&ir);
-    assert!(result.contains("let nums: Vec<i64> = vec![1, 2, 3]"));
+    assert!(result.contains("let nums: Vec<i64> = vec![1i64, 2i64, 3i64]"));
 }
 
 /// Test: Type conversion - Python type hints to Rust types

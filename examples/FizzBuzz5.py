@@ -10,9 +10,9 @@ def FizzBuzz(func: ConditionFunction, divisionMessages:Dict[int,str]) -> Callabl
     return makeString
 
 # 条件式の定義
-def isDivisible(x:int, y:int) -> ConditionFunction:
+def isDivisible(x:int, y:int) -> bool:
     return x % y == 0
-def isDivisibleWeekEnd(x:int, y:int) -> ConditionFunction:
+def isDivisibleWeekEnd(x:int, y:int) -> bool:
     return x % 2 == 1 and x % y == 0
 
 # FizzBuzzの数値

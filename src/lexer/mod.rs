@@ -5,7 +5,7 @@ mod token;
 pub use token::*;
 
 /// Tokenize Python source code
-pub fn tokenize(source: &str) -> Vec<Token> {
+pub fn tokenize(_source: &str) -> Vec<Token> {
     // TODO: Implement tokenizer
     // For now, pest will handle this directly
     vec![]

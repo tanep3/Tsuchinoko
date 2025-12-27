@@ -47,6 +47,12 @@ pub enum Expr {
         iter: Box<Expr>,
         condition: Option<Box<Expr>>,
     },
+    /// Conditional Expression (body if test else orelse)
+    IfExp {
+        test: Box<Expr>,
+        body: Box<Expr>,
+        orelse: Box<Expr>,
+    },
     /// Tuple literal
     Tuple(Vec<Expr>),
     /// Index access
