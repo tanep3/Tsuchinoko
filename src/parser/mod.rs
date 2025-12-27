@@ -471,18 +471,12 @@ fn extract_fields_from_init(body: &[Stmt], params: &[Param]) -> Vec<Field> {
                     field_name
                 };
                 
-                // Determine type: explicit type hint > infer from param > Any
+                // Determine type: explicit type hint > infer from param in expr > Any
                 let hint = if let Some(h) = type_hint.clone() {
                     h
-                } else if let Expr::Ident(var_name) = value {
-                    // If RHS is a simple identifier, try to find matching param type
-                    if let Some(Some(param_hint)) = param_types.get(var_name.as_str()) {
-                        (*param_hint).clone()
-                    } else {
-                        TypeHint { name: "Any".to_string(), params: vec![] }
-                    }
                 } else {
-                    TypeHint { name: "Any".to_string(), params: vec![] }
+                    // Try to find any parameter reference in the RHS expression
+                    infer_type_from_expr(value, &param_types)
                 };
                 
                 fields.push(Field {
@@ -494,6 +488,49 @@ fn extract_fields_from_init(body: &[Stmt], params: &[Param]) -> Vec<Field> {
     }
     
     fields
+}
+
+/// Recursively find parameter references in an expression and return the first matching type
+fn infer_type_from_expr<'a>(
+    expr: &Expr,
+    param_types: &std::collections::HashMap<&str, Option<&'a TypeHint>>
+) -> TypeHint {
+    match expr {
+        // Direct identifier - check if it's a parameter
+        Expr::Ident(name) => {
+            if let Some(Some(hint)) = param_types.get(name.as_str()) {
+                (*hint).clone()
+            } else {
+                TypeHint { name: "Any".to_string(), params: vec![] }
+            }
+        }
+        // Function call - check arguments for parameters
+        Expr::Call { func, args } => {
+            // First check if any arg contains a param
+            for arg in args {
+                let hint = infer_type_from_expr(arg, param_types);
+                if hint.name != "Any" {
+                    return hint;
+                }
+            }
+            // Then check the function expression itself
+            infer_type_from_expr(func, param_types)
+        }
+        // Attribute access - check the target (e.g., param.items())
+        Expr::Attribute { value, .. } => {
+            infer_type_from_expr(value, param_types)
+        }
+        // Binary operation - check both sides
+        Expr::BinOp { left, right, .. } => {
+            let left_hint = infer_type_from_expr(left, param_types);
+            if left_hint.name != "Any" {
+                return left_hint;
+            }
+            infer_type_from_expr(right, param_types)
+        }
+        // Other expression types - return Any
+        _ => TypeHint { name: "Any".to_string(), params: vec![] }
+    }
 }
 
 /// Split method parameters by comma, respecting nested brackets

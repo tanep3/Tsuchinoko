@@ -11,14 +11,14 @@ impl Condition {
 
 #[derive(Clone, Debug)]
 struct Numbers {
-    numbers: Any,
+    numbers: std::collections::HashMap<i64, String>,
 }
 impl Numbers {
     fn add(&self, key_num: i64, name: String) -> _ {
         if self.numbers.contains(&key_num) {
 
         }
-        let new_numbers: _ = std::collections::_hash_map.from_iter(self.numbers);
+        let new_numbers: _ = self.numbers.into_iter().collect::<std::collections::HashMap<_, _>>();
         new_numbers[key_num as usize] = name;
         return Numbers { numbers: new_numbers.clone() };
     }

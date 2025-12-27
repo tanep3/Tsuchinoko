@@ -1719,11 +1719,18 @@ impl SemanticAnalyzer {
                 }))
             }
             ("dict", 1) => {
+                // dict(iterable) -> iterable.into_iter().collect::<HashMap<_, _>>() 
+                // Using collect() avoids needing FromIterator trait import
                 let ir_arg = self.analyze_expr(&args[0])?;
-                Ok(Some(IrExpr::MethodCall { 
-                    target: Box::new(IrExpr::Var("std::collections::HashMap".to_string())), 
-                    method: "from_iter".to_string(), 
-                    args: vec![ir_arg] 
+                let into_iter = IrExpr::MethodCall {
+                    target: Box::new(ir_arg),
+                    method: "into_iter".to_string(),
+                    args: vec![],
+                };
+                Ok(Some(IrExpr::MethodCall {
+                    target: Box::new(into_iter),
+                    method: "collect::<std::collections::HashMap<_, _>>".to_string(),
+                    args: vec![],
                 }))
             }
             ("max", 1) => {

@@ -312,7 +312,14 @@ impl RustEmitter {
             IrExpr::StringLit(s) => format!("\"{}\"", s),
             IrExpr::BoolLit(b) => b.to_string(),
             IrExpr::NoneLit => "None".to_string(),
-            IrExpr::Var(name) => to_snake_case(name),
+            IrExpr::Var(name) => {
+                // Don't snake_case qualified paths like std::collections::HashMap
+                if name.contains("::") {
+                    name.clone()
+                } else {
+                    to_snake_case(name)
+                }
+            }
             IrExpr::BinOp { left, op, right } => {
                 if let IrBinOp::Pow = op {
                      return format!("({} as i64).pow(({}) as u32)", self.emit_expr(left), self.emit_expr(right));
@@ -417,8 +424,8 @@ impl RustEmitter {
                             format!("{} {{ {} }}", name, field_inits.join(", "))
                         } else {
                             let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_no_outer_parens(a)).collect();
-                            // Don't snake_case built-in Rust expressions like Some, None, Ok, Err
-                            let func_name = if name == "Some" || name == "None" || name == "Ok" || name == "Err" {
+                            // Don't snake_case built-in Rust expressions or qualified paths
+                            let func_name = if name == "Some" || name == "None" || name == "Ok" || name == "Err" || name.contains("::") {
                                 name.clone()
                             } else {
                                 to_snake_case(&name)
