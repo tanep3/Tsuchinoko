@@ -1027,6 +1027,14 @@ fn parse_return(line: &str, line_num: usize) -> Result<Stmt, TsuchinokoError> {
 fn parse_type_hint(type_str: &str) -> Result<TypeHint, TsuchinokoError> {
     let type_str = type_str.trim();
     
+    // Handle forward reference string literals like 'Numbers' -> Numbers
+    let type_str = if (type_str.starts_with('\'') && type_str.ends_with('\'')) 
+                    || (type_str.starts_with('"') && type_str.ends_with('"')) {
+        &type_str[1..type_str.len() - 1]
+    } else {
+        type_str
+    };
+    
     // Special case: [int, int] (bare list literal for Callable params)
     // This represents a tuple of types, not a list type
     if type_str.starts_with('[') && type_str.ends_with(']') {

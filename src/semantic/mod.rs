@@ -475,14 +475,25 @@ impl SemanticAnalyzer {
                 }
             }
             Stmt::IndexAssign { target, index, value } => {
+                let target_ty = self.infer_type(target);
                 let ir_target = self.analyze_expr(target)?;
                 let ir_index = self.analyze_expr(index)?;
                 let ir_value = self.analyze_expr(value)?;
-                Ok(IrNode::IndexAssign {
-                    target: Box::new(ir_target),
-                    index: Box::new(ir_index),
-                    value: Box::new(ir_value),
-                })
+                
+                // For Dict types, use insert() method instead of index assignment
+                if matches!(target_ty, Type::Dict(_, _)) {
+                    Ok(IrNode::Expr(IrExpr::MethodCall {
+                        target: Box::new(ir_target),
+                        method: "insert".to_string(),
+                        args: vec![ir_index, ir_value],
+                    }))
+                } else {
+                    Ok(IrNode::IndexAssign {
+                        target: Box::new(ir_target),
+                        index: Box::new(ir_index),
+                        value: Box::new(ir_value),
+                    })
+                }
             }
             Stmt::TupleAssign { targets, value } => {
                 // Determine if this is a declaration or assignment based on first variable
@@ -813,7 +824,7 @@ impl SemanticAnalyzer {
                 let mut result_nodes = vec![
                     IrNode::StructDef {
                         name: name.clone(),
-                        fields: ir_fields,
+                        fields: ir_fields.clone(),
                     }
                 ];
                 
@@ -844,6 +855,16 @@ impl SemanticAnalyzer {
                         self.scope.push();
                         // Define self as this struct type
                         self.scope.define("self", Type::Struct(name.clone()), false);
+                        // Define struct fields as self.field_name for type inference
+                        for (field_name, field_ty) in &ir_fields {
+                            // Strip dunder prefix for consistency
+                            let rust_field_name = if field_name.starts_with("__") && !field_name.ends_with("__") {
+                                field_name.trim_start_matches("__")
+                            } else {
+                                field_name.as_str()
+                            };
+                            self.scope.define(&format!("self.{}", rust_field_name), field_ty.clone(), false);
+                        }
                         // Define method params
                         for (p_name, p_ty) in &ir_params {
                             self.scope.define(p_name, p_ty.clone(), false);
@@ -1031,6 +1052,30 @@ impl SemanticAnalyzer {
                         };
                         let ir_target = self.analyze_expr(value)?;
                         let target_ty = self.infer_type(value);
+
+                        // Check if this is a Callable field access (e.g., self.condition_function)
+                        // In Rust, calling a field that is a function requires (self.field)(args) syntax
+                        if let Expr::Ident(target_name) = value.as_ref() {
+                            if target_name == "self" {
+                                // Look up the field type
+                                let field_lookup = format!("self.{}", stripped_attr);
+                                if let Some(info) = self.scope.lookup(&field_lookup) {
+                                    // Resolve type aliases (e.g., ConditionFunction -> Func)
+                                    let resolved_ty = self.resolve_type(&info.ty);
+                                    if let Type::Func { .. } = resolved_ty {
+                                        // This is a Callable field - emit as Call not MethodCall
+                                        let ir_args = self.analyze_call_args(args, &[], &field_lookup)?;
+                                        return Ok(IrExpr::Call {
+                                            func: Box::new(IrExpr::FieldAccess {
+                                                target: Box::new(ir_target),
+                                                field: stripped_attr.to_string(),
+                                            }),
+                                            args: ir_args,
+                                        });
+                                    }
+                                }
+                            }
+                        }
 
                         // Try special method handling first
                         if let Some(ir) = self.try_handle_special_method(&ir_target, &target_ty, method_name, args)? {
@@ -1272,11 +1317,20 @@ impl SemanticAnalyzer {
                     Type::Unknown
                 }
             }
-            Expr::Call { func, args: _ } => {
+            Expr::Call { func, args } => {
                  // Try to resolve return type
                  if let Expr::Ident(name) = func.as_ref() {
                      if name == "tuple" || name == "list" {
                          return Type::List(Box::new(Type::Unknown));
+                     }
+                     // dict(x) returns the same Dict type as x
+                     if name == "dict" && !args.is_empty() {
+                         let arg_ty = self.infer_type(&args[0]);
+                         if let Type::Dict(k, v) = arg_ty {
+                             return Type::Dict(k, v);
+                         }
+                         // If arg is unknown, still return Dict with unknown types
+                         return Type::Dict(Box::new(Type::Unknown), Box::new(Type::Unknown));
                      }
                      if let Some(info) = self.scope.lookup(name) {
                          if let Type::Func { params: _, ret, .. } = &info.ty {
@@ -1352,6 +1406,24 @@ impl SemanticAnalyzer {
                 } else {
                     Type::Unknown
                 }
+            }
+            Expr::Attribute { value, attr } => {
+                // Handle self.field type inference
+                if let Expr::Ident(target_name) = value.as_ref() {
+                    if target_name == "self" {
+                        // Strip dunder prefix for lookup consistency
+                        let rust_field = if attr.starts_with("__") && !attr.ends_with("__") {
+                            attr.trim_start_matches("__")
+                        } else {
+                            attr.as_str()
+                        };
+                        // Look up self.field_name in scope
+                        if let Some(info) = self.scope.lookup(&format!("self.{}", rust_field)) {
+                            return info.ty.clone();
+                        }
+                    }
+                }
+                Type::Unknown
             }
             _ => Type::Unknown,
         }

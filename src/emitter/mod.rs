@@ -219,7 +219,7 @@ impl RustEmitter {
                 let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
                 self.struct_defs.insert(name.clone(), field_names);
                 
-                let mut result = format!("{}#[derive(Clone, Debug)]\n", indent);
+                let mut result = format!("{}#[derive(Clone)]\n", indent);
                 result.push_str(&format!("{}struct {} {{\n", indent, name));
                 for (field_name, field_type) in fields {
                     let rust_type = field_type.to_rust_string();
@@ -436,7 +436,14 @@ impl RustEmitter {
                         // Generic function call (func is expression)
                         let func_str = self.emit_expr(func);
                         let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_no_outer_parens(a)).collect();
-                        format!("{}({})", func_str, args_str.join(", "))
+                        // If func is a FieldAccess, we need (target.field)(args) syntax in Rust
+                        // to call a function stored in a field
+                        let needs_parens = matches!(func.as_ref(), IrExpr::FieldAccess { .. });
+                        if needs_parens {
+                            format!("({})({})", func_str, args_str.join(", "))
+                        } else {
+                            format!("{}({})", func_str, args_str.join(", "))
+                        }
                     }
                 }
             }

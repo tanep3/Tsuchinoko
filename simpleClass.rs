@@ -1,4 +1,4 @@
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct Counter {
     count: i64,
 }

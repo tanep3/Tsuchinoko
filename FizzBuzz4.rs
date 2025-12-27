@@ -1,25 +1,25 @@
-type ConditionFunction = Box<dyn Fn(i64, i64) -> bool + Send + Sync>;
-#[derive(Clone, Debug)]
+type ConditionFunction = std::sync::Arc<dyn Fn(i64, i64) -> bool + Send + Sync>;
+#[derive(Clone)]
 struct Condition {
     condition_function: ConditionFunction,
 }
 impl Condition {
     fn check(&self, num: i64, key_num: i64) -> bool {
-        return self.condition_function(num, key_num);
+        return (self.condition_function)(num, key_num);
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct Numbers {
     numbers: std::collections::HashMap<i64, String>,
 }
 impl Numbers {
-    fn add(&self, key_num: i64, name: String) -> _ {
-        if self.numbers.contains(&key_num) {
+    fn add(&self, key_num: i64, name: String) -> Numbers {
+        if self.numbers.contains_key(&key_num) {
 
         }
-        let new_numbers: _ = self.numbers.into_iter().collect::<std::collections::HashMap<_, _>>();
-        new_numbers[key_num as usize] = name;
+        let new_numbers: std::collections::HashMap<i64, String> = self.numbers.into_iter().collect::<std::collections::HashMap<_, _>>();
+        new_numbers.insert(key_num, name);
         return Numbers { numbers: new_numbers.clone() };
     }
     fn items(&self, ) -> Vec<(i64, String)> {
@@ -27,7 +27,7 @@ impl Numbers {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct FizzBuzz {
     condition: Condition,
     numbers: Numbers,

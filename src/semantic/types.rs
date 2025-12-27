@@ -110,8 +110,8 @@ impl Type {
             Type::Func { params, ret, is_boxed } => {
                 let p: Vec<_> = params.iter().map(|t| t.to_rust_string()).collect();
                 if *is_boxed {
-                    // Use Box<dyn Fn(...) + Send + Sync> to support closures and generics loosely
-                    format!("Box<dyn Fn({}) -> {} + Send + Sync>", p.join(", "), ret.to_rust_string())
+                    // Use Arc<dyn Fn(...) + Send + Sync> for Clone support
+                    format!("std::sync::Arc<dyn Fn({}) -> {} + Send + Sync>", p.join(", "), ret.to_rust_string())
                 } else {
                     // Use fn(...) -> ... for raw function pointers (items)
                     format!("fn({}) -> {}", p.join(", "), ret.to_rust_string())
