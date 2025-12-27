@@ -33,11 +33,19 @@ pub enum Expr {
     },
     /// List literal
     List(Vec<Expr>),
-    /// List comprehension [elt for target in iter]
+    /// List comprehension [elt for target in iter] or [elt for target in iter if cond]
     ListComp {
         elt: Box<Expr>,
         target: String,
         iter: Box<Expr>,
+        condition: Option<Box<Expr>>,
+    },
+    /// Generator expression (elt for target in iter if cond) - used in function calls
+    GenExpr {
+        elt: Box<Expr>,
+        target: String,
+        iter: Box<Expr>,
+        condition: Option<Box<Expr>>,
     },
     /// Tuple literal
     Tuple(Vec<Expr>),

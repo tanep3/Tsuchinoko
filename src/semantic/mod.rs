@@ -815,16 +815,41 @@ impl SemanticAnalyzer {
                     elements: ir_elements,
                 })
             }
-            Expr::ListComp { elt, target, iter } => {
+            Expr::ListComp { elt, target, iter, condition } => {
                 let ir_iter = self.analyze_expr(iter)?;
                 self.scope.push();
                 self.scope.define(target, Type::Unknown, false);
                 let ir_elt = self.analyze_expr(elt)?;
+                let ir_condition = if let Some(cond) = condition {
+                    Some(Box::new(self.analyze_expr(cond)?))
+                } else {
+                    None
+                };
                 self.scope.pop();
                 Ok(IrExpr::ListComp {
                     elt: Box::new(ir_elt),
                     target: target.clone(),
                     iter: Box::new(ir_iter),
+                    condition: ir_condition,
+                })
+            }
+            Expr::GenExpr { elt, target, iter, condition } => {
+                // GenExpr is treated the same as ListComp for now
+                let ir_iter = self.analyze_expr(iter)?;
+                self.scope.push();
+                self.scope.define(target, Type::Unknown, false);
+                let ir_elt = self.analyze_expr(elt)?;
+                let ir_condition = if let Some(cond) = condition {
+                    Some(Box::new(self.analyze_expr(cond)?))
+                } else {
+                    None
+                };
+                self.scope.pop();
+                Ok(IrExpr::ListComp {
+                    elt: Box::new(ir_elt),
+                    target: target.clone(),
+                    iter: Box::new(ir_iter),
+                    condition: ir_condition,
                 })
             }
             Expr::Tuple(elements) => {

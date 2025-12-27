@@ -860,7 +860,7 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
             return Ok(Expr::List(vec![]));
         }
         
-        // Check if it is a comprehension: expression for target in iter
+        // Check if it is a comprehension: expression for target in iter [if condition]
         // We look for " for " keyword
         if let Some(for_pos) = find_keyword_balanced(inner, "for") {
             let left_part = &inner[..for_pos];
@@ -869,15 +869,26 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
             // In right_part, we need " in "
             if let Some(in_pos) = find_keyword_balanced(right_part, "in") {
                 let target_str = &right_part[..in_pos].trim();
-                let iter_str = &right_part[in_pos + 2..].trim(); // skip "in"
+                let after_in = &right_part[in_pos + 2..].trim(); // skip "in"
+                
+                // Check for " if " condition
+                let (iter_str, condition) = if let Some(if_pos) = find_keyword_balanced(after_in, "if") {
+                    let iter_part = &after_in[..if_pos].trim();
+                    let cond_part = &after_in[if_pos + 2..].trim(); // skip "if"
+                    let cond_expr = parse_expr(cond_part, line_num)?;
+                    (iter_part.to_string(), Some(Box::new(cond_expr)))
+                } else {
+                    (after_in.to_string(), None)
+                };
                 
                 let elt = parse_expr(left_part.trim(), line_num)?;
-                let iter = parse_expr(iter_str, line_num)?;
+                let iter = parse_expr(&iter_str, line_num)?;
                 
                 return Ok(Expr::ListComp {
                     elt: Box::new(elt),
                     target: target_str.to_string(),
                     iter: Box::new(iter),
+                    condition,
                 });
             }
         }

@@ -109,11 +109,12 @@ pub enum IrExpr {
     },
     /// Tuple literal
     Tuple(Vec<IrExpr>),
-    /// List comprehension [elt for target in iter]
+    /// List comprehension [elt for target in iter if condition]
     ListComp {
         elt: Box<IrExpr>,
         target: String,
         iter: Box<IrExpr>,
+        condition: Option<Box<IrExpr>>,
     },
     /// Index access
     Index {

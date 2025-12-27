@@ -375,21 +375,35 @@ impl RustEmitter {
                     format!("format!(\"{}\", {})", format_str, value_strs.join(", "))
                 }
             }
-            IrExpr::ListComp { elt, target, iter } => {
-                // Map strategy: IntoIterator::into_iter(iter).map(|target| elt).collect::<Vec<_>>()
-                // If elt doesn't reference target, use _ to avoid unused variable warning
-                let elt_str = self.emit_expr(elt);
+            IrExpr::ListComp { elt, target, iter, condition } => {
+                // Map strategy: IntoIterator::into_iter(iter).filter(|target| cond).map(|target| elt).collect::<Vec<_>>()
+                // If no condition: IntoIterator::into_iter(iter).map(|target| elt).collect::<Vec<_>>()
+                let elt_str = self.emit_expr_internal(elt);
                 let target_snake = to_snake_case(target);
                 let closure_var = if elt_str.contains(&target_snake) {
-                    target_snake
+                    target_snake.clone()
                 } else {
                     "_".to_string()
                 };
-                format!("IntoIterator::into_iter({}).map(|{}| {}).collect::<Vec<_>>()",
-                    self.emit_expr(iter),
-                    closure_var,
-                    elt_str
-                )
+                
+                let iter_str = self.emit_expr_internal(iter);
+                
+                if let Some(cond) = condition {
+                    let cond_str = self.emit_expr_internal(cond);
+                    format!("IntoIterator::into_iter({}).filter(|{}| {}).map(|{}| {}).collect::<Vec<_>>()",
+                        iter_str,
+                        &target_snake,
+                        cond_str,
+                        closure_var,
+                        elt_str
+                    )
+                } else {
+                    format!("IntoIterator::into_iter({}).map(|{}| {}).collect::<Vec<_>>()",
+                        iter_str,
+                        closure_var,
+                        elt_str
+                    )
+                }
             }
             IrExpr::Tuple(elements) => {
                 let elems: Vec<_> = elements.iter().map(|e| self.emit_expr(e)).collect();
