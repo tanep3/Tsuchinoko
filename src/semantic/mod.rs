@@ -932,79 +932,20 @@ impl SemanticAnalyzer {
                         let ir_target = self.analyze_expr(value)?;
                         let target_ty = self.infer_type(value);
 
-                        // Built-in method expectations
-                        let expected_param_types = match (target_ty.clone(), method_name) {
-                            (Type::List(inner), "push") | (Type::List(inner), "append") => vec![*inner],
-                            (Type::List(inner), "extend") => vec![Type::Ref(Box::new(Type::List(inner)))],
-                            _ => vec![],
-                        };
+                        // Try special method handling first
+                        if let Some(ir) = self.try_handle_special_method(&ir_target, &target_ty, method_name, args)? {
+                            return Ok(ir);
+                        }
 
+                        // Default handling: analyze args and create method call
+                        let expected_param_types = self.get_method_param_types(&target_ty, method_name);
                         let ir_args = self.analyze_call_args(args, &expected_param_types, &format!("{}.{}", target_ty.to_rust_string(), method_name))?;
 
-                        if method_name == "items" && ir_args.is_empty() {
-                            return Ok(IrExpr::MethodCall {
-                                target: Box::new(ir_target),
-                                method: "iter".to_string(),
-                                args: vec![],
-                            });
-                        }
-
-                        // Handler for .join() on non-String Vec
-                        if method_name == "join" && ir_args.len() == 1 {
-                             let sep = ir_target;
-                             let iterable_ast = &args[0];
-                             let iterable_ty = self.infer_type(iterable_ast);
-                             let iterable_ir = ir_args[0].clone();
-
-                             let needs_string_conversion = match &iterable_ty {
-                                 Type::List(inner) => **inner != Type::String,
-                                 _ => true, 
-                             };
-
-                             if needs_string_conversion {
-                                 let iter_call = IrExpr::MethodCall {
-                                     target: Box::new(iterable_ir),
-                                     method: "iter".to_string(),
-                                     args: vec![],
-                                 };
-                                 let closure = IrExpr::Closure {
-                                     params: vec!["x".to_string()],
-                                     body: vec![IrNode::Expr(IrExpr::MethodCall {
-                                         target: Box::new(IrExpr::Var("x".to_string())),
-                                         method: "to_string".to_string(),
-                                         args: vec![],
-                                     })],
-                                     ret_type: Type::String,
-                                 };
-                                 let map_call = IrExpr::MethodCall {
-                                     target: Box::new(iter_call),
-                                     method: "map".to_string(),
-                                     args: vec![closure],
-                                 };
-                                 let collect_call = IrExpr::MethodCall {
-                                     target: Box::new(map_call),
-                                     method: "collect::<Vec<String>>".to_string(),
-                                     args: vec![],
-                                 };
-                                 Ok(IrExpr::MethodCall {
-                                     target: Box::new(collect_call),
-                                     method: "join".to_string(),
-                                     args: vec![sep],
-                                 })
-                             } else {
-                                 Ok(IrExpr::MethodCall {
-                                     target: Box::new(iterable_ir),
-                                     method: "join".to_string(),
-                                     args: vec![sep],
-                                 })
-                             }
-                        } else {
-                            Ok(IrExpr::MethodCall {
-                                target: Box::new(ir_target),
-                                method: method_name.to_string(),
-                                args: ir_args,
-                            })
-                        }
+                        Ok(IrExpr::MethodCall {
+                            target: Box::new(ir_target),
+                            method: method_name.to_string(),
+                            args: ir_args,
+                        })
                     }
                     _ => {
                         let func_ty = self.infer_type(func.as_ref());
@@ -1046,52 +987,8 @@ impl SemanticAnalyzer {
                 
                 self.scope.push();
                 
-                // Infer loop variable types from iterator
-                match &iter_ty {
-                    Type::List(inner) => {
-                         let elem_ty = inner.as_ref().clone();
-                         if target.contains(',') {
-                              if let Type::Tuple(elems) = elem_ty {
-                                  let targets: Vec<_> = target.split(',').map(|s| s.trim()).collect();
-                                  for (t, ty) in targets.iter().zip(elems.iter()) {
-                                      let final_ty = if let Type::Ref(_) = ty { ty.clone() } else { Type::Ref(Box::new(ty.clone())) };
-                                      self.scope.define(t, final_ty, false);
-                                  }
-                              } else {
-                                  for t in target.split(',') { self.scope.define(t.trim(), Type::Unknown, false); }
-                              }
-                         } else {
-                              let final_ty = if let Type::Ref(_) = elem_ty { elem_ty } else { Type::Ref(Box::new(elem_ty)) };
-                              self.scope.define(target, final_ty, false);
-                         }
-                    }
-                    Type::Dict(k, v) => {
-                         // Likely .items() case
-                         if target.contains(',') {
-                             let targets: Vec<_> = target.split(',').map(|s| s.trim()).collect();
-                             if targets.len() == 2 {
-                                 self.scope.define(targets[0], Type::Ref(k.clone()), false);
-                                 self.scope.define(targets[1], Type::Ref(v.clone()), false);
-                             }
-                         }
-                    }
-                    Type::Tuple(elems) => {
-                        if target.contains(',') {
-                            let targets: Vec<_> = target.split(',').map(|s| s.trim()).collect();
-                            for (t, ty) in targets.iter().zip(elems.iter()) {
-                                let final_ty = if let Type::Ref(_) = ty { ty.clone() } else { Type::Ref(Box::new(ty.clone())) };
-                                self.scope.define(t, final_ty, false);
-                            }
-                        }
-                    }
-                    _ => {
-                        if target.contains(',') {
-                             for t in target.split(',') { self.scope.define(t.trim(), Type::Unknown, false); }
-                        } else {
-                             self.scope.define(target, Type::Unknown, false);
-                        }
-                    }
-                }
+                // Define loop variables using unified helper
+                self.define_loop_variables(target, &iter_ty, true);
 
                 let ir_elt = self.analyze_expr(elt)?;
                 let ir_condition = if let Some(cond) = condition {
@@ -1362,140 +1259,268 @@ impl SemanticAnalyzer {
     ) -> Result<Vec<IrExpr>, TsuchinokoError> {
         let mut ir_args = Vec::new();
         for (i, a) in args.iter().enumerate() {
-            let mut ir_arg = self.analyze_expr(a)?;
-            let mut actual_ty = self.infer_type(a);
+            let ir_arg = self.analyze_expr(a)?;
+            let actual_ty = self.infer_type(a);
             let expected_ty = expected_param_types.get(i).cloned().unwrap_or(Type::Unknown);
-
-
-            let mut handled = false;
-
-            // 1. Unpack expectation if it's a reference
-            let (unresolved_target_expected_ty, needs_ref) = if let Type::Ref(inner) = &expected_ty {
-                (inner.as_ref().clone(), true)
-            } else {
-                (expected_ty.clone(), false)
-            };
-
-            // Resolve types for better comparison
-            let target_expected_ty = self.resolve_type(&unresolved_target_expected_ty);
-            let mut resolved_actual_ty = self.resolve_type(&actual_ty);
             
-            // Also strip references from actual_ty for internal checks if it's a Ref
-            while let Type::Ref(inner) = resolved_actual_ty {
-                resolved_actual_ty = *inner;
-            }
-
-
-
-            
-            // 2. Auto-Box if needed
-            if let Type::Func { is_boxed: true, .. } = &target_expected_ty {
-                if let Type::Func { is_boxed: false, .. } = &resolved_actual_ty {
-                    ir_arg = IrExpr::BoxNew(Box::new(ir_arg));
-                    
-                    // If the original expectation was a named alias (Struct), add explicit cast
-                    if let Type::Struct(alias_name) = &unresolved_target_expected_ty {
-                        ir_arg = IrExpr::Cast {
-                            target: Box::new(ir_arg),
-                            ty: alias_name.clone(),
-                        };
-                    }
-
-                    actual_ty = target_expected_ty.clone();
-                    resolved_actual_ty = target_expected_ty.clone();
-                }
-            }
-
-            // Special Case: Index expression target needs Ref if expected is Ref
-            if needs_ref && matches!(a, Expr::Index { .. }) {
-                ir_arg = IrExpr::Reference { target: Box::new(ir_arg) };
-                handled = true;
-            }
-            // 3. Auto-Ref or Auto-Deref or Clone
-            if needs_ref {
-                if handled {
-                    // Already handled (Reference or Index)
-                } else if let Type::Ref(_) = &actual_ty {
-                    // Already a reference
-                    handled = true;
-                } else {
-                    ir_arg = IrExpr::Reference { target: Box::new(ir_arg) };
-                    handled = true;
-                }
-            } else {
-                // Check for Auto-Deref: ref -> owned (Scalar)
-                let mut current_ty = actual_ty.clone();
-                let mut deref_count = 0;
-                while let Type::Ref(inner) = &current_ty {
-                    let inner_ty = inner.as_ref().clone();
-                    let is_target_unknown = matches!(target_expected_ty, Type::Unknown);
-                    
-                    // Case 1: We have Ref(T) and we need T. If T is Copy, deref it.
-                    if !needs_ref && inner_ty.is_copy() {
-                        ir_arg = IrExpr::UnaryOp { op: IrUnaryOp::Deref, operand: Box::new(ir_arg) };
-                        current_ty = inner_ty;
-                        deref_count += 1;
-                        handled = true;
-                        if current_ty.is_compatible_with(&target_expected_ty) || is_target_unknown { break; }
-                    }
-                    // Case 2: We have Ref(Ref(T)) and we need Ref(T). Deref once.
-                    else if needs_ref {
-                        // Check if we already match (Ref(T) == Ref(T))
-                        if current_ty.is_compatible_with(&target_expected_ty) || is_target_unknown { break; }
-                        // If not, and we have another layer of Ref, deref it.
-                        if let Type::Ref(_) = &inner_ty {
-                            ir_arg = IrExpr::UnaryOp { op: IrUnaryOp::Deref, operand: Box::new(ir_arg) };
-                            current_ty = inner_ty;
-                            deref_count += 1;
-                            handled = true;
-                        } else {
-                            break;
-                        }
-                    }
-                    else {
-                        break;
-                    }
-                }
-                if deref_count > 0 {
-                    actual_ty = current_ty.clone();
-                    resolved_actual_ty = self.resolve_type(&actual_ty);
-                }
-            }
-
-            // 4. Fallback: Clone if not copy and not handled (and not a reference being passed as value)
-            if !handled && !resolved_actual_ty.is_copy() && !matches!(actual_ty, Type::Ref(_)) && !matches!(resolved_actual_ty, Type::Func { .. }) {
-                 // Clone it
-                 let is_string_lit = matches!(ir_arg, IrExpr::StringLit(_) | IrExpr::FString { .. });
-                 let method_name = if is_string_lit {
-                     "to_string"
-                 } else {
-                     "clone"
-                 };
-                 ir_arg = IrExpr::MethodCall {
-                     target: Box::new(ir_arg),
-                     method: method_name.to_string(),
-                     args: vec![],
-                 };
-                 handled = true;
-            }
-
-            // 5. Special Fix for FizzBuzz: if we have &String and need String, and it's not handled by 4
-            // (e.g. if actual_ty was Ref(String))
-            if !handled && !actual_ty.is_copy() {
-                if let Type::Ref(inner) = &actual_ty {
-                    if **inner == Type::String {
-                        ir_arg = IrExpr::MethodCall {
-                            target: Box::new(ir_arg),
-                            method: "to_string".to_string(),
-                            args: vec![],
-                        };
-                    }
-                }
-            }
-
-            ir_args.push(ir_arg);
+            let coerced = self.coerce_arg(ir_arg, &actual_ty, &expected_ty, a);
+            ir_args.push(coerced);
         }
         Ok(ir_args)
+    }
+
+    /// Coerce a single argument to match the expected type
+    /// Handles Auto-Box, Auto-Ref, Auto-Deref, and Fallback Clone
+    fn coerce_arg(&self, mut ir_arg: IrExpr, actual_ty: &Type, expected_ty: &Type, expr: &Expr) -> IrExpr {
+        // 1. Unpack expectation (check if expected type is a reference)
+        let (target_ty, needs_ref) = match expected_ty {
+            Type::Ref(inner) => (inner.as_ref().clone(), true),
+            _ => (expected_ty.clone(), false),
+        };
+
+        let resolved_target = self.resolve_type(&target_ty);
+        let mut resolved_actual = self.resolve_type(actual_ty);
+        
+        // Strip all references from actual for comparison
+        while let Type::Ref(inner) = resolved_actual {
+            resolved_actual = *inner;
+        }
+
+        // 2. Auto-Box: Fn -> Box<dyn Fn>
+        if let Type::Func { is_boxed: true, .. } = &resolved_target {
+            if let Type::Func { is_boxed: false, .. } = &resolved_actual {
+                ir_arg = IrExpr::BoxNew(Box::new(ir_arg));
+                
+                // If target was a named alias, add explicit cast
+                if let Type::Struct(alias_name) = &target_ty {
+                    ir_arg = IrExpr::Cast {
+                        target: Box::new(ir_arg),
+                        ty: alias_name.clone(),
+                    };
+                }
+                return ir_arg;
+            }
+        }
+
+        // 3. Auto-Ref for Index expressions
+        if needs_ref && matches!(expr, Expr::Index { .. }) {
+            return IrExpr::Reference { target: Box::new(ir_arg) };
+        }
+
+        // 4. Auto-Ref/Deref logic
+        if needs_ref {
+            // Need a reference
+            if let Type::Ref(_) = actual_ty {
+                // Already a reference, use as-is
+                ir_arg
+            } else {
+                // Not a reference, add one
+                IrExpr::Reference { target: Box::new(ir_arg) }
+            }
+        } else {
+            // Need an owned value - apply Auto-Deref for Copy types
+            let mut current_ty = actual_ty.clone();
+            while let Type::Ref(inner) = &current_ty {
+                let inner_ty = inner.as_ref();
+                if inner_ty.is_copy() {
+                    ir_arg = IrExpr::UnaryOp { op: IrUnaryOp::Deref, operand: Box::new(ir_arg) };
+                    current_ty = inner_ty.clone();
+                    if current_ty.is_compatible_with(&resolved_target) { break; }
+                } else {
+                    break;
+                }
+            }
+
+            // Fallback Clone for non-Copy types
+            if !resolved_actual.is_copy() 
+                && !matches!(actual_ty, Type::Ref(_)) 
+                && !matches!(resolved_actual, Type::Func { .. }) 
+            {
+                let method = if matches!(ir_arg, IrExpr::StringLit(_) | IrExpr::FString { .. }) {
+                    "to_string"
+                } else {
+                    "clone"
+                };
+                ir_arg = IrExpr::MethodCall {
+                    target: Box::new(ir_arg),
+                    method: method.to_string(),
+                    args: vec![],
+                };
+            }
+
+            // Special case: &String -> String
+            if let Type::Ref(inner) = actual_ty {
+                if **inner == Type::String {
+                    ir_arg = IrExpr::MethodCall {
+                        target: Box::new(ir_arg),
+                        method: "to_string".to_string(),
+                        args: vec![],
+                    };
+                }
+            }
+
+            ir_arg
+        }
+    }
+
+    /// Define loop variables in scope based on iterator type
+    /// Used by ListComp, GenExpr, and For loops
+    fn define_loop_variables(&mut self, target: &str, iter_ty: &Type, wrap_in_ref: bool) {
+        match iter_ty {
+            Type::List(inner) => {
+                let elem_ty = inner.as_ref().clone();
+                self.define_loop_vars_from_elem(target, &elem_ty, wrap_in_ref);
+            }
+            Type::Dict(k, v) => {
+                // For .items() iteration
+                if target.contains(',') {
+                    let targets: Vec<_> = target.split(',').map(|s| s.trim()).collect();
+                    if targets.len() == 2 {
+                        self.scope.define(targets[0], Type::Ref(k.clone()), false);
+                        self.scope.define(targets[1], Type::Ref(v.clone()), false);
+                    }
+                }
+            }
+            Type::Tuple(elems) => {
+                if target.contains(',') {
+                    let targets: Vec<_> = target.split(',').map(|s| s.trim()).collect();
+                    for (t, ty) in targets.iter().zip(elems.iter()) {
+                        let final_ty = if wrap_in_ref && !matches!(ty, Type::Ref(_)) {
+                            Type::Ref(Box::new(ty.clone()))
+                        } else {
+                            ty.clone()
+                        };
+                        self.scope.define(t, final_ty, false);
+                    }
+                }
+            }
+            _ => {
+                // Unknown or Range type
+                if target.contains(',') {
+                    for t in target.split(',') {
+                        self.scope.define(t.trim(), Type::Unknown, false);
+                    }
+                } else {
+                    let ty = if wrap_in_ref { Type::Ref(Box::new(Type::Int)) } else { Type::Int };
+                    self.scope.define(target, ty, false);
+                }
+            }
+        }
+    }
+
+    /// Helper to define loop variables from element type (handles tuple unpacking)
+    fn define_loop_vars_from_elem(&mut self, target: &str, elem_ty: &Type, wrap_in_ref: bool) {
+        if target.contains(',') {
+            // Tuple unpacking: (k, v) for t in list_of_tuples
+            if let Type::Tuple(elems) = elem_ty {
+                let targets: Vec<_> = target.split(',').map(|s| s.trim()).collect();
+                for (t, ty) in targets.iter().zip(elems.iter()) {
+                    let final_ty = if wrap_in_ref && !matches!(ty, Type::Ref(_)) {
+                        Type::Ref(Box::new(ty.clone()))
+                    } else {
+                        ty.clone()
+                    };
+                    self.scope.define(t, final_ty, false);
+                }
+            } else {
+                // Fallback for non-tuple
+                for t in target.split(',') {
+                    self.scope.define(t.trim(), Type::Unknown, false);
+                }
+            }
+        } else {
+            // Single variable
+            let final_ty = if wrap_in_ref && !matches!(elem_ty, Type::Ref(_)) {
+                Type::Ref(Box::new(elem_ty.clone()))
+            } else {
+                elem_ty.clone()
+            };
+            self.scope.define(target, final_ty, false);
+        }
+    }
+
+    /// Handle special method calls that require transformation
+    /// Returns Some(IrExpr) if the method was handled specially, None otherwise
+    fn try_handle_special_method(
+        &mut self,
+        target_ir: &IrExpr,
+        _target_ty: &Type,
+        method: &str,
+        args: &[Expr],
+    ) -> Result<Option<IrExpr>, TsuchinokoError> {
+        match method {
+            "items" if args.is_empty() => {
+                // dict.items() -> dict.iter()
+                Ok(Some(IrExpr::MethodCall {
+                    target: Box::new(target_ir.clone()),
+                    method: "iter".to_string(),
+                    args: vec![],
+                }))
+            }
+            "join" if args.len() == 1 => {
+                // "sep".join(iterable) -> iterable.iter().map(|x| x.to_string()).collect().join(&sep)
+                let iterable_ast = &args[0];
+                let iterable_ty = self.infer_type(iterable_ast);
+                let iterable_ir = self.analyze_expr(iterable_ast)?;
+
+                let needs_string_conversion = match &iterable_ty {
+                    Type::List(inner) => **inner != Type::String,
+                    _ => true,
+                };
+
+                if needs_string_conversion {
+                    let iter_call = IrExpr::MethodCall {
+                        target: Box::new(iterable_ir),
+                        method: "iter".to_string(),
+                        args: vec![],
+                    };
+                    let closure = IrExpr::Closure {
+                        params: vec!["x".to_string()],
+                        body: vec![IrNode::Expr(IrExpr::MethodCall {
+                            target: Box::new(IrExpr::Var("x".to_string())),
+                            method: "to_string".to_string(),
+                            args: vec![],
+                        })],
+                        ret_type: Type::String,
+                    };
+                    let map_call = IrExpr::MethodCall {
+                        target: Box::new(iter_call),
+                        method: "map".to_string(),
+                        args: vec![closure],
+                    };
+                    let collect_call = IrExpr::MethodCall {
+                        target: Box::new(map_call),
+                        method: "collect::<Vec<String>>".to_string(),
+                        args: vec![],
+                    };
+                    Ok(Some(IrExpr::MethodCall {
+                        target: Box::new(collect_call),
+                        method: "join".to_string(),
+                        args: vec![target_ir.clone()],
+                    }))
+                } else {
+                    Ok(Some(IrExpr::MethodCall {
+                        target: Box::new(iterable_ir),
+                        method: "join".to_string(),
+                        args: vec![target_ir.clone()],
+                    }))
+                }
+            }
+            _ => Ok(None), // Not a special method, use default handling
+        }
+    }
+
+    /// Get expected parameter types for built-in methods
+    fn get_method_param_types(&self, target_ty: &Type, method: &str) -> Vec<Type> {
+        match (target_ty, method) {
+            (Type::List(inner), "push") | (Type::List(inner), "append") => {
+                vec![inner.as_ref().clone()]
+            }
+            (Type::List(inner), "extend") => {
+                vec![Type::Ref(Box::new(Type::List(inner.clone())))]
+            }
+            _ => vec![],
+        }
     }
 
     fn to_snake_case(&self, s: &str) -> String {
