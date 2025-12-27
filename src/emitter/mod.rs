@@ -74,7 +74,17 @@ impl RustEmitter {
                 let snake_name = to_snake_case(name);
                 match init {
                     Some(expr) => {
-                        format!("{}let {}{}: {} = {};", indent, mut_kw, snake_name, ty_str, self.emit_expr_no_outer_parens(expr))
+                        // If assigning a string literal to a String variable, add .to_string()
+                        let expr_str = if matches!(ty, Type::String) && matches!(expr.as_ref(), IrExpr::StringLit(_)) {
+                            if let IrExpr::StringLit(s) = expr.as_ref() {
+                                format!("\"{}\".to_string()", s)
+                            } else {
+                                self.emit_expr_no_outer_parens(expr)
+                            }
+                        } else {
+                            self.emit_expr_no_outer_parens(expr)
+                        };
+                        format!("{}let {}{}: {} = {};", indent, mut_kw, snake_name, ty_str, expr_str)
                     }
                     None => {
                         format!("{}let {}{}: {};", indent, mut_kw, snake_name, ty_str)
@@ -411,8 +421,8 @@ impl RustEmitter {
                 )
             }
             IrExpr::ListComp { elt, target, iter, condition } => {
-                // Map strategy: IntoIterator::into_iter(iter).filter(|target| cond).map(|target| elt).collect::<Vec<_>>()
-                // If no condition: IntoIterator::into_iter(iter).map(|target| elt).collect::<Vec<_>>()
+                // Use .iter().cloned() to avoid ownership transfer
+                // This allows the same collection to be used multiple times
                 let elt_str = self.emit_expr_internal(elt);
                 
                 let target_has_comma = target.contains(',');
@@ -436,20 +446,32 @@ impl RustEmitter {
                 
                 let iter_str = self.emit_expr_internal(iter);
                 
+                
+                let iter_chain = match iter.as_ref() {
+                    // Range needs parentheses for method chaining: (1..10).filter(...)
+                    IrExpr::Range { .. } => format!("({})", iter_str),
+                    // Already an iterator (MethodCall with iter/filter/map), use directly
+                    IrExpr::MethodCall { method, .. } 
+                        if method.contains("iter") || method.contains("filter") || method.contains("map") => {
+                        iter_str
+                    }
+                    // Collection: use .iter().cloned() to borrow and copy values
+                    _ => format!("{}.iter().cloned()", iter_str),
+                };
+                
                 if let Some(cond) = condition {
                     let cond_str = self.emit_expr_internal(cond);
-                    format!("IntoIterator::into_iter({}).filter(|{}| {}).map(|{}| {}).collect::<Vec<_>>()",
-                        iter_str,
+                    format!("{}.filter(|{}| {}).map(|{}| {}).collect::<Vec<_>>()",
+                        iter_chain,
                         &target_snake,
                         cond_str,
                         closure_var,
                         elt_str
                     )
                 } else {
-                    format!("IntoIterator::into_iter({}).map(|{}| {}).collect::<Vec<_>>()",
-                        iter_str,
+                    format!("{}.map(|{}| {}).collect::<Vec<_>>()",
+                        iter_chain,
                         closure_var,
-
                         elt_str
                     )
                 }

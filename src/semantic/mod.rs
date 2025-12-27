@@ -890,88 +890,9 @@ impl SemanticAnalyzer {
                  }
                  match func.as_ref() {
                     Expr::Ident(name) => {
-                        // Range handling
-                        if name == "range" {
-                            if args.len() == 1 {
-                                let start = IrExpr::IntLit(0);
-                                let end = self.analyze_expr(&args[0])?;
-                                return Ok(IrExpr::Range {
-                                    start: Box::new(start),
-                                    end: Box::new(end),
-                                });
-                            } else if args.len() == 2 {
-                                let start = self.analyze_expr(&args[0])?;
-                                let end = self.analyze_expr(&args[1])?;
-                                return Ok(IrExpr::Range {
-                                    start: Box::new(start),
-                                    end: Box::new(end),
-                                });
-                            }
-                        }
-                        
-                         // Built-in functions
-                        if name == "len" && args.len() == 1 {
-                            let arg = self.analyze_expr(&args[0])?;
-                            return Ok(IrExpr::MethodCall { target: Box::new(arg), method: "len".to_string(), args: vec![] });
-                        }
-                        if name == "list" && args.len() == 1 {
-                            // Use .to_vec() for slice compatibility (&[T] -> Vec<T>)
-                            let arg = self.analyze_expr(&args[0])?;
-                            return Ok(IrExpr::MethodCall { target: Box::new(arg), method: "to_vec".to_string(), args: vec![] });
-                        }
-                        if name == "tuple" && args.len() == 1 {
-                             let arg_expr = &args[0];
-                             let ir_arg = self.analyze_expr(arg_expr)?;
-                             // If it's already an iterator/collection producing IR, don't wrap?
-                             // Actually, ListComp/GenExpr and join already return collections.
-                             if matches!(ir_arg, IrExpr::ListComp { .. } | IrExpr::MethodCall { .. }) {
-                                 return Ok(ir_arg);
-                             }
-                             return Ok(IrExpr::MethodCall { target: Box::new(ir_arg), method: "collect::<Vec<_>>".to_string(), args: vec![] });
-                        }
-                        if name == "dict" && args.len() == 1 {
-                             let arg_expr = &args[0];
-                             let ir_arg = self.analyze_expr(arg_expr)?;
-                             if matches!(ir_arg, IrExpr::ListComp { .. } | IrExpr::MethodCall { .. }) {
-                                 // iter.collect::<HashMap<_, _>>()?
-                                 // For now, let's use the standard from_iter
-                                 return Ok(IrExpr::MethodCall { 
-                                     target: Box::new(IrExpr::Var("std::collections::HashMap".to_string())), 
-                                     method: "from_iter".to_string(), 
-                                     args: vec![ir_arg] 
-                                 });
-                             }
-                             return Ok(IrExpr::MethodCall { 
-                                 target: Box::new(IrExpr::Var("std::collections::HashMap".to_string())), 
-                                 method: "from_iter".to_string(), 
-                                 args: vec![ir_arg] 
-                             });
-                        }
-                        if name == "str" && args.len() == 1 {
-                            let arg = self.analyze_expr(&args[0])?;
-                            return Ok(IrExpr::MethodCall { target: Box::new(arg), method: "to_string".to_string(), args: vec![] });
-                        }
-                        if name == "tuple" && args.len() == 1 {
-                            // tuple(iter) -> iter.collect::<Vec<_>>()
-                            let arg = self.analyze_expr(&args[0])?;
-                             return Ok(IrExpr::MethodCall { target: Box::new(arg), method: "collect::<Vec<_>>".to_string(), args: vec![] });
-                        }
-                        if name == "dict" && args.len() == 1 {
-                            // dict(iter) -> HashMap::from_iter(iter)
-                            let arg = self.analyze_expr(&args[0])?;
-                            return Ok(IrExpr::MethodCall { 
-                                target: Box::new(IrExpr::Var("std::collections::HashMap".to_string())), 
-                                method: "from_iter".to_string(), 
-                                args: vec![arg] 
-                            });
-                        }
-                        if name == "max" && args.len() == 1 {
-                            let arg = self.analyze_expr(&args[0])?;
-                            let iter_call = IrExpr::MethodCall { target: Box::new(arg), method: "iter".to_string(), args: vec![] };
-                            let max_call = IrExpr::MethodCall { target: Box::new(iter_call), method: "max".to_string(), args: vec![] };
-                            let copied_call = IrExpr::MethodCall { target: Box::new(max_call), method: "cloned".to_string(), args: vec![] };
-                            let unwrap_call = IrExpr::MethodCall { target: Box::new(copied_call), method: "unwrap".to_string(), args: vec![] };
-                            return Ok(unwrap_call);
+                        // Try built-in function handler first
+                        if let Some(ir_expr) = self.try_handle_builtin_call(name, args)? {
+                            return Ok(ir_expr);
                         }
 
                         // Standard handling
@@ -1592,14 +1513,113 @@ impl SemanticAnalyzer {
         match ty {
             Type::Struct(name) => {
                 if let Some(info) = self.scope.lookup(name) {
+                    // Prevent infinite recursion: if the resolved type is the same Struct, return it
+                    if let Type::Struct(resolved_name) = &info.ty {
+                        if resolved_name == name {
+                            return ty.clone();
+                        }
+                    }
                     return self.resolve_type(&info.ty);
                 }
-                Type::Unknown
+                // Return the Struct type itself if not found (it's a legitimate struct type)
+                ty.clone()
             }
             Type::Ref(inner) => {
                 self.resolve_type(inner)
             }
             _ => ty.clone(),
+        }
+    }
+
+    /// Handle built-in function calls (range, len, list, str, tuple, dict, max)
+    /// Returns Some(IrExpr) if handled, None if not a built-in
+    fn try_handle_builtin_call(&mut self, name: &str, args: &[Expr]) -> Result<Option<IrExpr>, TsuchinokoError> {
+        match (name, args.len()) {
+            ("range", 1) => {
+                let start = IrExpr::IntLit(0);
+                let end = self.analyze_expr(&args[0])?;
+                Ok(Some(IrExpr::Range {
+                    start: Box::new(start),
+                    end: Box::new(end),
+                }))
+            }
+            ("range", 2) => {
+                let start = self.analyze_expr(&args[0])?;
+                let end = self.analyze_expr(&args[1])?;
+                Ok(Some(IrExpr::Range {
+                    start: Box::new(start),
+                    end: Box::new(end),
+                }))
+            }
+            ("len", 1) => {
+                let arg = self.analyze_expr(&args[0])?;
+                Ok(Some(IrExpr::MethodCall { 
+                    target: Box::new(arg), 
+                    method: "len".to_string(), 
+                    args: vec![] 
+                }))
+            }
+            ("list", 1) => {
+                let arg = self.analyze_expr(&args[0])?;
+                Ok(Some(IrExpr::MethodCall { 
+                    target: Box::new(arg), 
+                    method: "to_vec".to_string(), 
+                    args: vec![] 
+                }))
+            }
+            ("str", 1) => {
+                let arg = self.analyze_expr(&args[0])?;
+                Ok(Some(IrExpr::MethodCall { 
+                    target: Box::new(arg), 
+                    method: "to_string".to_string(), 
+                    args: vec![] 
+                }))
+            }
+            ("tuple", 1) => {
+                let ir_arg = self.analyze_expr(&args[0])?;
+                // If already an iterator/collection producing IR, don't wrap
+                if matches!(ir_arg, IrExpr::ListComp { .. } | IrExpr::MethodCall { .. }) {
+                    return Ok(Some(ir_arg));
+                }
+                Ok(Some(IrExpr::MethodCall { 
+                    target: Box::new(ir_arg), 
+                    method: "collect::<Vec<_>>".to_string(), 
+                    args: vec![] 
+                }))
+            }
+            ("dict", 1) => {
+                let ir_arg = self.analyze_expr(&args[0])?;
+                Ok(Some(IrExpr::MethodCall { 
+                    target: Box::new(IrExpr::Var("std::collections::HashMap".to_string())), 
+                    method: "from_iter".to_string(), 
+                    args: vec![ir_arg] 
+                }))
+            }
+            ("max", 1) => {
+                let arg = self.analyze_expr(&args[0])?;
+                let iter_call = IrExpr::MethodCall { 
+                    target: Box::new(arg), 
+                    method: "iter".to_string(), 
+                    args: vec![] 
+                };
+                let max_call = IrExpr::MethodCall { 
+                    target: Box::new(iter_call), 
+                    method: "max".to_string(), 
+                    args: vec![] 
+                };
+                let copied_call = IrExpr::MethodCall { 
+                    target: Box::new(max_call), 
+                    method: "cloned".to_string(), 
+                    args: vec![] 
+                };
+                let unwrap_call = IrExpr::MethodCall { 
+                    target: Box::new(copied_call), 
+                    method: "unwrap".to_string(), 
+                    args: vec![] 
+                };
+                Ok(Some(unwrap_call))
+            }
+            _ => Ok(None),
         }
     }
 
