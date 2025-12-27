@@ -145,6 +145,7 @@ pub fn split_by_comma_balanced(s: &str) -> Vec<String> {
     let mut current = String::new();
     let mut depth_paren = 0;
     let mut depth_bracket = 0;
+    let mut depth_brace = 0;
     let mut in_string = false;
     let mut string_char = ' ';
     
@@ -179,7 +180,15 @@ pub fn split_by_comma_balanced(s: &str) -> Vec<String> {
                 depth_bracket -= 1;
                 current.push(c);
             }
-            ',' if depth_paren == 0 && depth_bracket == 0 => {
+            '{' => {
+                depth_brace += 1;
+                current.push(c);
+            }
+            '}' => {
+                depth_brace -= 1;
+                current.push(c);
+            }
+            ',' if depth_paren == 0 && depth_bracket == 0 && depth_brace == 0 => {
                 parts.push(current.trim().to_string());
                 current = String::new();
             }

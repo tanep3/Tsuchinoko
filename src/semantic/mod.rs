@@ -779,7 +779,7 @@ impl SemanticAnalyzer {
                 let ir_expr = self.analyze_expr(expr)?;
                 Ok(IrNode::Expr(ir_expr))
             }
-            Stmt::ClassDef { name, fields } => {
+            Stmt::ClassDef { name, fields, methods } => {
                 // Convert AST fields to IR fields with types
                 let ir_fields: Vec<(String, Type)> = fields
                     .iter()
@@ -792,10 +792,92 @@ impl SemanticAnalyzer {
                 // Register this struct type in scope (for use in type hints)
                 self.scope.define(name, Type::Struct(name.clone()), false);
                 
-                Ok(IrNode::StructDef {
-                    name: name.clone(),
-                    fields: ir_fields,
-                })
+                // If there are methods, create an impl block
+                let mut result_nodes = vec![
+                    IrNode::StructDef {
+                        name: name.clone(),
+                        fields: ir_fields,
+                    }
+                ];
+                
+                if !methods.is_empty() {
+                    let mut ir_methods = Vec::new();
+                    
+                    for method in methods {
+                        // Skip __init__ - it's handled via fields
+                        if method.name == "__init__" {
+                            continue;
+                        }
+                        
+                        // Parse method parameters
+                        let ir_params: Vec<(String, Type)> = method.params.iter()
+                            .map(|p| {
+                                let ty = p.type_hint.as_ref()
+                                    .map(|h| self.type_from_hint(h))
+                                    .unwrap_or(Type::Unknown);
+                                (p.name.clone(), ty)
+                            })
+                            .collect();
+                        
+                        let ret_ty = method.return_type.as_ref()
+                            .map(|h| self.type_from_hint(h))
+                            .unwrap_or(Type::Unit);
+                        
+                        // Analyze method body with self in scope
+                        self.scope.push();
+                        // Define self as this struct type
+                        self.scope.define("self", Type::Struct(name.clone()), false);
+                        // Define method params
+                        for (p_name, p_ty) in &ir_params {
+                            self.scope.define(p_name, p_ty.clone(), false);
+                        }
+                        
+                        let ir_body: Vec<IrNode> = method.body.iter()
+                            .map(|s| self.analyze_stmt(s))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        self.scope.pop();
+                        
+                        ir_methods.push(IrNode::MethodDecl {
+                            name: method.name.clone(),
+                            params: ir_params,
+                            ret: ret_ty,
+                            body: ir_body,
+                            takes_self: !method.is_static,
+                        });
+                    }
+                    
+                    result_nodes.push(IrNode::ImplBlock {
+                        struct_name: name.clone(),
+                        methods: ir_methods,
+                    });
+                }
+                
+                // Return first node (StructDef) - additional nodes will need different handling
+                // For now, we'll combine them using a wrapper approach
+                if result_nodes.len() == 1 {
+                    Ok(result_nodes.remove(0))
+                } else {
+                    // Return a sequence - we need to handle this in the caller
+                    // For simplicity, flatten by returning the struct and storing impl for later
+                    // Actually, let's use a combined approach - return StructDef with embedded methods
+                    // We'll handle this in emitter instead
+                    Ok(IrNode::StructDef {
+                        name: name.clone(),
+                        fields: fields.iter()
+                            .map(|f| (f.name.clone(), self.type_from_hint(&f.type_hint)))
+                            .collect(),
+                    })
+                }
+            }
+            Stmt::Raise { exception_type: _, message } => {
+                let msg_ir = self.analyze_expr(message)?;
+                // Extract string from message
+                let msg = if let IrExpr::StringLit(s) = msg_ir {
+                    s
+                } else {
+                    "Error".to_string()
+                };
+                Ok(IrNode::Panic(msg))
             }
             Stmt::TryExcept { try_body, except_type: _, except_body } => {
                 // Analyze try body

@@ -241,6 +241,51 @@ impl RustEmitter {
                 }
                 result
             }
+            IrNode::ImplBlock { struct_name, methods } => {
+                let mut result = format!("{}impl {} {{\n", indent, struct_name);
+                self.indent += 1;
+                for method in methods {
+                    result.push_str(&self.emit_node(method));
+                    result.push('\n');
+                }
+                self.indent -= 1;
+                result.push_str(&format!("{}}}\n", indent));
+                result
+            }
+            IrNode::MethodDecl { name, params, ret, body, takes_self } => {
+                let inner_indent = "    ".repeat(self.indent);
+                let self_param = if *takes_self { "&self, " } else { "" };
+                
+                let params_str: Vec<String> = params.iter()
+                    .map(|(n, t)| format!("{}: {}", to_snake_case(n), t.to_rust_string()))
+                    .collect();
+                
+                let ret_str = if *ret == Type::Unit {
+                    "".to_string()
+                } else {
+                    format!(" -> {}", ret.to_rust_string())
+                };
+                
+                let mut result = format!("{}fn {}({}{}){} {{\n", 
+                    inner_indent, 
+                    to_snake_case(name), 
+                    self_param,
+                    params_str.join(", "),
+                    ret_str
+                );
+                
+                self.indent += 1;
+                for node in body {
+                    result.push_str(&self.emit_node(node));
+                    result.push('\n');
+                }
+                self.indent -= 1;
+                result.push_str(&format!("{}}}", inner_indent));
+                result
+            }
+            IrNode::Panic(msg) => {
+                format!("{}panic!(\"{}\");", indent, msg)
+            }
         }
     }
 

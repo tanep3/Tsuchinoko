@@ -18,9 +18,69 @@ use crate::error::TsuchinokoError;
 #[grammar = "parser/python.pest"]
 pub struct PythonParser;
 
+/// Preprocess source to join lines with unclosed brackets/parens
+fn preprocess_multiline(source: &str) -> String {
+    let mut result = Vec::new();
+    let mut current_line = String::new();
+    let mut bracket_depth = 0i32;
+    let mut paren_depth = 0i32;
+    let mut brace_depth = 0i32;
+    let mut in_string = false;
+    let mut string_char = ' ';
+    
+    for line in source.lines() {
+        // Count brackets in the line
+        for c in line.chars() {
+            if in_string {
+                if c == string_char {
+                    in_string = false;
+                }
+                continue;
+            }
+            
+            match c {
+                '"' | '\'' => {
+                    in_string = true;
+                    string_char = c;
+                }
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth -= 1,
+                '(' => paren_depth += 1,
+                ')' => paren_depth -= 1,
+                '{' => brace_depth += 1,
+                '}' => brace_depth -= 1,
+                _ => {}
+            }
+        }
+        
+        if current_line.is_empty() {
+            current_line = line.to_string();
+        } else {
+            // Append this line to current, preserving a single space
+            current_line.push(' ');
+            current_line.push_str(line.trim());
+        }
+        
+        // If all brackets are closed, emit the line
+        if bracket_depth == 0 && paren_depth == 0 && brace_depth == 0 {
+            result.push(current_line);
+            current_line = String::new();
+        }
+    }
+    
+    // Don't forget the last line if any
+    if !current_line.is_empty() {
+        result.push(current_line);
+    }
+    
+    result.join("\n")
+}
+
 /// Parse Python source code into AST
 pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
-    let lines: Vec<&str> = source.lines().collect();
+    // Preprocess: join lines with unclosed brackets
+    let preprocessed = preprocess_multiline(source);
+    let lines: Vec<&str> = preprocessed.lines().collect();
     let mut statements = Vec::new();
     let mut i = 0;
     
@@ -181,20 +241,21 @@ fn parse_class_def(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchi
     
     let name = class_part[..colon_pos].trim().to_string();
     
-    // Parse class body (fields)
-    let (fields, body_consumed) = parse_class_body(lines, i + 1)?;
+    // Parse class body (fields and methods)
+    let (fields, methods, body_consumed) = parse_class_body(lines, i + 1)?;
     
     let consumed = (i - start) + 1 + body_consumed;
     
     Ok((
-        Stmt::ClassDef { name, fields },
+        Stmt::ClassDef { name, fields, methods },
         consumed,
     ))
 }
 
-/// Parse class body (field definitions)
-fn parse_class_body(lines: &[&str], start: usize) -> Result<(Vec<Field>, usize), TsuchinokoError> {
+/// Parse class body (field definitions and methods)
+fn parse_class_body(lines: &[&str], start: usize) -> Result<(Vec<Field>, Vec<MethodDef>, usize), TsuchinokoError> {
     let mut fields = Vec::new();
+    let mut methods = Vec::new();
     let mut i = start;
     
     if i >= lines.len() {
@@ -231,7 +292,46 @@ fn parse_class_body(lines: &[&str], start: usize) -> Result<(Vec<Field>, usize),
             break;
         }
         
-        // Parse field: field_name: type
+        // Check for @staticmethod decorator
+        if line_trim == "@staticmethod" {
+            // Next line should be a method def
+            i += 1;
+            if i >= lines.len() {
+                return Err(TsuchinokoError::ParseError {
+                    line: i,
+                    message: "Expected method after @staticmethod".to_string(),
+                });
+            }
+            let method_line = lines[i].trim();
+            if method_line.starts_with("def ") {
+                let (method, consumed) = parse_method_def(lines, i, true)?;
+                methods.push(method);
+                i += consumed;
+            } else {
+                return Err(TsuchinokoError::ParseError {
+                    line: i + 1,
+                    message: "Expected method definition after @staticmethod".to_string(),
+                });
+            }
+            continue;
+        }
+        
+        // Check for method definition
+        if line_trim.starts_with("def ") {
+            let (method, consumed) = parse_method_def(lines, i, false)?;
+            
+            // Extract fields from __init__ method
+            if method.name == "__init__" {
+                let init_fields = extract_fields_from_init(&method.body);
+                fields.extend(init_fields);
+            }
+            
+            methods.push(method);
+            i += consumed;
+            continue;
+        }
+        
+        // Parse field: field_name: type (for dataclass style)
         let line_num = i + 1;
         if let Some(colon_pos) = line_trim.find(':') {
             let field_name = line_trim[..colon_pos].trim().to_string();
@@ -244,29 +344,188 @@ fn parse_class_body(lines: &[&str], start: usize) -> Result<(Vec<Field>, usize),
                 type_str
             };
             
-            let type_hint = parse_type_hint(type_str)?;
-            fields.push(Field {
-                name: field_name,
-                type_hint,
-            });
+            // Skip empty type (like in method params)
+            if !type_str.is_empty() {
+                let type_hint = parse_type_hint(type_str)?;
+                fields.push(Field {
+                    name: field_name,
+                    type_hint,
+                });
+            }
         } else {
             return Err(TsuchinokoError::ParseError {
                 line: line_num,
-                message: format!("Expected field definition with type hint: {}", line_trim),
+                message: format!("Expected field or method definition: {}", line_trim),
             });
         }
         
         i += 1;
     }
     
-    if fields.is_empty() {
+    Ok((fields, methods, i - start))
+}
+
+/// Parse a method definition (def method_name(self, ...): ...)
+fn parse_method_def(lines: &[&str], start: usize, is_static: bool) -> Result<(MethodDef, usize), TsuchinokoError> {
+    let line = lines[start].trim();
+    let line_num = start + 1;
+    
+    // Parse: def method_name(params) -> ret:
+    if !line.starts_with("def ") {
         return Err(TsuchinokoError::ParseError {
-            line: start + 1,
-            message: "Class must have at least one field".to_string(),
+            line: line_num,
+            message: format!("Expected 'def', got: {}", line),
         });
     }
     
-    Ok((fields, i - start))
+    let rest = line.strip_prefix("def ").unwrap();
+    let paren_start = rest.find('(').ok_or_else(|| TsuchinokoError::ParseError {
+        line: line_num,
+        message: "Missing '(' in method definition".to_string(),
+    })?;
+    
+    let name = rest[..paren_start].trim().to_string();
+    
+    // Find matching closing paren
+    let paren_end = find_closing_paren(rest, paren_start)?;
+    let params_str = &rest[paren_start + 1..paren_end];
+    
+    // Parse parameters (skip 'self' for instance methods)
+    let mut params = Vec::new();
+    for param_str in split_params(params_str) {
+        let param_str = param_str.trim();
+        if param_str.is_empty() || param_str == "self" {
+            continue;
+        }
+        
+        let param = if let Some(colon_pos) = param_str.find(':') {
+            let param_name = param_str[..colon_pos].trim().to_string();
+            let type_str = param_str[colon_pos + 1..].trim();
+            // Handle default value
+            let type_str = if let Some(eq_pos) = type_str.find('=') {
+                type_str[..eq_pos].trim()
+            } else {
+                type_str
+            };
+            Param {
+                name: param_name,
+                type_hint: Some(parse_type_hint(type_str)?),
+            }
+        } else {
+            Param {
+                name: param_str.to_string(),
+                type_hint: None,
+            }
+        };
+        params.push(param);
+    }
+    
+    // Parse return type
+    let after_params = &rest[paren_end + 1..];
+    let return_type = if let Some(arrow_pos) = after_params.find("->") {
+        let ret_str = after_params[arrow_pos + 2..].trim();
+        let ret_str = ret_str.strip_suffix(':').unwrap_or(ret_str).trim();
+        if !ret_str.is_empty() {
+            Some(parse_type_hint(ret_str)?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    
+    // Parse method body
+    let (body, body_consumed) = parse_block(lines, start + 1)?;
+    
+    Ok((
+        MethodDef {
+            name,
+            params,
+            return_type,
+            body,
+            is_static,
+        },
+        1 + body_consumed,
+    ))
+}
+
+/// Extract fields from __init__ body by looking for self.field = value patterns
+fn extract_fields_from_init(body: &[Stmt]) -> Vec<Field> {
+    let mut fields = Vec::new();
+    
+    for stmt in body {
+        // Look for self.__field = value or self.field = value
+        if let Stmt::Assign { target, type_hint, .. } = stmt {
+            if target.starts_with("self.") {
+                let field_name = target.strip_prefix("self.").unwrap();
+                // Convert __private to private (strip leading __)
+                let field_name = if field_name.starts_with("__") && !field_name.ends_with("__") {
+                    field_name.strip_prefix("__").unwrap()
+                } else {
+                    field_name
+                };
+                
+                // Use provided type hint or fallback to Unknown
+                let hint = type_hint.clone().unwrap_or_else(|| TypeHint {
+                    name: "Any".to_string(),
+                    params: vec![],
+                });
+                
+                fields.push(Field {
+                    name: field_name.to_string(),
+                    type_hint: hint,
+                });
+            }
+        }
+    }
+    
+    fields
+}
+
+/// Split method parameters by comma, respecting nested brackets
+fn split_params(s: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    
+    for (i, c) in s.char_indices() {
+        match c {
+            '[' | '(' | '{' => depth += 1,
+            ']' | ')' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                result.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    
+    if start < s.len() {
+        result.push(&s[start..]);
+    }
+    
+    result
+}
+
+/// Find closing parenthesis matching opening at given position
+fn find_closing_paren(s: &str, open_pos: usize) -> Result<usize, TsuchinokoError> {
+    let mut depth = 0;
+    for (i, c) in s[open_pos..].char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(open_pos + i);
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(TsuchinokoError::ParseError {
+        line: 0,
+        message: "Unmatched parenthesis".to_string(),
+    })
 }
 
 /// Parse a function definition
@@ -657,6 +916,28 @@ fn try_parse_assignment(line: &str, line_num: usize) -> Result<Option<Stmt>, Tsu
                 }
             }
         }
+    }
+    
+    // Check for attribute assignment: self.__field = value or self.field = value
+    // This must be handled before type annotation check since it contains ':'
+    if left.starts_with("self.") && !left.contains('[') {
+        // Parse the type hint if present: self.__field: Type = value
+        // First, try to find ':' that's part of a type hint (not in the attribute name)
+        let (attr_name, type_hint) = if let Some(colon_pos) = left[5..].find(':') {
+            let actual_colon_pos = 5 + colon_pos;
+            let name = left[..actual_colon_pos].trim();
+            let type_str = left[actual_colon_pos + 1..].trim();
+            (name, Some(parse_type_hint(type_str)?))
+        } else {
+            (left, None)
+        };
+        
+        let value = parse_expr(right, line_num)?;
+        return Ok(Some(Stmt::Assign {
+            target: attr_name.to_string(),  // Keep full "self.__field" format
+            type_hint,
+            value,
+        }));
     }
     
     // Normal assignment: name: type = val  or  name = val

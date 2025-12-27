@@ -154,16 +154,22 @@ pub enum Stmt {
     Return(Option<Expr>),
     /// Expression statement
     Expr(Expr),
-    /// Class definition (dataclass -> struct)
+    /// Class definition (dataclass -> struct, or class with methods)
     ClassDef {
         name: String,
         fields: Vec<Field>,
+        methods: Vec<MethodDef>,
     },
     /// Try-except statement
     TryExcept {
         try_body: Vec<Stmt>,
         except_type: Option<String>,
         except_body: Vec<Stmt>,
+    },
+    /// Raise statement
+    Raise {
+        exception_type: String,
+        message: Expr,
     },
 }
 
@@ -186,6 +192,16 @@ pub struct TypeHint {
 pub struct Field {
     pub name: String,
     pub type_hint: TypeHint,
+}
+
+/// Class method
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodDef {
+    pub name: String,
+    pub params: Vec<Param>,  // Excludes 'self'
+    pub return_type: Option<TypeHint>,
+    pub body: Vec<Stmt>,
+    pub is_static: bool,  // @staticmethod
 }
 
 /// Program (collection of statements)

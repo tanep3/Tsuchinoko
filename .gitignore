@@ -38,13 +38,7 @@ Thumbs.db
 .env
 
 # プロジェクト固有
-src_v0.1/
-src_v0.2/
-src_v0.3/
-src_v0.4/
-src_v0.5/
-docs_old/
-test/
+old_versions/
 
 # Added by cargo
 

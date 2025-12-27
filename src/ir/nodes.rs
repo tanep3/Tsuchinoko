@@ -67,6 +67,19 @@ pub enum IrNode {
         name: String,
         fields: Vec<(String, Type)>,
     },
+    /// Impl block for methods
+    ImplBlock {
+        struct_name: String,
+        methods: Vec<IrNode>,  // Contains MethodDecl nodes
+    },
+    /// Method declaration inside impl block
+    MethodDecl {
+        name: String,
+        params: Vec<(String, Type)>,  // Excludes &self
+        ret: Type,
+        body: Vec<IrNode>,
+        takes_self: bool,  // true for instance methods, false for static
+    },
     /// Try-except block (maps to match Result)
     TryBlock {
         try_body: Vec<IrNode>,
@@ -77,6 +90,8 @@ pub enum IrNode {
         name: String,
         ty: Type,
     },
+    /// Panic (from raise)
+    Panic(String),
 }
 
 /// IR expression types
