@@ -45,4 +45,4 @@ old_versions/
 /target
 
 # Transpiler outputs
-examples/outputs/
+tmp/

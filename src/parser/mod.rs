@@ -322,7 +322,7 @@ fn parse_class_body(lines: &[&str], start: usize) -> Result<(Vec<Field>, Vec<Met
             
             // Extract fields from __init__ method
             if method.name == "__init__" {
-                let init_fields = extract_fields_from_init(&method.body);
+                let init_fields = extract_fields_from_init(&method.body, &method.params);
                 fields.extend(init_fields);
             }
             
@@ -450,12 +450,18 @@ fn parse_method_def(lines: &[&str], start: usize, is_static: bool) -> Result<(Me
 }
 
 /// Extract fields from __init__ body by looking for self.field = value patterns
-fn extract_fields_from_init(body: &[Stmt]) -> Vec<Field> {
+fn extract_fields_from_init(body: &[Stmt], params: &[Param]) -> Vec<Field> {
     let mut fields = Vec::new();
+    
+    // Build a map of parameter names to their types
+    let param_types: std::collections::HashMap<&str, Option<&TypeHint>> = params
+        .iter()
+        .map(|p| (p.name.as_str(), p.type_hint.as_ref()))
+        .collect();
     
     for stmt in body {
         // Look for self.__field = value or self.field = value
-        if let Stmt::Assign { target, type_hint, .. } = stmt {
+        if let Stmt::Assign { target, type_hint, value } = stmt {
             if target.starts_with("self.") {
                 let field_name = target.strip_prefix("self.").unwrap();
                 // Convert __private to private (strip leading __)
@@ -465,11 +471,19 @@ fn extract_fields_from_init(body: &[Stmt]) -> Vec<Field> {
                     field_name
                 };
                 
-                // Use provided type hint or fallback to Unknown
-                let hint = type_hint.clone().unwrap_or_else(|| TypeHint {
-                    name: "Any".to_string(),
-                    params: vec![],
-                });
+                // Determine type: explicit type hint > infer from param > Any
+                let hint = if let Some(h) = type_hint.clone() {
+                    h
+                } else if let Expr::Ident(var_name) = value {
+                    // If RHS is a simple identifier, try to find matching param type
+                    if let Some(Some(param_hint)) = param_types.get(var_name.as_str()) {
+                        (*param_hint).clone()
+                    } else {
+                        TypeHint { name: "Any".to_string(), params: vec![] }
+                    }
+                } else {
+                    TypeHint { name: "Any".to_string(), params: vec![] }
+                };
                 
                 fields.push(Field {
                     name: field_name.to_string(),

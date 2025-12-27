@@ -114,7 +114,8 @@ impl SemanticAnalyzer {
         
         for node in ir_nodes {
             match node {
-                IrNode::FuncDecl { .. } | IrNode::StructDef { .. } | IrNode::TypeAlias { .. } => {
+                IrNode::FuncDecl { .. } | IrNode::StructDef { .. } | IrNode::TypeAlias { .. } 
+                | IrNode::ImplBlock { .. } | IrNode::Sequence(_) => {
                     other_decls.push(node);
                 }
                 _ => {
@@ -380,9 +381,11 @@ impl SemanticAnalyzer {
                 // 1. It's reassigned later, OR
                 // 2. It's mutated via method calls (push/append/etc), OR
                 // 3. It's mutated via index assignment
+                // 4. It's a Struct or List (which often need mutation)
                 let will_be_reassigned = reassigned_vars.contains(target);
                 let will_be_mutated = mutated_vars.contains(target);
-                let should_be_mutable = is_reassign || will_be_reassigned || will_be_mutated;
+                let is_mutable_type = matches!(ty, Type::List(_) | Type::Struct(_));
+                let should_be_mutable = is_reassign || will_be_reassigned || will_be_mutated || is_mutable_type;
                 
                 if !is_reassign {
                     self.scope.define(target, ty.clone(), false);
@@ -412,6 +415,19 @@ impl SemanticAnalyzer {
     fn analyze_stmt(&mut self, stmt: &Stmt) -> Result<IrNode, TsuchinokoError> {
         match stmt {
             Stmt::Assign { target, type_hint, value } => {
+                // Handle self.field = value pattern
+                if target.starts_with("self.") {
+                    let field_name = target.trim_start_matches("self.");
+                    // Strip dunder prefix for Rust struct field
+                    let rust_field_name = field_name.trim_start_matches("__").to_string();
+                    let ir_value = self.analyze_expr(value)?;
+                    return Ok(IrNode::FieldAssign {
+                        target: Box::new(IrExpr::Var("self".to_string())),
+                        field: rust_field_name,
+                        value: Box::new(ir_value),
+                    });
+                }
+                
                 // Check for TypeAlias even in top-level analyze_stmt
                 if type_hint.is_none() && target.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
                     if let Some(ty) = self.expr_to_type(value) {
@@ -429,8 +445,9 @@ impl SemanticAnalyzer {
                 
                 // In Python, lists are always mutable. In Rust, we should make them mutable by default
                 // to allow modification (like push, index assign).
+                // Structs should also be mutable to allow &mut self method calls.
                 // Also respect re-assignment.
-                let should_be_mutable = is_reassign || matches!(ty, Type::List(_));
+                let should_be_mutable = is_reassign || matches!(ty, Type::List(_) | Type::Struct(_));
                 
                 if !is_reassign {
                     self.scope.define(target, ty.clone(), false);
@@ -837,12 +854,16 @@ impl SemanticAnalyzer {
                             .collect::<Result<Vec<_>, _>>()?;
                         self.scope.pop();
                         
+                        // Check if method modifies self (contains FieldAssign)
+                        let takes_mut_self = ir_body.iter().any(|node| matches!(node, IrNode::FieldAssign { .. }));
+                        
                         ir_methods.push(IrNode::MethodDecl {
                             name: method.name.clone(),
                             params: ir_params,
                             ret: ret_ty,
                             body: ir_body,
                             takes_self: !method.is_static,
+                            takes_mut_self,
                         });
                     }
                     
@@ -852,21 +873,12 @@ impl SemanticAnalyzer {
                     });
                 }
                 
-                // Return first node (StructDef) - additional nodes will need different handling
-                // For now, we'll combine them using a wrapper approach
+                // Return node(s) - use Sequence if multiple
                 if result_nodes.len() == 1 {
                     Ok(result_nodes.remove(0))
                 } else {
-                    // Return a sequence - we need to handle this in the caller
-                    // For simplicity, flatten by returning the struct and storing impl for later
-                    // Actually, let's use a combined approach - return StructDef with embedded methods
-                    // We'll handle this in emitter instead
-                    Ok(IrNode::StructDef {
-                        name: name.clone(),
-                        fields: fields.iter()
-                            .map(|f| (f.name.clone(), self.type_from_hint(&f.type_hint)))
-                            .collect(),
-                    })
+                    // Return Sequence containing StructDef + ImplBlock
+                    Ok(IrNode::Sequence(result_nodes))
                 }
             }
             Stmt::Raise { exception_type: _, message } => {
@@ -1007,9 +1019,15 @@ impl SemanticAnalyzer {
                         })
                     }
                     Expr::Attribute { value, attr } => {
-                        let method_name = match attr.as_str() {
+                        // Strip dunder prefix for private fields/methods
+                        let stripped_attr = if attr.starts_with("__") && !attr.ends_with("__") {
+                            attr.trim_start_matches("__")
+                        } else {
+                            attr.as_str()
+                        };
+                        let method_name = match stripped_attr {
                             "append" => "push",
-                            _ => attr.as_str(),
+                            other => other,
                         };
                         let ir_target = self.analyze_expr(value)?;
                         let target_ty = self.infer_type(value);
@@ -1180,9 +1198,15 @@ impl SemanticAnalyzer {
                 // Standalone attribute access (not call)
                 // Could be field access.
                 let ir_target = self.analyze_expr(value)?;
+                // Strip dunder prefix for Python private fields -> Rust struct field
+                let rust_field = if attr.starts_with("__") && !attr.ends_with("__") {
+                    attr.trim_start_matches("__").to_string()
+                } else {
+                    attr.clone()
+                };
                 Ok(IrExpr::FieldAccess {
                     target: Box::new(ir_target),
-                    field: attr.clone(),
+                    field: rust_field,
                 })
             }
             Expr::UnaryOp { op, operand } => {

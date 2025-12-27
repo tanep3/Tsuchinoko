@@ -94,6 +94,9 @@ impl RustEmitter {
             IrNode::Assign { target, value } => {
                 format!("{}{} = {};", indent, to_snake_case(target), self.emit_expr(value))
             }
+            IrNode::FieldAssign { target, field, value } => {
+                format!("{}{}.{} = {};", indent, self.emit_expr(target), to_snake_case(field), self.emit_expr(value))
+            }
             IrNode::IndexAssign { target, index, value } => {
                 format!("{}{}[{} as usize] = {};", indent, self.emit_expr(target), self.emit_expr(index), self.emit_expr(value))
             }
@@ -252,9 +255,15 @@ impl RustEmitter {
                 result.push_str(&format!("{}}}\n", indent));
                 result
             }
-            IrNode::MethodDecl { name, params, ret, body, takes_self } => {
+            IrNode::MethodDecl { name, params, ret, body, takes_self, takes_mut_self } => {
                 let inner_indent = "    ".repeat(self.indent);
-                let self_param = if *takes_self { "&self, " } else { "" };
+                let self_param = if !*takes_self {
+                    ""
+                } else if *takes_mut_self {
+                    "&mut self, "
+                } else {
+                    "&self, "
+                };
                 
                 let params_str: Vec<String> = params.iter()
                     .map(|(n, t)| format!("{}: {}", to_snake_case(n), t.to_rust_string()))
@@ -285,6 +294,13 @@ impl RustEmitter {
             }
             IrNode::Panic(msg) => {
                 format!("{}panic!(\"{}\");", indent, msg)
+            }
+            IrNode::Sequence(nodes) => {
+                // Emit all nodes in sequence (e.g., StructDef + ImplBlock)
+                nodes.iter()
+                    .map(|n| self.emit_node_internal(n))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             }
         }
     }
@@ -606,7 +622,9 @@ impl RustEmitter {
                 }
             }
             IrExpr::FieldAccess { target, field } => {
-                format!("{}.{}", self.emit_expr(target), field)
+                // Strip dunder prefix for Rust struct field (Python private -> Rust private convention)
+                let rust_field = field.trim_start_matches("__");
+                format!("{}.{}", self.emit_expr(target), to_snake_case(rust_field))
             }
             IrExpr::Reference { target } => {
                 format!("&{}", self.emit_expr(target))

@@ -62,6 +62,12 @@ pub enum IrNode {
     Return(Option<Box<IrExpr>>),
     /// Expression statement
     Expr(IrExpr),
+    /// Field assignment (self.field = value)
+    FieldAssign {
+        target: Box<IrExpr>,  // Usually IrExpr::Var("self")
+        field: String,
+        value: Box<IrExpr>,
+    },
     /// Struct definition (from @dataclass)
     StructDef {
         name: String,
@@ -78,7 +84,8 @@ pub enum IrNode {
         params: Vec<(String, Type)>,  // Excludes &self
         ret: Type,
         body: Vec<IrNode>,
-        takes_self: bool,  // true for instance methods, false for static
+        takes_self: bool,     // true for instance methods, false for static
+        takes_mut_self: bool, // true if method modifies self (field assignment)
     },
     /// Try-except block (maps to match Result)
     TryBlock {
@@ -92,6 +99,8 @@ pub enum IrNode {
     },
     /// Panic (from raise)
     Panic(String),
+    /// Sequence of nodes (for returning multiple top-level items like StructDef + ImplBlock)
+    Sequence(Vec<IrNode>),
 }
 
 /// IR expression types
