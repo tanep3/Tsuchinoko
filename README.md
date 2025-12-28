@@ -4,6 +4,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/Version-1.0.0-green.svg)](Cargo.toml)
 
 [🇯🇵 日本語版はこちら](README_jp.md)
 
@@ -20,14 +21,14 @@ Tsuchinoko is **not** a general-purpose Python compiler. It is designed to:
 - **Convert imperative Python into structural Rust**: Maps Python control flow directly to Rust equivalents.
 - **Prefer borrowing over ownership**: Automatically uses references (`&[T]`, `&str`) where possible to avoid unnecessary allocations.
 
-## Features
+## Key Features ✨
 
-- ✅ **Type hints**: `int`, `str`, `list[int]`, `tuple[int, str]`, `dict[str, int]`, `Optional[int]`
-- ✅ **Slice types**: Generates `&[T]` instead of `&Vec<T>` (idiomatic Rust)
-- ✅ **Ownership inference**: Automatic reference/ownership decision
-- ✅ **Minimal mut**: Only uses `mut` when reassignment is detected
-- ✅ **snake_case conversion**: `getOrder` → `get_order` automatic
-- ✅ **Rust Optimization**: Maps `dict` to `HashMap`, handles `None` as `Option::None`
+- **Core Syntax** - Variables, types, operators, control flow
+- **Higher-Order Functions** - Pass functions as arguments, closures
+- **Lambda Expressions** - `lambda x: x + 1` → `|x| x + 1`
+- **Basic Class Support** - Struct-like classes with `__init__` and methods
+- **List Comprehensions** - `[x*2 for x in nums if x > 0]`
+- **Smart Type Inference** - Auto-Ref, Auto-Deref, minimal `mut`
 
 ## Benchmarks 🚀
 
@@ -100,50 +101,24 @@ fn bubble_sort(lists: &[i64]) -> (Vec<i64>, i64) {
 }
 ```
 
-## Supported Features
+## Feature Documentation
 
-| Python Syntax | Rust Output | Status |
-|--------------|-------------|--------|
-| `x: int = 10` | `let x: i64 = 10;` | ✅ |
-| `list[int]` | `Vec<i64>` / `&[i64]` | ✅ |
-| `def func(x: int) -> int` | `fn func(x: i64) -> i64` | ✅ |
-| `for i in range(n)` | `for i in 0..n` | ✅ |
-| `if/elif/else` | `if/else if/else` | ✅ |
-| `while` | `while` | ✅ |
-| `list(x)` | `x.to_vec()` | ✅ |
-| `len(x)` | `x.len()` | ✅ |
-| `max(x)` | `x.iter().max().cloned().unwrap()` | ✅ |
-| `x ** 2` | `x.pow(2)` | ✅ |
-| `x.append(y)` | `x.push(y)` | ✅ |
-| `x.extend(y)` | `x.extend(y)` | ✅ |
-| `dict[k, v]` | `HashMap<K, V>` | ✅ |
-| `x in d` | `d.contains_key(&x)` | ✅ |
-| `arr[-1]` | `arr[arr.len()-1]` | ✅ |
-| `Optional[T]` | `Option<T>` | ✅ |
+For detailed feature lists, see:
 
-## Limitations / Unsupported Features
-
-Tsuchinoko intentionally does **not** support the full Python spec.
-
-- ❌ **Classes & OOP**: No class support (STRUCT-based design is planned).
-- ❌ **Exceptions**: No `try-except` (Rust `Result` mapping is planned).
-- ❌ **Dynamic Typing**: All variables must have type hints.
-- ❌ **Async/Await**: Not supported.
-- ❌ **Standard Library**: Most Python standard libraries are not available.
-- ❌ **Generators/Yield**: Not supported.
-- ❌ **List Comprehensions**: Only basic forms provided (no nested loops/conditionals).
-- ❌ **Global Variables**: Global mutable state is discouraged/unsupported.
+- [Supported Features](docs/supported_features.md) | [サポート機能一覧](docs/supported_features_ja.md)
+- [Unsupported Features](docs/unsupported_features.md) | [非サポート機能一覧](docs/unsupported_features_ja.md)
 
 ## Future Roadmap
 
-- [ ] **Benchmarks**: Performance comparison between Python, Tsuchinoko-Rust, and handwritten Rust.
-- [ ] **Structs**: Mapping Python classes to Rust structs (Data Classes).
-- [ ] **Error Handling**: `try-except` mapping to `Result`.
+- [ ] Full class inheritance support
+- [ ] Exception handling (`try-except` → `Result`)
+- [ ] Named arguments support
+- [ ] More standard library mappings
 
 ## Documentation
 
-- [User Manual](docs/user-manual.md)
-- [Deploy Guide](docs/deploy-guide.md)
+- [User Manual](docs/user-manual.md) | [ユーザーマニュアル](docs/user-manual_jp.md)
+- [Deploy Guide](docs/deploy-guide.md) | [デプロイガイド](docs/deploy-guide_jp.md)
 - [Requirements](docs/requirements.md)
 - [System Design](docs/system-design.md)
 - [API Spec](docs/api-spec.md)

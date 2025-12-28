@@ -6,8 +6,8 @@ mod scope;
 pub use types::*;
 pub use scope::*;
 
-use crate::parser::{Program, Stmt, Expr, TypeHint, BinOp as AstBinOp, UnaryOp as AstUnaryOp};
-use crate::ir::{IrNode, IrExpr, IrBinOp, IrUnaryOp};
+use crate::parser::{Program, Stmt, Expr, TypeHint, BinOp as AstBinOp, UnaryOp as AstUnaryOp, AugAssignOp};
+use crate::ir::{IrNode, IrExpr, IrBinOp, IrUnaryOp, IrAugAssignOp};
 use crate::error::TsuchinokoError;
 
 /// Analyze a program and convert to IR
@@ -20,6 +20,10 @@ pub fn analyze(program: &Program) -> Result<Vec<IrNode>, TsuchinokoError> {
 pub struct SemanticAnalyzer {
     scope: ScopeStack,
     current_return_type: Option<Type>,
+    /// Struct name -> Vec of (field_name, field_type) for constructor type checking
+    struct_field_types: std::collections::HashMap<String, Vec<(String, Type)>>,
+    /// Variables that need to be mutable (targets of AugAssign or reassignment)
+    mutable_vars: std::collections::HashSet<String>,
 }
 
 impl SemanticAnalyzer {
@@ -27,6 +31,8 @@ impl SemanticAnalyzer {
         Self {
             scope: ScopeStack::new(),
             current_return_type: None,
+            struct_field_types: std::collections::HashMap::new(),
+            mutable_vars: std::collections::HashSet::new(),
         }
     }
 
@@ -96,6 +102,9 @@ impl SemanticAnalyzer {
         // Step 1: Pre-processing (Declarative AST transformation)
         let stmts = self.preprocess_top_level(&program.statements);
         
+        // Step 1.5: Collect mutable variables (targets of AugAssign or reassignment)
+        self.collect_mutable_vars(&stmts);
+        
         // Step 2: Unified Analysis (Pass 0 -> Pass 1)
         // Now top-level statements are treated exactly like block statements
         let ir_nodes = self.analyze_stmts(&stmts)?;
@@ -134,6 +143,20 @@ impl SemanticAnalyzer {
         }
         
         Ok(other_decls)
+    }
+    
+    /// Collect all variables that need to be mutable (targets of AugAssign or reassignment)
+    fn collect_mutable_vars(&mut self, stmts: &[Stmt]) {
+        let mut reassigned_vars = std::collections::HashSet::new();
+        let mut mutated_vars = std::collections::HashSet::new();
+        let mut seen_vars = std::collections::HashSet::new();
+        
+        for stmt in stmts {
+            self.collect_mutations(stmt, &mut reassigned_vars, &mut mutated_vars, &mut seen_vars);
+        }
+        
+        // Store in mutable_vars field for later use
+        self.mutable_vars = reassigned_vars.union(&mutated_vars).cloned().collect();
     }
 
     /// Recursively collect mutations from a statement (including nested blocks)
@@ -204,6 +227,19 @@ impl SemanticAnalyzer {
                 if let Some(eb) = else_body {
                     for s in eb {
                         self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
+                    }
+                }
+            }
+            // Check for augmented assignment (x += ..., x -= ..., etc.)
+            Stmt::AugAssign { target, .. } => {
+                // AugAssign target needs to be mutable
+                reassigned_vars.insert(target.clone());
+            }
+            // Check for IndexSwap (a[i], a[j] = a[j], a[i])
+            Stmt::IndexSwap { left_targets, .. } => {
+                for target in left_targets {
+                    if let Some(name) = extract_base_var(target) {
+                        mutated_vars.insert(name);
                     }
                 }
             }
@@ -446,8 +482,9 @@ impl SemanticAnalyzer {
                 // In Python, lists are always mutable. In Rust, we should make them mutable by default
                 // to allow modification (like push, index assign).
                 // Structs should also be mutable to allow &mut self method calls.
+                // Dicts need to be mutable for insert().
                 // Also respect re-assignment.
-                let should_be_mutable = is_reassign || matches!(ty, Type::List(_) | Type::Struct(_));
+                let should_be_mutable = is_reassign || matches!(ty, Type::List(_) | Type::Struct(_) | Type::Dict(_, _));
                 
                 if !is_reassign {
                     self.scope.define(target, ty.clone(), false);
@@ -495,6 +532,23 @@ impl SemanticAnalyzer {
                     })
                 }
             }
+            Stmt::AugAssign { target, op, value } => {
+                // Convert augmented assignment (x += 1) to IR
+                let ir_value = self.analyze_expr(value)?;
+                let ir_op = match op {
+                    AugAssignOp::Add => IrAugAssignOp::Add,
+                    AugAssignOp::Sub => IrAugAssignOp::Sub,
+                    AugAssignOp::Mul => IrAugAssignOp::Mul,
+                    AugAssignOp::Div => IrAugAssignOp::Div,
+                    AugAssignOp::FloorDiv => IrAugAssignOp::FloorDiv,
+                    AugAssignOp::Mod => IrAugAssignOp::Mod,
+                };
+                Ok(IrNode::AugAssign {
+                    target: target.clone(),
+                    op: ir_op,
+                    value: Box::new(ir_value),
+                })
+            }
             Stmt::TupleAssign { targets, value } => {
                 // Determine if this is a declaration or assignment based on first variable
                 // (Simplified logic: if first var is not in scope, assume declaration for all)
@@ -534,10 +588,61 @@ impl SemanticAnalyzer {
                     })
                 }
             }
+            Stmt::IndexSwap { left_targets, right_values } => {
+                // Handle swap pattern: a[i], a[j] = a[j], a[i]
+                // Convert to Rust: a.swap(i as usize, j as usize)
+                // This only works for simple 2-element swaps on the same array
+                
+                if left_targets.len() == 2 && right_values.len() == 2 {
+                    // Check if this is a simple swap pattern:
+                    // left_targets[0] matches right_values[1] and left_targets[1] matches right_values[0]
+                    if let (Expr::Index { target: t1, index: i1 }, 
+                            Expr::Index { target: t2, index: i2 }) = (&left_targets[0], &left_targets[1]) {
+                        // Check if targets are the same array
+                        if format!("{:?}", t1) == format!("{:?}", t2) {
+                            // Generate: target.swap(i1 as usize, i2 as usize)
+                            let ir_target = self.analyze_expr(t1)?;
+                            let ir_i1 = self.analyze_expr(i1)?;
+                            let ir_i2 = self.analyze_expr(i2)?;
+                            
+                            // Cast indices to usize
+                            let i1_cast = IrExpr::Cast { 
+                                target: Box::new(ir_i1), 
+                                ty: "usize".to_string() 
+                            };
+                            let i2_cast = IrExpr::Cast { 
+                                target: Box::new(ir_i2), 
+                                ty: "usize".to_string() 
+                            };
+                            
+                            return Ok(IrNode::Expr(IrExpr::MethodCall {
+                                target: Box::new(ir_target),
+                                method: "swap".to_string(),
+                                args: vec![i1_cast, i2_cast],
+                            }));
+                        }
+                    }
+                }
+                
+                // Fallback: not a simple swap, generate temp variable approach
+                // For now, return an error for unsupported patterns
+                return Err(TsuchinokoError::TypeError { 
+                    line: 0,
+                    message: "Unsupported swap pattern - only a[i], a[j] = a[j], a[i] is supported".to_string() 
+                });
+            }
             Stmt::FuncDef { name, params, return_type, body } => {
                  let ret_type = return_type.as_ref()
                      .map(|th| self.type_from_hint(th))
                      .unwrap_or(Type::Unit);
+                 
+                 // Collect mutations in the function body to detect which params need &mut
+                 let mut reassigned_vars = std::collections::HashSet::new();
+                 let mut mutated_vars = std::collections::HashSet::new();
+                 let mut seen_vars = std::collections::HashSet::new();
+                 for stmt in body {
+                     self.collect_mutations(stmt, &mut reassigned_vars, &mut mutated_vars, &mut seen_vars);
+                 }
                  
                  let mut param_types = Vec::new();
                  for p in params {
@@ -546,9 +651,15 @@ impl SemanticAnalyzer {
                          .unwrap_or(Type::Unknown);
                      // In Rust, we pass objects by reference.
                      // So if ty is List/Dict/Struct/String/Tuple, the function signature should reflect Ref(ty).
+                     // If the parameter is mutated in the function body, use MutRef instead.
+                     let is_mutated = mutated_vars.contains(&p.name);
                       let mut signature_ty = match &ty {
                           Type::List(_) | Type::Dict(_, _) | Type::Struct(_) | Type::String | Type::Tuple(_) => {
-                              Type::Ref(Box::new(ty.clone()))
+                              if is_mutated {
+                                  Type::MutRef(Box::new(ty.clone()))
+                              } else {
+                                  Type::Ref(Box::new(ty.clone()))
+                              }
                           }
                           _ => ty.clone(),
                       };
@@ -730,10 +841,8 @@ impl SemanticAnalyzer {
                 self.scope.push();
                 self.scope.define(target, elem_type.clone(), false);
                 
-                let mut ir_body = Vec::new();
-                for s in body {
-                    ir_body.push(self.analyze_stmt(s)?);
-                }
+                // Use analyze_stmts to properly detect mutable variables in loop body
+                let ir_body = self.analyze_stmts(body)?;
                 self.scope.pop();
                 
                 Ok(IrNode::For {
@@ -747,10 +856,8 @@ impl SemanticAnalyzer {
                 let ir_cond = self.analyze_expr(condition)?;
                 
                 self.scope.push();
-                let mut ir_body = Vec::new();
-                for s in body {
-                    ir_body.push(self.analyze_stmt(s)?);
-                }
+                // Use analyze_stmts to properly detect mutable variables in loop body
+                let ir_body = self.analyze_stmts(body)?;
                 self.scope.pop();
                 
                 Ok(IrNode::While {
@@ -816,6 +923,9 @@ impl SemanticAnalyzer {
                         (f.name.clone(), ty)
                     })
                     .collect();
+                
+                // Save field types for constructor type checking
+                self.struct_field_types.insert(name.clone(), ir_fields.clone());
                 
                 // Register this struct type in scope (for use in type hints)
                 self.scope.define(name, Type::Struct(name.clone()), false);
@@ -928,6 +1038,12 @@ impl SemanticAnalyzer {
                     except_body: ir_except_body,
                 })
             }
+            Stmt::Break => {
+                Ok(IrNode::Break)
+            }
+            Stmt::Continue => {
+                Ok(IrNode::Continue)
+            }
         }
     }
 
@@ -1010,7 +1126,20 @@ impl SemanticAnalyzer {
                             return Ok(ir_expr);
                         }
 
-                        // Standard handling
+                        // Check if this is a struct constructor call
+                        if let Some(field_types) = self.struct_field_types.get(name).cloned() {
+                            // Struct constructor - use field types for Auto-Box
+                            let expected_types: Vec<Type> = field_types.iter()
+                                .map(|(_, ty)| ty.clone())
+                                .collect();
+                            let ir_args = self.analyze_call_args(args, &expected_types, name)?;
+                            return Ok(IrExpr::Call {
+                                func: Box::new(IrExpr::Var(name.clone())),
+                                args: ir_args,
+                            });
+                        }
+
+                        // Standard handling for functions
                         let func_ty = self.infer_type(func.as_ref());
                         let expected_param_types = if let Type::Func { params, .. } = self.resolve_type(&func_ty) {
                             params
@@ -1124,7 +1253,53 @@ impl SemanticAnalyzer {
                 })
             }
             Expr::ListComp { elt, target, iter, condition } | Expr::GenExpr { elt, target, iter, condition } => {
-                let ir_iter = self.analyze_expr(iter)?;
+                // Special handling for items() in generator expressions
+                // Struct type: call items() directly
+                // Dict type: use iter().map(|(k,v)|(*k,v.clone())) for owned values in filter
+                let ir_iter = if let Expr::Call { func, args: call_args } = iter.as_ref() {
+                    if call_args.is_empty() {
+                        if let Expr::Attribute { value: item_target, attr } = func.as_ref() {
+                            if attr == "items" {
+                                let target_ty = self.infer_type(item_target);
+                                let ir_target = self.analyze_expr(item_target)?;
+                                
+                                match target_ty {
+                                    Type::Struct(_) => {
+                                        // Struct with items() method - call items() directly
+                                        IrExpr::MethodCall {
+                                            target: Box::new(ir_target),
+                                            method: "items".to_string(),
+                                            args: vec![],
+                                        }
+                                    }
+                                    Type::Dict(_, _) => {
+                                        // Dict - use iter().map() for owned values
+                                        let iter_call = IrExpr::MethodCall {
+                                            target: Box::new(ir_target),
+                                            method: "iter".to_string(),
+                                            args: vec![],
+                                        };
+                                        IrExpr::MethodCall {
+                                            target: Box::new(iter_call),
+                                            method: "map".to_string(),
+                                            args: vec![IrExpr::RawCode("|(k, v)| (*k, v.clone())".to_string())],
+                                        }
+                                    }
+                                    _ => self.analyze_expr(iter)?
+                                }
+                            } else {
+                                self.analyze_expr(iter)?
+                            }
+                        } else {
+                            self.analyze_expr(iter)?
+                        }
+                    } else {
+                        self.analyze_expr(iter)?
+                    }
+                } else {
+                    self.analyze_expr(iter)?
+                };
+                
                 let mut iter_ty = self.infer_type(iter);
                 while let Type::Ref(inner) = iter_ty {
                     iter_ty = *inner;
@@ -1137,23 +1312,9 @@ impl SemanticAnalyzer {
 
                 let ir_elt = self.analyze_expr(elt)?;
                 let ir_condition = if let Some(cond) = condition {
-                    // Rust's .filter() passes &Item to the closure.
-                    // We need to shadow the loop variables with an extra Ref layer during condition analysis.
-                    self.scope.push();
-                    if target.contains(',') {
-                        for t in target.split(',') {
-                            let t_name = t.trim();
-                            if let Some(info) = self.scope.lookup(t_name).cloned() {
-                                self.scope.define(t_name, Type::Ref(Box::new(info.ty)), false);
-                            }
-                        }
-                    } else {
-                        if let Some(info) = self.scope.lookup(target).cloned() {
-                            self.scope.define(target, Type::Ref(Box::new(info.ty)), false);
-                        }
-                    }
+                    // Note: We use into_iter() for items() results, so filter() receives owned values
+                    // No need to shadow variables with Ref layer anymore
                     let ir = self.analyze_expr(cond)?;
-                    self.scope.pop();
                     Some(Box::new(ir))
                 } else {
                     None
@@ -1231,12 +1392,54 @@ impl SemanticAnalyzer {
                     values: ir_values,
                 })
             }
+            Expr::Lambda { params, body } => {
+                // Convert lambda to closure (lambda x, y: x + y -> move |x, y| x + y)
+                // Push a new scope for parameters
+                self.scope.push();
+                
+                // Define parameters in scope (with Unknown type for now)
+                for param in params {
+                    self.scope.define(param, Type::Unknown, false);
+                }
+                
+                // Analyze body expression
+                let ir_body = self.analyze_expr(body)?;
+                
+                self.scope.pop();
+                
+                Ok(IrExpr::Closure {
+                    params: params.clone(),
+                    body: vec![IrNode::Return(Some(Box::new(ir_body)))],
+                    ret_type: Type::Unknown,
+                })
+            }
             Expr::Index { target, index } => {
                 let ir_target = self.analyze_expr(target)?;
                 let ir_index = self.analyze_expr(index)?;
                 Ok(IrExpr::Index {
                     target: Box::new(ir_target),
                     index: Box::new(ir_index),
+                })
+            }
+            Expr::Slice { target, start, end } => {
+                // Python slices: nums[:3], nums[-3:], nums[1:len(nums)-1]
+                // Rust equivalents depend on the slice type
+                let ir_target = self.analyze_expr(target)?;
+                
+                let ir_start = match start {
+                    Some(s) => Some(Box::new(self.analyze_expr(s)?)),
+                    None => None,
+                };
+                
+                let ir_end = match end {
+                    Some(e) => Some(Box::new(self.analyze_expr(e)?)),
+                    None => None,
+                };
+                
+                Ok(IrExpr::Slice {
+                    target: Box::new(ir_target),
+                    start: ir_start,
+                    end: ir_end,
                 })
             }
             Expr::Attribute { value, attr } => {
@@ -1450,10 +1653,11 @@ impl SemanticAnalyzer {
     /// Coerce a single argument to match the expected type
     /// Handles Auto-Box, Auto-Ref, Auto-Deref, and Fallback Clone
     fn coerce_arg(&self, mut ir_arg: IrExpr, actual_ty: &Type, expected_ty: &Type, expr: &Expr) -> IrExpr {
-        // 1. Unpack expectation (check if expected type is a reference)
-        let (target_ty, needs_ref) = match expected_ty {
-            Type::Ref(inner) => (inner.as_ref().clone(), true),
-            _ => (expected_ty.clone(), false),
+        // 1. Unpack expectation (check if expected type is a reference or mutable reference)
+        let (target_ty, needs_ref, needs_mut_ref) = match expected_ty {
+            Type::MutRef(inner) => (inner.as_ref().clone(), false, true),
+            Type::Ref(inner) => (inner.as_ref().clone(), true, false),
+            _ => (expected_ty.clone(), false, false),
         };
 
         let resolved_target = self.resolve_type(&target_ty);
@@ -1484,6 +1688,12 @@ impl SemanticAnalyzer {
         if needs_ref && matches!(expr, Expr::Index { .. }) {
             return IrExpr::Reference { target: Box::new(ir_arg) };
         }
+        
+        // 3.5 Auto-MutRef for mutable reference parameters
+        if needs_mut_ref {
+            // Need a mutable reference
+            return IrExpr::MutReference { target: Box::new(ir_arg) };
+        }
 
         // 4. Auto-Ref/Deref logic
         if needs_ref {
@@ -1503,7 +1713,10 @@ impl SemanticAnalyzer {
                 if inner_ty.is_copy() {
                     ir_arg = IrExpr::UnaryOp { op: IrUnaryOp::Deref, operand: Box::new(ir_arg) };
                     current_ty = inner_ty.clone();
-                    if current_ty.is_compatible_with(&resolved_target) { break; }
+                    // If expected type is Unknown or compatible, we're done
+                    if resolved_target == Type::Unknown || current_ty.is_compatible_with(&resolved_target) { 
+                        break; 
+                    }
                 } else {
                     break;
                 }
@@ -1628,12 +1841,33 @@ impl SemanticAnalyzer {
     ) -> Result<Option<IrExpr>, TsuchinokoError> {
         match method {
             "items" if args.is_empty() => {
-                // dict.items() -> dict.iter()
-                Ok(Some(IrExpr::MethodCall {
-                    target: Box::new(target_ir.clone()),
-                    method: "iter".to_string(),
-                    args: vec![],
-                }))
+                // dict.items() -> dict.iter().map(|(k,v)|(*k, v.clone())) (only for Dict types)
+                // For user-defined structs with items() method, keep the call as-is
+                // Explicitly handle both Dict and non-Dict cases
+                match _target_ty {
+                    Type::Dict(_, _) => {
+                        // dict.iter() returns (&K, &V), we need owned (K, V) for filter/map
+                        // Use iter().map() to clone values for ownership
+                        let iter_call = IrExpr::MethodCall {
+                            target: Box::new(target_ir.clone()),
+                            method: "iter".to_string(),
+                            args: vec![],
+                        };
+                        Ok(Some(IrExpr::MethodCall {
+                            target: Box::new(iter_call),
+                            method: "map".to_string(),
+                            args: vec![IrExpr::RawCode("|(k, v)| (*k, v.clone())".to_string())],
+                        }))
+                    }
+                    Type::Struct(_) => {
+                        // User-defined struct with items() method - keep as-is
+                        Ok(None)
+                    }
+                    _ => {
+                        // Unknown or other type - don't transform
+                        Ok(None)
+                    }
+                }
             }
             "join" if args.len() == 1 => {
                 // "sep".join(iterable) -> iterable.iter().map(|x| x.to_string()).collect().join(&sep)
@@ -1763,11 +1997,56 @@ impl SemanticAnalyzer {
                 }))
             }
             ("list", 1) => {
+                // list(iterable) -> iterable.collect::<Vec<_>>()
+                // Special case: list(dict.items()) needs iter().map(|(k,v)| (*k, v.clone())).collect()
+                
+                // Check if arg is a method call to .items() on a dict
+                if let Expr::Call { func, args: call_args } = &args[0] {
+                    if call_args.is_empty() {
+                        if let Expr::Attribute { value: item_target, attr } = func.as_ref() {
+                            if attr == "items" {
+                                let target_ty = self.infer_type(item_target);
+                                if matches!(target_ty, Type::Dict(_, _)) {
+                                    // This is list(dict.items()) - generate iter().map(clone).collect()
+                                    let ir_target = self.analyze_expr(item_target)?;
+                                    let iter_call = IrExpr::MethodCall {
+                                        target: Box::new(ir_target),
+                                        method: "iter".to_string(),
+                                        args: vec![],
+                                    };
+                                    let map_call = IrExpr::MethodCall {
+                                        target: Box::new(iter_call),
+                                        method: "map".to_string(),
+                                        args: vec![IrExpr::RawCode("|(k, v)| (*k, v.clone())".to_string())],
+                                    };
+                                    return Ok(Some(IrExpr::MethodCall {
+                                        target: Box::new(map_call),
+                                        method: "collect::<Vec<_>>".to_string(),
+                                        args: vec![],
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 let arg = self.analyze_expr(&args[0])?;
-                Ok(Some(IrExpr::MethodCall { 
-                    target: Box::new(arg), 
-                    method: "to_vec".to_string(), 
-                    args: vec![] 
+                
+                // If arg is a MethodCall (likely an iterator like .iter())
+                // or a GenExpr/ListComp, always add collect()
+                if matches!(arg, IrExpr::MethodCall { .. } | IrExpr::ListComp { .. }) {
+                    return Ok(Some(IrExpr::MethodCall { 
+                        target: Box::new(arg), 
+                        method: "collect::<Vec<_>>".to_string(), 
+                        args: vec![] 
+                    }));
+                }
+                // Otherwise, use .to_vec() to convert slice/vec to owned Vec
+                // This handles list(some_slice) -> some_slice.to_vec()
+                Ok(Some(IrExpr::MethodCall {
+                    target: Box::new(arg),
+                    method: "to_vec".to_string(),
+                    args: vec![],
                 }))
             }
             ("str", 1) => {
@@ -1791,17 +2070,12 @@ impl SemanticAnalyzer {
                 }))
             }
             ("dict", 1) => {
-                // dict(iterable) -> iterable.into_iter().collect::<HashMap<_, _>>() 
-                // Using collect() avoids needing FromIterator trait import
+                // dict(x) -> x.clone()
+                // Python dict(some_dict) creates a copy, Rust .clone() does the same
                 let ir_arg = self.analyze_expr(&args[0])?;
-                let into_iter = IrExpr::MethodCall {
-                    target: Box::new(ir_arg),
-                    method: "into_iter".to_string(),
-                    args: vec![],
-                };
                 Ok(Some(IrExpr::MethodCall {
-                    target: Box::new(into_iter),
-                    method: "collect::<std::collections::HashMap<_, _>>".to_string(),
+                    target: Box::new(ir_arg),
+                    method: "clone".to_string(),
                     args: vec![],
                 }))
             }

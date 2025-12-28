@@ -23,6 +23,12 @@ pub enum IrNode {
         index: Box<IrExpr>,
         value: Box<IrExpr>,
     },
+    /// Augmented assignment (x += 1, etc.)
+    AugAssign {
+        target: String,
+        op: IrAugAssignOp,
+        value: Box<IrExpr>,
+    },
     /// Multiple assignment (a, b = val) - used for tuple unpacking
     MultiAssign {
         targets: Vec<String>,
@@ -99,6 +105,10 @@ pub enum IrNode {
     },
     /// Panic (from raise)
     Panic(String),
+    /// Break statement
+    Break,
+    /// Continue statement
+    Continue,
     /// Sequence of nodes (for returning multiple top-level items like StructDef + ImplBlock)
     Sequence(Vec<IrNode>),
 }
@@ -156,6 +166,12 @@ pub enum IrExpr {
         target: Box<IrExpr>,
         index: Box<IrExpr>,
     },
+    /// Slice access (target[start..end])
+    Slice {
+        target: Box<IrExpr>,
+        start: Option<Box<IrExpr>>,
+        end: Option<Box<IrExpr>>,
+    },
     /// Range (for loops)
     Range {
         start: Box<IrExpr>,
@@ -174,6 +190,10 @@ pub enum IrExpr {
     },
     /// Reference (&expr)
     Reference {
+        target: Box<IrExpr>,
+    },
+    /// Mutable Reference (&mut expr)
+    MutReference {
         target: Box<IrExpr>,
     },
     /// Dict/HashMap literal
@@ -200,6 +220,8 @@ pub enum IrExpr {
         target: Box<IrExpr>,
         ty: String,
     },
+    /// Raw Rust code (for patterns that don't have IR equivalents)
+    RawCode(String),
 }
 
 /// IR binary operators
@@ -229,6 +251,17 @@ pub enum IrUnaryOp {
     Neg,
     Not,
     Deref, // *expr
+}
+
+/// IR augmented assignment operators
+#[derive(Debug, Clone)]
+pub enum IrAugAssignOp {
+    Add,      // +=
+    Sub,      // -=
+    Mul,      // *=
+    Div,      // /=
+    FloorDiv, // //=
+    Mod,      // %=
 }
 
 #[cfg(test)]

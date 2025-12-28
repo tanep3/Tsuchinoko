@@ -12,6 +12,7 @@ pub enum Type {
     Dict(Box<Type>, Box<Type>), // HashMap<K, V>
     Optional(Box<Type>),        // Option<T>
     Ref(Box<Type>),             // &T
+    MutRef(Box<Type>),          // &mut T
     Func {
         params: Vec<Type>,
         ret: Box<Type>,
@@ -107,6 +108,14 @@ impl Type {
                     format!("&{}", inner.to_rust_string())
                 }
             }
+            Type::MutRef(inner) => {
+                // For List types, emit &mut [T] slice instead of &mut Vec<T> (more idiomatic)
+                if let Type::List(elem_type) = inner.as_ref() {
+                    format!("&mut [{}]", elem_type.to_rust_string())
+                } else {
+                    format!("&mut {}", inner.to_rust_string())
+                }
+            }
             Type::Func { params, ret, is_boxed } => {
                 let p: Vec<_> = params.iter().map(|t| t.to_rust_string()).collect();
                 if *is_boxed {
@@ -126,7 +135,8 @@ impl Type {
     /// Check if type is Copy
     pub fn is_copy(&self) -> bool {
         match self {
-            Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Ref(_) => true,
+            // Unknown is treated as Copy to avoid spurious .clone() calls
+            Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Ref(_) | Type::Unknown => true,
             _ => false,
         }
     }

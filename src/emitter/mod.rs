@@ -1,6 +1,6 @@
 //! Emitter module - Rust code generation
 
-use crate::ir::{IrNode, IrExpr, IrBinOp, IrUnaryOp};
+use crate::ir::{IrNode, IrExpr, IrBinOp, IrUnaryOp, IrAugAssignOp};
 use crate::semantic::Type;
 use std::collections::HashMap;
 
@@ -99,6 +99,17 @@ impl RustEmitter {
             }
             IrNode::IndexAssign { target, index, value } => {
                 format!("{}{}[{} as usize] = {};", indent, self.emit_expr(target), self.emit_expr(index), self.emit_expr(value))
+            }
+            IrNode::AugAssign { target, op, value } => {
+                let op_str = match op {
+                    IrAugAssignOp::Add => "+=",
+                    IrAugAssignOp::Sub => "-=",
+                    IrAugAssignOp::Mul => "*=",
+                    IrAugAssignOp::Div => "/=",
+                    IrAugAssignOp::FloorDiv => "/=", // Rust doesn't have //=, use /= for i64
+                    IrAugAssignOp::Mod => "%=",
+                };
+                format!("{}{} {} {};", indent, target, op_str, self.emit_expr(value))
             }
             IrNode::MultiAssign { targets, value } => {
                 let targets_str = targets.join(", ");
@@ -294,6 +305,12 @@ impl RustEmitter {
             }
             IrNode::Panic(msg) => {
                 format!("{}panic!(\"{}\");", indent, msg)
+            }
+            IrNode::Break => {
+                format!("{}break;", indent)
+            }
+            IrNode::Continue => {
+                format!("{}continue;", indent)
             }
             IrNode::Sequence(nodes) => {
                 // Emit all nodes in sequence (e.g., StructDef + ImplBlock)
@@ -525,6 +542,10 @@ impl RustEmitter {
                 let iter_chain = match iter.as_ref() {
                     // Range needs parentheses for method chaining: (1..10).filter(...)
                     IrExpr::Range { .. } => format!("({})", iter_str),
+                    // MethodCall to items() returns a Vec - use .into_iter() for ownership
+                    IrExpr::MethodCall { method, .. } if method == "items" => {
+                        format!("{}.into_iter()", iter_str)
+                    }
                     // Already an iterator (MethodCall with iter/filter/map), use directly
                     IrExpr::MethodCall { method, .. } 
                         if method.contains("iter") || method.contains("filter") || method.contains("map") => {
@@ -536,6 +557,7 @@ impl RustEmitter {
                 
                 if let Some(cond) = condition {
                     let cond_str = self.emit_expr_internal(cond);
+                    // Use pattern without & for filter - references are handled by the condition
                     format!("{}.filter(|{}| {}).map(|{}| {}).collect::<Vec<_>>()",
                         iter_chain,
                         &target_snake,
@@ -593,11 +615,13 @@ impl RustEmitter {
                 format!("move |{}|{} {{\n{}\n}}", params_str.join(", "), ret_str, body_str)
             }
             IrExpr::BoxNew(arg) => {
-                format!("Box::new({})", self.emit_expr(arg))
+                // Use Arc::new for Callable fields (which are Arc<dyn Fn>)
+                format!("std::sync::Arc::new({})", self.emit_expr(arg))
             }
             IrExpr::Cast { target, ty } => {
                 format!("({} as {})", self.emit_expr(target), ty)
             }
+            IrExpr::RawCode(code) => code.clone(),
             IrExpr::Tuple(elements) => {
                 let elems: Vec<_> = elements.iter().map(|e| self.emit_expr(e)).collect();
                 format!("({})", elems.join(", "))
@@ -619,6 +643,45 @@ impl RustEmitter {
                     }
                 }
                 format!("{}[{} as usize]", self.emit_expr(target), self.emit_expr(index))
+            }
+            IrExpr::Slice { target, start, end } => {
+                // Handle Python-style slices: [:n], [n:], [s:e], [:]
+                // Python slices never panic on out-of-bounds, they clamp to valid range
+                let target_str = self.emit_expr(target);
+                match (start, end) {
+                    (None, Some(e)) => {
+                        // [:n] -> [..(n as usize).min(len)].to_vec()
+                        // Handle negative indices: [:-n] -> [..len().saturating_sub(n)].to_vec()
+                        if let IrExpr::UnaryOp { op: IrUnaryOp::Neg, operand } = e.as_ref() {
+                            if let IrExpr::IntLit(n) = operand.as_ref() {
+                                return format!("({}[..{}.len().saturating_sub({})].to_vec())", target_str, target_str, n);
+                            }
+                        }
+                        // Clamp end to len to avoid panic: [..min(n, len)]
+                        format!("({}[..({} as usize).min({}.len())].to_vec())", target_str, self.emit_expr(e), target_str)
+                    }
+                    (Some(s), None) => {
+                        // [n:] -> [min(n, len)..].to_vec()
+                        // Handle negative indices: [-n:] -> [len().saturating_sub(n)..].to_vec()
+                        if let IrExpr::UnaryOp { op: IrUnaryOp::Neg, operand } = s.as_ref() {
+                            if let IrExpr::IntLit(n) = operand.as_ref() {
+                                return format!("({}[{}.len().saturating_sub({})..].to_vec())", target_str, target_str, n);
+                            }
+                        }
+                        // Clamp start to len to avoid panic: [min(n, len)..]
+                        format!("({}[({} as usize).min({}.len())..].to_vec())", target_str, self.emit_expr(s), target_str)
+                    }
+                    (Some(s), Some(e)) => {
+                        // [s:e] -> [min(s, len)..min(e, len)].to_vec()
+                        // Also ensure start <= end by using start.min(end)
+                        format!("({{ let _s = ({} as usize).min({}.len()); let _e = ({} as usize).min({}.len()); {}[_s.min(_e).._e].to_vec() }})", 
+                                self.emit_expr(s), target_str, self.emit_expr(e), target_str, target_str)
+                    }
+                    (None, None) => {
+                        // [:] -> clone()
+                        format!("{}.clone()", target_str)
+                    }
+                }
             }
             IrExpr::Range { start, end } => {
                 format!("{}..{}", self.emit_expr(start), self.emit_expr(end))
@@ -642,6 +705,9 @@ impl RustEmitter {
             }
             IrExpr::Reference { target } => {
                 format!("&{}", self.emit_expr(target))
+            }
+            IrExpr::MutReference { target } => {
+                format!("&mut {}", self.emit_expr(target))
             }
         }
     }

@@ -881,9 +881,44 @@ fn parse_line(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoErr
         return Ok(None);
     }
     
+    // Try to parse as augmented assignment (+=, -=, *=, /=, //=, %=)
+    // Must check before regular assignment
+    for (op_str, aug_op) in [
+        ("//=", AugAssignOp::FloorDiv), // Check //= before /=
+        ("+=", AugAssignOp::Add),
+        ("-=", AugAssignOp::Sub),
+        ("*=", AugAssignOp::Mul),
+        ("/=", AugAssignOp::Div),
+        ("%=", AugAssignOp::Mod),
+    ] {
+        if let Some(op_pos) = line.find(op_str) {
+            let target = line[..op_pos].trim();
+            let value_str = line[op_pos + op_str.len()..].trim();
+            
+            if target.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                let value = parse_expr(value_str, line_num)?;
+                return Ok(Some(Stmt::AugAssign {
+                    target: target.to_string(),
+                    op: aug_op,
+                    value,
+                }));
+            }
+        }
+    }
+    
     // Try to parse as assignment
     if let Some(stmt) = try_parse_assignment(line, line_num)? {
         return Ok(Some(stmt));
+    }
+    
+    // Try to parse as break statement
+    if line == "break" {
+        return Ok(Some(Stmt::Break));
+    }
+    
+    // Try to parse as continue statement
+    if line == "continue" {
+        return Ok(Some(Stmt::Continue));
     }
     
     // Try to parse as return statement
@@ -924,16 +959,27 @@ fn try_parse_assignment(line: &str, line_num: usize) -> Result<Option<Stmt>, Tsu
     }
     
     let left = line[..eq_pos].trim();
-    let right = line[eq_pos + 1..].trim();
+    let right_full = line[eq_pos + 1..].trim();
+    // Strip inline comments (# that is not inside a string)
+    let right = if let Some(hash_pos) = find_char_balanced(right_full, '#') {
+        right_full[..hash_pos].trim()
+    } else {
+        right_full
+    };
     
     // Check for tuple unpacking: a, b = func()
+    // Also support index swap: a[i], a[j] = a[j], a[i]
     let left_parts = split_by_comma_balanced(left);
     if left_parts.len() > 1 {
-        // Validation: Ensure all targets are simple identifiers
-        let mut targets = Vec::new();
-        for part in left_parts {
-            if part.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                targets.push(part);
+        // Check if all targets are either identifiers or index expressions
+        let mut has_index_target = false;
+        for part in &left_parts {
+            let part_trimmed = part.trim();
+            if part_trimmed.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                // Simple identifier - OK
+            } else if part_trimmed.ends_with(']') {
+                // Index expression - also OK
+                has_index_target = true;
             } else {
                 return Err(TsuchinokoError::ParseError {
                     line: line_num,
@@ -941,6 +987,29 @@ fn try_parse_assignment(line: &str, line_num: usize) -> Result<Option<Stmt>, Tsu
                 });
             }
         }
+        
+        // If we have index targets (swap pattern), generate IndexSwap statement
+        if has_index_target {
+            // Parse as: left1, left2 = right1, right2 -> swap assignments
+            let left_exprs: Result<Vec<_>, _> = left_parts.iter()
+                .map(|s| parse_expr(s.trim(), line_num))
+                .collect();
+            let left_exprs = left_exprs?;
+            
+            let right_parts = split_by_comma_balanced(right);
+            let right_exprs: Result<Vec<_>, _> = right_parts.iter()
+                .map(|s| parse_expr(s.trim(), line_num))
+                .collect();
+            let right_exprs = right_exprs?;
+            
+            return Ok(Some(Stmt::IndexSwap {
+                left_targets: left_exprs,
+                right_values: right_exprs,
+            }));
+        }
+        
+        // Simple tuple assign
+        let targets: Vec<String> = left_parts.iter().map(|s| s.trim().to_string()).collect();
         
         let value = parse_expr(right, line_num)?;
         return Ok(Some(Stmt::TupleAssign {
@@ -1145,6 +1214,47 @@ fn parse_fstring(content: &str, line_num: usize) -> Result<Expr, TsuchinokoError
     Ok(Expr::FString { parts, values })
 }
 
+/// Find the first colon in a lambda expression that separates params from body
+/// Handles nested brackets/parens correctly
+fn find_lambda_colon(expr: &str) -> Option<usize> {
+    let mut paren_depth = 0;
+    let mut bracket_depth = 0;
+    let mut brace_depth = 0;
+    let mut in_string = false;
+    let mut string_char = ' ';
+    
+    // Start searching after "lambda"
+    for (i, c) in expr.char_indices() {
+        if i < 6 { continue; } // Skip "lambda"
+        
+        if in_string {
+            if c == string_char {
+                in_string = false;
+            }
+            continue;
+        }
+        
+        match c {
+            '"' | '\'' => {
+                in_string = true;
+                string_char = c;
+            }
+            '(' => paren_depth += 1,
+            ')' => paren_depth -= 1,
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth -= 1,
+            '{' => brace_depth += 1,
+            '}' => brace_depth -= 1,
+            ':' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                return Some(i);
+            }
+            _ => {}
+        }
+    }
+    
+    None
+}
+
 /// Parse an expression
 fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> {
     let expr_str = expr_str.trim();
@@ -1177,6 +1287,41 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
     // Try to parse as None
     if expr_str == "None" {
         return Ok(Expr::NoneLiteral);
+    }
+    
+    // Try to parse as unary "not" operator
+    if expr_str.starts_with("not ") {
+        let operand_str = &expr_str[4..].trim();
+        let operand = parse_expr(operand_str, line_num)?;
+        return Ok(Expr::UnaryOp {
+            op: UnaryOp::Not,
+            operand: Box::new(operand),
+        });
+    }
+    
+    // Try to parse as lambda expression: lambda params: body
+    if expr_str.starts_with("lambda") {
+        // Find the colon that separates params from body
+        // Need to handle nested lambdas carefully
+        if let Some(colon_pos) = find_lambda_colon(expr_str) {
+            let params_str = expr_str[6..colon_pos].trim(); // "lambda" is 6 chars
+            let body_str = expr_str[colon_pos + 1..].trim();
+            
+            // Parse params (comma-separated identifiers, or empty for lambda:)
+            let params: Vec<String> = if params_str.is_empty() {
+                vec![]
+            } else {
+                params_str.split(',').map(|s| s.trim().to_string()).collect()
+            };
+            
+            // Parse body expression
+            let body = parse_expr(body_str, line_num)?;
+            
+            return Ok(Expr::Lambda {
+                params,
+                body: Box::new(body),
+            });
+        }
     }
     
     // Try to parse as f-string (f"..." or f'...')
@@ -1463,14 +1608,43 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         }
     }
 
-    // Try to parse as Index (ends with ']')
+    // Try to parse as Index or Slice (ends with ']')
     if expr_str.ends_with(']') {
         if let Some(open_pos) = find_matching_bracket_rtl(expr_str, expr_str.len() - 1, ']', '[') {
             let target_part = &expr_str[..open_pos];
             let index_part = &expr_str[open_pos + 1..expr_str.len() - 1];
             
             // If target_part is empty, it's a list literal or comprehension -> handled below.
-            if !target_part.trim().is_empty() {
+            // If target_part ends with comma, it's likely a tuple containing a list -> skip index parsing
+            // e.g. "0, []" should be parsed as tuple, not index
+            let target_trimmed = target_part.trim();
+            if !target_trimmed.is_empty() && !target_trimmed.ends_with(',') {
+                // Check if this is a slice (contains ':')
+                if let Some(colon_pos) = find_char_balanced(index_part, ':') {
+                    // It's a slice: target[start:end]
+                    let start_str = &index_part[..colon_pos].trim();
+                    let end_str = &index_part[colon_pos + 1..].trim();
+                    
+                    let start = if start_str.is_empty() {
+                        None
+                    } else {
+                        Some(Box::new(parse_expr(start_str, line_num)?))
+                    };
+                    
+                    let end = if end_str.is_empty() {
+                        None
+                    } else {
+                        Some(Box::new(parse_expr(end_str, line_num)?))
+                    };
+                    
+                    return Ok(Expr::Slice {
+                        target: Box::new(parse_expr(target_part, line_num)?),
+                        start,
+                        end,
+                    });
+                }
+                
+                // Normal index access
                 return Ok(Expr::Index {
                     target: Box::new(parse_expr(target_part, line_num)?),
                     index: Box::new(parse_expr(index_part, line_num)?),

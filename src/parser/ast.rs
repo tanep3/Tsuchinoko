@@ -60,6 +60,12 @@ pub enum Expr {
         target: Box<Expr>,
         index: Box<Expr>,
     },
+    /// Slice access (target[start:end])
+    Slice {
+        target: Box<Expr>,
+        start: Option<Box<Expr>>,
+        end: Option<Box<Expr>>,
+    },
     /// Attribute access (obj.attr)
     Attribute {
         value: Box<Expr>,
@@ -73,6 +79,11 @@ pub enum Expr {
         parts: Vec<String>,
         /// Expressions to interpolate
         values: Vec<Expr>,
+    },
+    /// Lambda expression (lambda params: body)
+    Lambda {
+        params: Vec<String>,
+        body: Box<Expr>,
     },
 }
 
@@ -105,6 +116,17 @@ pub enum UnaryOp {
     Not,
 }
 
+/// Augmented assignment operators
+#[derive(Debug, Clone, PartialEq)]
+pub enum AugAssignOp {
+    Add,      // +=
+    Sub,      // -=
+    Mul,      // *=
+    Div,      // /=
+    FloorDiv, // //=
+    Mod,      // %=
+}
+
 /// Statement types
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
@@ -120,10 +142,21 @@ pub enum Stmt {
         index: Expr,
         value: Expr,
     },
+    /// Augmented assignment (x += 1, x -= 1, etc.)
+    AugAssign {
+        target: String,
+        op: AugAssignOp,
+        value: Expr,
+    },
     /// Tuple unpacking assignment (a, b = func())
     TupleAssign {
         targets: Vec<String>,
         value: Expr,
+    },
+    /// Index swap (a[i], a[j] = a[j], a[i])
+    IndexSwap {
+        left_targets: Vec<Expr>,
+        right_values: Vec<Expr>,
     },
     /// Function definition
     FuncDef {
@@ -171,6 +204,10 @@ pub enum Stmt {
         exception_type: String,
         message: Expr,
     },
+    /// Break statement
+    Break,
+    /// Continue statement
+    Continue,
 }
 
 /// Function parameter
