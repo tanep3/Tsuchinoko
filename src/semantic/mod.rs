@@ -91,10 +91,15 @@ impl SemanticAnalyzer {
                                         if matches!(func.as_ref(), Expr::Ident(n) if n == "main") && args.is_empty()
                                     );
 
-                                if is_simple_main_call && main_func_body.is_some() {
-                                    // Inline def main()'s body here
-                                    new_stmts.extend(main_func_body.as_ref().unwrap().clone());
-                                    main_inlined = true;
+                                if is_simple_main_call {
+                                    if let Some(body) = main_func_body.as_ref() {
+                                        // Inline def main()'s body here
+                                        new_stmts.extend(body.clone());
+                                        main_inlined = true;
+                                    } else {
+                                        // Inline the if block's body here
+                                        new_stmts.extend(then_body.clone());
+                                    }
                                 } else {
                                     // Inline the if block's body here
                                     new_stmts.extend(then_body.clone());
