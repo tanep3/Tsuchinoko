@@ -5,13 +5,16 @@
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-1.0.0-green.svg)](Cargo.toml)
+[![Coverage](https://img.shields.io/badge/Python_Syntax_Coverage-~56%25-blue.svg)](#feature-documentation)
 
 [🇯🇵 日本語版はこちら](README_jp.md)
 
 ## Overview
 
 Tsuchinoko is a transpiler that converts type-hinted Python code to Rust.
-Write logic in Python's readable syntax and gain Rust's safety and performance.
+Write algorithmic logic in Python's readable syntax and gain Rust's safety and performance.
+
+> **Coverage**: Supports ~56% of Python syntax features (45+ features), covering all essential constructs for algorithmic programming: variables, operators, control flow, functions, classes, and data structures.
 
 ## Design Philosophy
 
@@ -37,10 +40,10 @@ Benchmarks include data generation (LCG) and sorting time.
 
 | Algorithm | N | Python | Tsuchinoko (Rust) | Speedup |
 |-----------|---|--------|-------------------|---------|
-| **Bubble Sort** | 10,000 | 5.050s | **0.040s** | **~125x** 🚀 |
-| **Radix Sort** | 10,000,000 | 9.711s | **0.311s** | **~31x** 🚀 |
+| **Bubble Sort** | 10,000 | 5.394s | **0.037s** | **~146x** 🚀 |
+| **Radix Sort** | 10,000,000 | 8.908s | **0.278s** | **~32x** 🚀 |
 
-*Measured using `hyperfine` on local environment (Linux x86_64).*
+*Measured using `hyperfine` on local environment (Linux x86_64, V1.0.0).*
 
 ## Installation
 
@@ -110,37 +113,15 @@ For detailed feature lists, see:
 
 ## Future Roadmap
 
+- [ ] Named arguments support (`func(name="value")`)
 - [ ] Full class inheritance support
 - [ ] Exception handling (`try-except` → `Result`)
-- [ ] Named arguments support
 - [ ] More standard library mappings
 
 ## Documentation
 
 - [User Manual](docs/user-manual.md) | [ユーザーマニュアル](docs/user-manual_jp.md)
 - [Deploy Guide](docs/deploy-guide.md) | [デプロイガイド](docs/deploy-guide_jp.md)
-- [Requirements](docs/requirements.md)
-- [System Design](docs/system-design.md)
-- [API Spec](docs/api-spec.md)
-
-## Testing
-
-```bash
-cargo test
-```
-
-## Project Structure
-
-```
-src/
-├── lib.rs          # Library entry point
-├── main.rs         # CLI entry point
-├── parser/         # Python parser (pest)
-├── semantic/       # Semantic analysis & type inference
-├── ir/             # Intermediate representation
-├── emitter/        # Rust code generation
-└── error/          # Error types
-```
 
 ## License
 
