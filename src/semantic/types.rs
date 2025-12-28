@@ -135,8 +135,7 @@ impl Type {
     /// Check if type is Copy
     pub fn is_copy(&self) -> bool {
         match self {
-            // Unknown is treated as Copy to avoid spurious .clone() calls
-            Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Ref(_) | Type::Unknown => true,
+            Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Ref(_) => true,
             _ => false,
         }
     }

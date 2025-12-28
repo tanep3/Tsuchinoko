@@ -1723,9 +1723,12 @@ impl SemanticAnalyzer {
             }
 
             // Fallback Clone for non-Copy types
+            // Skip clone for method calls that return Copy types (like len())
+            let is_copy_method = matches!(&ir_arg, IrExpr::MethodCall { method, .. } if method == "len");
             if !resolved_actual.is_copy() 
                 && !matches!(actual_ty, Type::Ref(_)) 
-                && !matches!(resolved_actual, Type::Func { .. }) 
+                && !matches!(resolved_actual, Type::Func { .. })
+                && !is_copy_method
             {
                 let method = if matches!(ir_arg, IrExpr::StringLit(_) | IrExpr::FString { .. }) {
                     "to_string"
