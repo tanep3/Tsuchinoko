@@ -39,7 +39,7 @@ mod tests {
             line: 5,
             message: "unexpected token".to_string(),
         };
-        assert_eq!(format!("{}", err), "Parse error at line 5: unexpected token");
+        assert_eq!(format!("{err}"), "Parse error at line 5: unexpected token");
     }
 
     #[test]
@@ -48,6 +48,9 @@ mod tests {
             line: 10,
             message: "expected int, got str".to_string(),
         };
-        assert_eq!(format!("{}", err), "Type error at line 10: expected int, got str");
+        assert_eq!(
+            format!("{err}"),
+            "Type error at line 10: expected int, got str"
+        );
     }
 }

@@ -13,10 +13,7 @@ pub enum IrNode {
         init: Option<Box<IrExpr>>,
     },
     /// Assignment
-    Assign {
-        target: String,
-        value: Box<IrExpr>,
-    },
+    Assign { target: String, value: Box<IrExpr> },
     /// Index assignment (arr[i] = val)
     IndexAssign {
         target: Box<IrExpr>,
@@ -70,7 +67,7 @@ pub enum IrNode {
     Expr(IrExpr),
     /// Field assignment (self.field = value)
     FieldAssign {
-        target: Box<IrExpr>,  // Usually IrExpr::Var("self")
+        target: Box<IrExpr>, // Usually IrExpr::Var("self")
         field: String,
         value: Box<IrExpr>,
     },
@@ -82,12 +79,12 @@ pub enum IrNode {
     /// Impl block for methods
     ImplBlock {
         struct_name: String,
-        methods: Vec<IrNode>,  // Contains MethodDecl nodes
+        methods: Vec<IrNode>, // Contains MethodDecl nodes
     },
     /// Method declaration inside impl block
     MethodDecl {
         name: String,
-        params: Vec<(String, Type)>,  // Excludes &self
+        params: Vec<(String, Type)>, // Excludes &self
         ret: Type,
         body: Vec<IrNode>,
         takes_self: bool,     // true for instance methods, false for static
@@ -99,10 +96,7 @@ pub enum IrNode {
         except_body: Vec<IrNode>,
     },
     /// Type alias (type Alias = T)
-    TypeAlias {
-        name: String,
-        ty: Type,
-    },
+    TypeAlias { name: String, ty: Type },
     /// Panic (from raise)
     Panic(String),
     /// Break statement
@@ -242,7 +236,7 @@ pub enum IrBinOp {
     GtEq,
     And,
     Or,
-    Contains,  // x in dict -> dict.contains_key(&x)
+    Contains, // x in dict -> dict.contains_key(&x)
 }
 
 /// IR unary operators

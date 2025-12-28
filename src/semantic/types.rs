@@ -3,12 +3,12 @@
 /// Rust types
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
-    Int,      // i64
-    Float,    // f64
-    String,   // String
-    Bool,     // bool
-    List(Box<Type>),           // Vec<T>
-    Tuple(Vec<Type>),          // (T, U, ...)
+    Int,                        // i64
+    Float,                      // f64
+    String,                     // String
+    Bool,                       // bool
+    List(Box<Type>),            // Vec<T>
+    Tuple(Vec<Type>),           // (T, U, ...)
     Dict(Box<Type>, Box<Type>), // HashMap<K, V>
     Optional(Box<Type>),        // Option<T>
     Ref(Box<Type>),             // &T
@@ -18,9 +18,9 @@ pub enum Type {
         ret: Box<Type>,
         is_boxed: bool,
     },
-    Unit,     // ()
-    Struct(String),  // User-defined struct
-    Unknown,  // Not yet inferred
+    Unit,           // ()
+    Struct(String), // User-defined struct
+    Unknown,        // Not yet inferred
 }
 
 impl Type {
@@ -37,7 +37,7 @@ impl Type {
             }
             "tuple" | "Tuple" => {
                 if params.is_empty() {
-                    Type::List(Box::new(Type::Unknown)) 
+                    Type::List(Box::new(Type::Unknown))
                 } else {
                     Type::Tuple(params.to_vec())
                 }
@@ -75,7 +75,12 @@ impl Type {
                 }
             }
             // Check if it's a user-defined type (capitalized name)
-            name if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) => {
+            name if name
+                .chars()
+                .next()
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false) =>
+            {
                 Type::Struct(name.to_string())
             }
             _ => Type::Unknown,
@@ -95,7 +100,11 @@ impl Type {
                 format!("({})", inner.join(", "))
             }
             Type::Dict(k, v) => {
-                format!("std::collections::HashMap<{}, {}>", k.to_rust_string(), v.to_rust_string())
+                format!(
+                    "std::collections::HashMap<{}, {}>",
+                    k.to_rust_string(),
+                    v.to_rust_string()
+                )
             }
             Type::Optional(inner) => format!("Option<{}>", inner.to_rust_string()),
             Type::Ref(inner) => {
@@ -116,11 +125,19 @@ impl Type {
                     format!("&mut {}", inner.to_rust_string())
                 }
             }
-            Type::Func { params, ret, is_boxed } => {
+            Type::Func {
+                params,
+                ret,
+                is_boxed,
+            } => {
                 let p: Vec<_> = params.iter().map(|t| t.to_rust_string()).collect();
                 if *is_boxed {
                     // Use Arc<dyn Fn(...) + Send + Sync> for Clone support
-                    format!("std::sync::Arc<dyn Fn({}) -> {} + Send + Sync>", p.join(", "), ret.to_rust_string())
+                    format!(
+                        "std::sync::Arc<dyn Fn({}) -> {} + Send + Sync>",
+                        p.join(", "),
+                        ret.to_rust_string()
+                    )
                 } else {
                     // Use fn(...) -> ... for raw function pointers (items)
                     format!("fn({}) -> {}", p.join(", "), ret.to_rust_string())
@@ -134,10 +151,10 @@ impl Type {
 
     /// Check if type is Copy
     pub fn is_copy(&self) -> bool {
-        match self {
-            Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Ref(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Ref(_)
+        )
     }
 
     /// Check if this type is compatible with another type (considering Unknown as wildcard)
@@ -149,7 +166,9 @@ impl Type {
         match (self, other) {
             (Type::List(a), Type::List(b)) => a.is_compatible_with(b),
             (Type::Tuple(a), Type::Tuple(b)) => {
-                if a.len() != b.len() { return false; }
+                if a.len() != b.len() {
+                    return false;
+                }
                 a.iter().zip(b.iter()).all(|(x, y)| x.is_compatible_with(y))
             }
             (Type::Dict(k1, v1), Type::Dict(k2, v2)) => {
@@ -157,9 +176,25 @@ impl Type {
             }
             (Type::Optional(a), Type::Optional(b)) => a.is_compatible_with(b),
             (Type::Ref(a), Type::Ref(b)) => a.is_compatible_with(b),
-            (Type::Func { params: p1, ret: r1, .. }, Type::Func { params: p2, ret: r2, .. }) => {
-                if p1.len() != p2.len() { return false; }
-                p1.iter().zip(p2.iter()).all(|(x, y)| x.is_compatible_with(y)) && r1.is_compatible_with(r2)
+            (
+                Type::Func {
+                    params: p1,
+                    ret: r1,
+                    ..
+                },
+                Type::Func {
+                    params: p2,
+                    ret: r2,
+                    ..
+                },
+            ) => {
+                if p1.len() != p2.len() {
+                    return false;
+                }
+                p1.iter()
+                    .zip(p2.iter())
+                    .all(|(x, y)| x.is_compatible_with(y))
+                    && r1.is_compatible_with(r2)
             }
             _ => false,
         }

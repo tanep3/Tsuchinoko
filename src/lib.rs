@@ -6,27 +6,27 @@
 //! # Author
 //! Tane Channel Technology
 
+pub mod emitter;
 pub mod error;
+pub mod ir;
 pub mod lexer;
 pub mod parser;
 pub mod semantic;
-pub mod ir;
-pub mod emitter;
 
-use std::path::Path;
 use anyhow::Result;
+use std::path::Path;
 
 /// Transpile Python source code to Rust source code
 pub fn transpile(source: &str) -> Result<String> {
     // 1. Parse Python source to AST
     let program = parser::parse(source)?;
-    
+
     // 2. Semantic analysis: AST -> IR
     let ir = semantic::analyze(&program)?;
-    
+
     // 3. Emit Rust code
     let rust_code = emitter::emit(&ir);
-    
+
     Ok(rust_code)
 }
 

@@ -1,7 +1,7 @@
 //! Scope management
 
-use std::collections::HashMap;
 use super::Type;
+use std::collections::HashMap;
 
 /// Variable information
 #[derive(Debug, Clone)]
@@ -15,6 +15,12 @@ pub struct VarInfo {
 #[derive(Debug, Clone)]
 pub struct Scope {
     variables: HashMap<String, VarInfo>,
+}
+
+impl Default for Scope {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Scope {
@@ -44,6 +50,12 @@ impl Scope {
 #[derive(Debug)]
 pub struct ScopeStack {
     scopes: Vec<Scope>,
+}
+
+impl Default for ScopeStack {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ScopeStack {
@@ -91,7 +103,7 @@ mod tests {
     fn test_scope_define_and_lookup() {
         let mut scope = Scope::new();
         scope.define("x", Type::Int, false);
-        
+
         let info = scope.lookup("x").unwrap();
         assert_eq!(info.name, "x");
         assert_eq!(info.ty, Type::Int);
@@ -101,13 +113,13 @@ mod tests {
     fn test_scope_stack_nested() {
         let mut stack = ScopeStack::new();
         stack.define("global_var", Type::Int, false);
-        
+
         stack.push();
         stack.define("local_var", Type::String, true);
-        
+
         assert!(stack.lookup("global_var").is_some());
         assert!(stack.lookup("local_var").is_some());
-        
+
         stack.pop();
         assert!(stack.lookup("global_var").is_some());
         assert!(stack.lookup("local_var").is_none());

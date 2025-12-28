@@ -86,7 +86,7 @@ pub enum Operator {
     SlashAssign,
 
     // Other
-    Arrow,  // ->
+    Arrow, // ->
     Colon,
 }
 

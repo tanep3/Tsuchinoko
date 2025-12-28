@@ -22,15 +22,9 @@ pub enum Expr {
         right: Box<Expr>,
     },
     /// Unary operation
-    UnaryOp {
-        op: UnaryOp,
-        operand: Box<Expr>,
-    },
+    UnaryOp { op: UnaryOp, operand: Box<Expr> },
     /// Function call
-    Call {
-        func: Box<Expr>,
-        args: Vec<Expr>,
-    },
+    Call { func: Box<Expr>, args: Vec<Expr> },
     /// List literal
     List(Vec<Expr>),
     /// List comprehension [elt for target in iter] or [elt for target in iter if cond]
@@ -56,10 +50,7 @@ pub enum Expr {
     /// Tuple literal
     Tuple(Vec<Expr>),
     /// Index access
-    Index {
-        target: Box<Expr>,
-        index: Box<Expr>,
-    },
+    Index { target: Box<Expr>, index: Box<Expr> },
     /// Slice access (target[start:end])
     Slice {
         target: Box<Expr>,
@@ -67,10 +58,7 @@ pub enum Expr {
         end: Option<Box<Expr>>,
     },
     /// Attribute access (obj.attr)
-    Attribute {
-        value: Box<Expr>,
-        attr: String,
-    },
+    Attribute { value: Box<Expr>, attr: String },
     /// Dict literal
     Dict(Vec<(Expr, Expr)>),
     /// f-string literal f"..."
@@ -105,7 +93,7 @@ pub enum BinOp {
     GtEq,
     And,
     Or,
-    In,  // x in dict
+    In, // x in dict
 }
 
 /// Unary operators
@@ -149,10 +137,7 @@ pub enum Stmt {
         value: Expr,
     },
     /// Tuple unpacking assignment (a, b = func())
-    TupleAssign {
-        targets: Vec<String>,
-        value: Expr,
-    },
+    TupleAssign { targets: Vec<String>, value: Expr },
     /// Index swap (a[i], a[j] = a[j], a[i])
     IndexSwap {
         left_targets: Vec<Expr>,
@@ -179,10 +164,7 @@ pub enum Stmt {
         body: Vec<Stmt>,
     },
     /// While loop
-    While {
-        condition: Expr,
-        body: Vec<Stmt>,
-    },
+    While { condition: Expr, body: Vec<Stmt> },
     /// Return statement
     Return(Option<Expr>),
     /// Expression statement
@@ -235,10 +217,10 @@ pub struct Field {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodDef {
     pub name: String,
-    pub params: Vec<Param>,  // Excludes 'self'
+    pub params: Vec<Param>, // Excludes 'self'
     pub return_type: Option<TypeHint>,
     pub body: Vec<Stmt>,
-    pub is_static: bool,  // @staticmethod
+    pub is_static: bool, // @staticmethod
 }
 
 /// Program (collection of statements)
@@ -267,7 +249,12 @@ mod tests {
             }),
             value: Expr::IntLiteral(10),
         };
-        if let Stmt::Assign { target, type_hint, value } = stmt {
+        if let Stmt::Assign {
+            target,
+            type_hint,
+            value,
+        } = stmt
+        {
             assert_eq!(target, "x");
             assert!(type_hint.is_some());
             assert_eq!(value, Expr::IntLiteral(10));

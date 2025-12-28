@@ -8,32 +8,44 @@ pub fn find_char_balanced(s: &str, target: char) -> Option<usize> {
     let mut in_string = false;
     let mut string_quote = '\0';
     let mut escaped = false;
-    
+
     for (i, c) in s.char_indices() {
         if in_string {
-             if escaped {
-                 escaped = false;
-             } else if c == '\\' {
-                 escaped = true;
-             } else if c == string_quote {
-                 in_string = false;
-             }
-             continue;
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == string_quote {
+                in_string = false;
+            }
+            continue;
         }
-        
+
         match c {
             '"' | '\'' => {
                 in_string = true;
                 string_quote = c;
             }
             '(' => depth_paren += 1,
-            ')' => if depth_paren > 0 { depth_paren -= 1 },
+            ')' => {
+                if depth_paren > 0 {
+                    depth_paren -= 1
+                }
+            }
             '[' => depth_bracket += 1,
-            ']' => if depth_bracket > 0 { depth_bracket -= 1 },
+            ']' => {
+                if depth_bracket > 0 {
+                    depth_bracket -= 1
+                }
+            }
             '{' => depth_brace += 1,
-            '}' => if depth_brace > 0 { depth_brace -= 1 },
+            '}' => {
+                if depth_brace > 0 {
+                    depth_brace -= 1
+                }
+            }
             _ if c == target && depth_paren == 0 && depth_bracket == 0 && depth_brace == 0 => {
-                 return Some(i);
+                return Some(i);
             }
             _ => {}
         }
@@ -42,15 +54,20 @@ pub fn find_char_balanced(s: &str, target: char) -> Option<usize> {
 }
 
 /// Find matching opening bracket starting from a position (moving Left)
-pub fn find_matching_bracket_rtl(s: &str, end_pos: usize, close_char: char, open_char: char) -> Option<usize> {
+pub fn find_matching_bracket_rtl(
+    s: &str,
+    end_pos: usize,
+    close_char: char,
+    open_char: char,
+) -> Option<usize> {
     let mut stack = Vec::new();
     let mut in_string = false;
     let mut string_quote = '\0';
     let mut escaped = false;
-    
+
     for (i, c) in s.char_indices() {
         if i > end_pos {
-            break; 
+            break;
         }
 
         if in_string {
@@ -63,14 +80,14 @@ pub fn find_matching_bracket_rtl(s: &str, end_pos: usize, close_char: char, open
             }
             continue;
         }
-        
+
         if c == '"' || c == '\'' {
             in_string = true;
             string_quote = c;
             escaped = false;
             continue;
         }
-        
+
         if c == open_char {
             stack.push(i);
         } else if c == close_char {
@@ -106,19 +123,19 @@ pub fn find_char_balanced_rtl(s: &str, target: char) -> Option<usize> {
     let mut depth_bracket = 0;
     let mut in_string = false;
     let mut string_char = ' ';
-    
+
     let chars: Vec<char> = s.chars().collect();
-    
+
     for i in (0..chars.len()).rev() {
         let c = chars[i];
-        
+
         if in_string {
             if c == string_char {
                 in_string = false;
             }
             continue;
         }
-        
+
         match c {
             '"' | '\'' => {
                 in_string = true;
@@ -128,10 +145,10 @@ pub fn find_char_balanced_rtl(s: &str, target: char) -> Option<usize> {
             ')' => depth_paren -= 1,
             '[' => depth_bracket += 1,
             ']' => depth_bracket -= 1,
-             _ if depth_paren == 0 && depth_bracket == 0 => {
-                 if c == target {
-                     return Some(i);
-                 }
+            _ if depth_paren == 0 && depth_bracket == 0 => {
+                if c == target {
+                    return Some(i);
+                }
             }
             _ => {}
         }
@@ -148,7 +165,7 @@ pub fn split_by_comma_balanced(s: &str) -> Vec<String> {
     let mut depth_brace = 0;
     let mut in_string = false;
     let mut string_char = ' ';
-    
+
     for c in s.chars() {
         if in_string {
             current.push(c);
@@ -157,7 +174,7 @@ pub fn split_by_comma_balanced(s: &str) -> Vec<String> {
             }
             continue;
         }
-        
+
         match c {
             '"' | '\'' => {
                 in_string = true;
@@ -195,11 +212,11 @@ pub fn split_by_comma_balanced(s: &str) -> Vec<String> {
             _ => current.push(c),
         }
     }
-    
+
     if !current.trim().is_empty() {
         parts.push(current.trim().to_string());
     }
-    
+
     parts
 }
 
@@ -209,20 +226,20 @@ pub fn find_operator_balanced(s: &str, op: &str) -> Option<usize> {
     let mut depth_bracket = 0;
     let mut in_string = false;
     let mut string_char = ' ';
-    
+
     let chars: Vec<char> = s.chars().collect();
     let op_chars: Vec<char> = op.chars().collect();
-    
+
     for i in 0..chars.len() {
         let c = chars[i];
-        
+
         if in_string {
             if c == string_char {
                 in_string = false;
             }
             continue;
         }
-        
+
         match c {
             '"' | '\'' => {
                 in_string = true;
@@ -236,17 +253,25 @@ pub fn find_operator_balanced(s: &str, op: &str) -> Option<usize> {
                 if i + op_chars.len() <= chars.len() {
                     let slice: String = chars[i..i + op_chars.len()].iter().collect();
                     if slice == op {
-                         // Avoid matching * inside ** and / inside //
-                         if op == "*" {
-                             let next_idx = i + op_chars.len();
-                             if next_idx < chars.len() && chars[next_idx] == '*' { continue; }
-                             if i > 0 && chars[i-1] == '*' { continue; }
-                         }
-                         if op == "/" {
-                             let next_idx = i + op_chars.len();
-                             if next_idx < chars.len() && chars[next_idx] == '/' { continue; }
-                             if i > 0 && chars[i-1] == '/' { continue; }
-                         }
+                        // Avoid matching * inside ** and / inside //
+                        if op == "*" {
+                            let next_idx = i + op_chars.len();
+                            if next_idx < chars.len() && chars[next_idx] == '*' {
+                                continue;
+                            }
+                            if i > 0 && chars[i - 1] == '*' {
+                                continue;
+                            }
+                        }
+                        if op == "/" {
+                            let next_idx = i + op_chars.len();
+                            if next_idx < chars.len() && chars[next_idx] == '/' {
+                                continue;
+                            }
+                            if i > 0 && chars[i - 1] == '/' {
+                                continue;
+                            }
+                        }
 
                         return Some(i);
                     }
@@ -255,7 +280,7 @@ pub fn find_operator_balanced(s: &str, op: &str) -> Option<usize> {
             _ => {}
         }
     }
-    
+
     None
 }
 
@@ -265,21 +290,21 @@ pub fn find_operator_balanced_rtl(s: &str, op: &str) -> Option<usize> {
     let mut depth_bracket = 0;
     let mut in_string = false;
     let mut string_char = ' ';
-    
+
     let chars: Vec<char> = s.chars().collect();
     let op_chars: Vec<char> = op.chars().collect();
     let mut last_found: Option<usize> = None;
-    
+
     for i in 0..chars.len() {
         let c = chars[i];
-        
+
         if in_string {
             if c == string_char {
                 in_string = false;
             }
             continue;
         }
-        
+
         match c {
             '"' | '\'' => {
                 in_string = true;
@@ -293,17 +318,25 @@ pub fn find_operator_balanced_rtl(s: &str, op: &str) -> Option<usize> {
                 if i + op_chars.len() <= chars.len() {
                     let slice: String = chars[i..i + op_chars.len()].iter().collect();
                     if slice == op {
-                         // Avoid matching * inside ** and / inside //
-                         if op == "*" {
-                             let next_idx = i + op_chars.len();
-                             if next_idx < chars.len() && chars[next_idx] == '*' { continue; }
-                             if i > 0 && chars[i-1] == '*' { continue; }
-                         }
-                         if op == "/" {
-                             let next_idx = i + op_chars.len();
-                             if next_idx < chars.len() && chars[next_idx] == '/' { continue; }
-                             if i > 0 && chars[i-1] == '/' { continue; }
-                         }
+                        // Avoid matching * inside ** and / inside //
+                        if op == "*" {
+                            let next_idx = i + op_chars.len();
+                            if next_idx < chars.len() && chars[next_idx] == '*' {
+                                continue;
+                            }
+                            if i > 0 && chars[i - 1] == '*' {
+                                continue;
+                            }
+                        }
+                        if op == "/" {
+                            let next_idx = i + op_chars.len();
+                            if next_idx < chars.len() && chars[next_idx] == '/' {
+                                continue;
+                            }
+                            if i > 0 && chars[i - 1] == '/' {
+                                continue;
+                            }
+                        }
 
                         last_found = Some(i);
                     }
@@ -312,7 +345,7 @@ pub fn find_operator_balanced_rtl(s: &str, op: &str) -> Option<usize> {
             _ => {}
         }
     }
-    
+
     last_found
 }
 
@@ -323,20 +356,20 @@ pub fn find_keyword_balanced(s: &str, keyword: &str) -> Option<usize> {
     let mut depth_bracket = 0;
     let mut in_string = false;
     let mut string_char = ' ';
-    
+
     let chars: Vec<char> = s.chars().collect();
     let keyword_chars: Vec<char> = keyword.chars().collect();
-    
+
     for i in 0..chars.len() {
         let c = chars[i];
-        
+
         if in_string {
             if c == string_char {
                 in_string = false;
             }
             continue;
         }
-        
+
         match c {
             '"' | '\'' => {
                 in_string = true;
@@ -358,10 +391,11 @@ pub fn find_keyword_balanced(s: &str, keyword: &str) -> Option<usize> {
                         } else {
                             None
                         };
-                        
-                        let is_start_ok = prev_char.map_or(true, |c| !c.is_alphanumeric() && c != '_');
-                        let is_end_ok = next_char.map_or(true, |c| !c.is_alphanumeric() && c != '_');
-                        
+
+                        let is_start_ok =
+                            prev_char.is_none_or(|c| !c.is_alphanumeric() && c != '_');
+                        let is_end_ok = next_char.is_none_or(|c| !c.is_alphanumeric() && c != '_');
+
                         if is_start_ok && is_end_ok {
                             return Some(i);
                         }
@@ -371,7 +405,7 @@ pub fn find_keyword_balanced(s: &str, keyword: &str) -> Option<usize> {
             _ => {}
         }
     }
-    
+
     None
 }
 
@@ -390,7 +424,7 @@ mod tests {
     fn test_split_by_comma_balanced() {
         let parts = split_by_comma_balanced("a, b, c");
         assert_eq!(parts, vec!["a", "b", "c"]);
-        
+
         let parts = split_by_comma_balanced("func(a, b), c");
         assert_eq!(parts, vec!["func(a, b)", "c"]);
     }
