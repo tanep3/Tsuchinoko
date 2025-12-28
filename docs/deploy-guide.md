@@ -25,7 +25,7 @@ cargo --version
 ### Clone and Build
 
 ```bash
-git clone https://github.com/TaneChannelTechnology/Tsuchinoko.git
+git clone https://github.com/tanep3/Tsuchinoko.git
 cd Tsuchinoko
 cargo build
 ```

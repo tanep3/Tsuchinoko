@@ -21,7 +21,7 @@
 ### Install from Source
 
 ```bash
-git clone https://github.com/TaneChannelTechnology/Tsuchinoko.git
+git clone https://github.com/tanep3/Tsuchinoko.git
 cd Tsuchinoko
 cargo build --release
 cargo install --path .
