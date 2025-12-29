@@ -4,9 +4,7 @@ Tsuchinokoトランスパイラが現在サポートしていないPython機能�
 
 ## 言語機能
 
-- **名前付き引数** (`func(name="value")`)
 - **可変長引数** (`*args`, `**kwargs`)
-- **デフォルト引数値** (`def func(x=10)`)
 - **デコレータ** (`@staticmethod`以外)
 - **ジェネレータ** (`yield`文)
 - **Async/Await** 構文
@@ -17,7 +15,7 @@ Tsuchinokoトランスパイラが現在サポートしていないPython機能�
 
 ## 例外処理
 
-- **try/except/finally** ブロック
+- **try/except/finally** 特定例外型のハンドリング
 - **カスタム例外クラス**
 - **例外チェーン** (`raise ... from ...`)
 

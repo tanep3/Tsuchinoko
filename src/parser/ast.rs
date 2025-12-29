@@ -77,6 +77,8 @@ pub enum Expr {
         params: Vec<String>,
         body: Box<Expr>,
     },
+    /// Starred expression (*expr) for unpacking
+    Starred(Box<Expr>),
 }
 
 /// Binary operators
@@ -97,7 +99,9 @@ pub enum BinOp {
     GtEq,
     And,
     Or,
-    In, // x in dict
+    In,    // x in dict
+    Is,    // x is None
+    IsNot, // x is not None
 }
 
 /// Unary operators
@@ -202,6 +206,7 @@ pub struct Param {
     pub name: String,
     pub type_hint: Option<TypeHint>,
     pub default: Option<Expr>,
+    pub variadic: bool,
 }
 
 /// Type hint

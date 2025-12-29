@@ -281,7 +281,16 @@ impl RustEmitter {
                 format!("{}type {} = {};", indent, name, ty.to_rust_string())
             }
             IrNode::Expr(expr) => {
-                format!("{}{};", indent, self.emit_expr(expr))
+                // Convert standalone string literals (docstrings) to comments
+                if let IrExpr::StringLit(s) = expr {
+                    // Multi-line docstrings become multi-line comments
+                    let comment_lines: Vec<String> = s
+                        .lines()
+                        .map(|line| format!("{}// {}", indent, line))
+                        .collect();
+                    return comment_lines.join("\n");
+                }
+                format!("{}{};\n", indent, self.emit_expr(expr))
             }
             IrNode::StructDef { name, fields } => {
                 // Register struct definition for constructor emission
@@ -486,6 +495,26 @@ impl RustEmitter {
                             self.emit_expr(right),
                             self.emit_expr(left)
                         );
+                    }
+                    IrBinOp::Is => {
+                        // x is None -> x.is_none()
+                        let right_str = self.emit_expr(right);
+                        if right_str == "None" {
+                            return format!("{}.is_none()", self.emit_expr(left));
+                        } else {
+                            // General case: std::ptr::eq or ==
+                            return format!("({} == {})", self.emit_expr(left), right_str);
+                        }
+                    }
+                    IrBinOp::IsNot => {
+                        // x is not None -> x.is_some()
+                        let right_str = self.emit_expr(right);
+                        if right_str == "None" {
+                            return format!("{}.is_some()", self.emit_expr(left));
+                        } else {
+                            // General case: != 
+                            return format!("({} != {})", self.emit_expr(left), right_str);
+                        }
                     }
                 };
                 format!(

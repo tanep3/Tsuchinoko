@@ -4,9 +4,7 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 
 ## Language Features
 
-- **Named arguments** (`func(name="value")`)
 - **Variable-length arguments** (`*args`, `**kwargs`)
-- **Default argument values** (`def func(x=10)`)
 - **Decorators** (except `@staticmethod`)
 - **Generators** (`yield` statements)
 - **Async/Await** syntax
@@ -17,7 +15,7 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 
 ## Exception Handling
 
-- **try/except/finally** blocks
+- **try/except/finally** with specific exception types
 - **Custom exception classes**
 - **Exception chaining** (`raise ... from ...`)
 

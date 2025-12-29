@@ -1282,6 +1282,41 @@ impl SemanticAnalyzer {
                     });
                 }
 
+                // Handle 'is' and 'is not' operators with None
+                if let AstBinOp::Is | AstBinOp::IsNot = op {
+                    // Check if right side is None
+                    if let Expr::NoneLiteral = right.as_ref() {
+                        let left_ty = self.infer_type(left);
+                        let ir_left = self.analyze_expr(left)?;
+                        
+                        match left_ty {
+                            Type::Optional(_) => {
+                                // Optional type: use is_some()/is_none()
+                                let method = if matches!(op, AstBinOp::Is) {
+                                    "is_none"
+                                } else {
+                                    "is_some"
+                                };
+                                return Ok(IrExpr::MethodCall {
+                                    target: Box::new(ir_left),
+                                    method: method.to_string(),
+                                    args: vec![],
+                                });
+                            }
+                            _ => {
+                                // Non-Optional type: always true/false
+                                // Use RawCode to include warning comment
+                                let (value, warning) = if matches!(op, AstBinOp::Is) {
+                                    ("false", "/* Warning: 'is None' on non-Optional type is always false */")
+                                } else {
+                                    ("true", "/* Warning: 'is not None' on non-Optional type is always true */")
+                                };
+                                return Ok(IrExpr::RawCode(format!("{} {}", warning, value)));
+                            }
+                        }
+                    }
+                }
+
                 let ir_left = self.analyze_expr(left)?;
                 let ir_right = self.analyze_expr(right)?;
                 let ir_op = self.convert_binop(op);
@@ -1699,6 +1734,13 @@ impl SemanticAnalyzer {
                     ret_type: Type::Unknown,
                 })
             }
+            Expr::Starred(inner) => {
+                // Starred expression (*expr) - analyze the inner expression
+                // The caller context will determine how to handle the spread
+                let ir_inner = self.analyze_expr(inner)?;
+                // For now, just return the inner expression - the context handles spread
+                Ok(ir_inner)
+            }
             Expr::Index { target, index } => {
                 let ir_target = self.analyze_expr(target)?;
                 let ir_index = self.analyze_expr(index)?;
@@ -1903,7 +1945,9 @@ impl SemanticAnalyzer {
                 | AstBinOp::GtEq
                 | AstBinOp::And
                 | AstBinOp::Or
-                | AstBinOp::In => Type::Bool,
+                | AstBinOp::In
+                | AstBinOp::Is
+                | AstBinOp::IsNot => Type::Bool,
             },
             Expr::UnaryOp { op, operand } => match op {
                 AstUnaryOp::Neg | AstUnaryOp::Pos => self.infer_type(operand),
@@ -2489,6 +2533,8 @@ impl SemanticAnalyzer {
             AstBinOp::And => IrBinOp::And,
             AstBinOp::Or => IrBinOp::Or,
             AstBinOp::In => IrBinOp::Contains,
+            AstBinOp::Is => IrBinOp::Is,
+            AstBinOp::IsNot => IrBinOp::IsNot,
         }
     }
 }

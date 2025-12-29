@@ -424,12 +424,14 @@ fn parse_method_def(
                 name: param_name,
                 type_hint: Some(parse_type_hint(type_str)?),
                 default: None,
+                variadic: false,
             }
         } else {
             Param {
                 name: param_str.to_string(),
                 type_hint: None,
                 default: None,
+                variadic: false,
             }
         };
         params.push(param);
@@ -882,8 +884,21 @@ fn parse_block(lines: &[&str], start: usize) -> Result<(Vec<Stmt>, usize), Tsuch
     Ok((statements, i - start))
 }
 
-/// Parse a function parameter (supports default values: param: type = default)
+/// Parse a function parameter (supports default values: param: type = default, and variadic *args)
 fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoError> {
+    let param_str = param_str.trim();
+    
+    // Check for variadic parameter (*args)
+    if param_str.starts_with('*') && !param_str.starts_with("**") {
+        let name = param_str[1..].trim().to_string();
+        return Ok(Param {
+            name,
+            type_hint: None,
+            default: None,
+            variadic: true,
+        });
+    }
+    
     // Check for default value first (param: type = default or param = default)
     // Find = that is not == or !=
     let eq_pos = find_char_balanced(param_str, '=');
@@ -907,12 +922,14 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
                     name,
                     type_hint: Some(parse_type_hint(type_str)?),
                     default: Some(default_expr),
+                    variadic: false,
                 });
             } else {
                 return Ok(Param {
                     name: left_part.to_string(),
                     type_hint: None,
                     default: Some(default_expr),
+                    variadic: false,
                 });
             }
         }
@@ -926,12 +943,14 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
             name,
             type_hint: Some(parse_type_hint(type_str)?),
             default: None,
+            variadic: false,
         })
     } else {
         Ok(Param {
             name: param_str.trim().to_string(),
             type_hint: None,
             default: None,
+            variadic: false,
         })
     }
 }
@@ -1035,8 +1054,9 @@ fn try_parse_assignment(line: &str, line_num: usize) -> Result<Option<Stmt>, Tsu
     // Also support index swap: a[i], a[j] = a[j], a[i]
     let left_parts = split_by_comma_balanced(left);
     if left_parts.len() > 1 {
-        // Check if all targets are either identifiers or index expressions
+        // Check if all targets are either identifiers, index expressions, or starred (*var)
         let mut has_index_target = false;
+        let mut has_starred_target = false;
         for part in &left_parts {
             let part_trimmed = part.trim();
             if part_trimmed
@@ -1044,6 +1064,9 @@ fn try_parse_assignment(line: &str, line_num: usize) -> Result<Option<Stmt>, Tsu
                 .all(|c| c.is_alphanumeric() || c == '_')
             {
                 // Simple identifier - OK
+            } else if part_trimmed.starts_with('*') && part_trimmed[1..].chars().all(|c| c.is_alphanumeric() || c == '_') {
+                // Starred identifier (*tail) - OK
+                has_starred_target = true;
             } else if part_trimmed.ends_with(']') {
                 // Index expression - also OK
                 has_index_target = true;
@@ -1335,6 +1358,13 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         });
     }
 
+    // Check for starred expression (*expr)
+    if expr_str.starts_with('*') && !expr_str.starts_with("**") {
+        let inner = &expr_str[1..];
+        let inner_expr = parse_expr(inner, line_num)?;
+        return Ok(Expr::Starred(Box::new(inner_expr)));
+    }
+
     // Try to parse as integer
     if let Ok(n) = expr_str.parse::<i64>() {
         return Ok(Expr::IntLiteral(n));
@@ -1592,6 +1622,28 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         return Ok(Expr::BinOp {
             left: Box::new(left),
             op: BinOp::In,
+            right: Box::new(right),
+        });
+    }
+
+    // "is not" operator (must check before "is")
+    if let Some(pos) = find_operator_balanced(expr_str, " is not ") {
+        let left = parse_expr(&expr_str[..pos], line_num)?;
+        let right = parse_expr(&expr_str[pos + 8..], line_num)?;
+        return Ok(Expr::BinOp {
+            left: Box::new(left),
+            op: BinOp::IsNot,
+            right: Box::new(right),
+        });
+    }
+
+    // "is" operator
+    if let Some(pos) = find_operator_balanced(expr_str, " is ") {
+        let left = parse_expr(&expr_str[..pos], line_num)?;
+        let right = parse_expr(&expr_str[pos + 4..], line_num)?;
+        return Ok(Expr::BinOp {
+            left: Box::new(left),
+            op: BinOp::Is,
             right: Box::new(right),
         });
     }

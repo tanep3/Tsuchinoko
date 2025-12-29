@@ -4,8 +4,8 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.0.0-green.svg)](Cargo.toml)
-[![Coverage](https://img.shields.io/badge/Python構文カバレッジ-~56%25-blue.svg)](#機能ドキュメント)
+[![Version](https://img.shields.io/badge/Version-1.1.0-green.svg)](Cargo.toml)
+[![Coverage](https://img.shields.io/badge/Python構文カバレッジ-~60%25-blue.svg)](#機能ドキュメント)
 
 [🇺🇸 English version](README.md)
 
@@ -14,7 +14,7 @@
 TsuchinokoはPythonの型ヒント付きコードをRustに変換するトランスパイラです。
 Pythonの読みやすい構文でアルゴリズムロジックを書き、Rustの安全性とパフォーマンスを得ることができます。
 
-> **カバレッジ**: Python構文機能の約56%(45以上の機能)をサポート。変数、演算子、制御フロー、関数、クラス、データ構造など、アルゴリズムプログラミングに必要なすべての基本構造をカバーしています。
+> **カバレッジ**: Python構文機能の約60%(52機能)をサポート。変数、演算子、制御フロー、関数、クラス、データ構造、エラー処理など、アルゴリズムプログラミングに必要な基本構造をカバーしています。
 
 ## 設計理念 (Design Philosophy)
 
@@ -108,14 +108,16 @@ fn bubble_sort(lists: &[i64]) -> (Vec<i64>, i64) {
 
 詳細な機能一覧については以下を参照してください：
 
-- [サポート機能一覧](docs/supported_features_ja.md) | [Supported Features](docs/supported_features.md)
-- [非サポート機能一覧](docs/unsupported_features_ja.md) | [Unsupported Features](docs/unsupported_features.md)
+- [サポート機能一覧](docs/supported_features_jp.md) | [Supported Features](docs/supported_features.md)
+- [非サポート機能一覧](docs/unsupported_features_jp.md) | [Unsupported Features](docs/unsupported_features.md)
 
 ## 今後のロードマップ (Roadmap)
 
-- [ ] 名前付き引数サポート (`func(name="value")`)
+- [x] 名前付き引数サポート (`func(name="value")`)
+- [x] デフォルト引数サポート (`def func(x=10)`)
+- [x] 例外処理 (`try-except` → `catch_unwind`)
+- [ ] 可変長引数 (`*args`, `**kwargs`)
 - [ ] 完全なクラス継承サポート
-- [ ] 例外処理 (`try-except` → `Result`)
 - [ ] より多くの標準ライブラリマッピング
 
 ## ドキュメント

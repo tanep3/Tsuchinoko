@@ -4,8 +4,8 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.0.0-green.svg)](Cargo.toml)
-[![Coverage](https://img.shields.io/badge/Python_Syntax_Coverage-~56%25-blue.svg)](#feature-documentation)
+[![Version](https://img.shields.io/badge/Version-1.1.0-green.svg)](Cargo.toml)
+[![Coverage](https://img.shields.io/badge/Python_Syntax_Coverage-~60%25-blue.svg)](#feature-documentation)
 
 [🇯🇵 日本語版はこちら](README_jp.md)
 
@@ -14,7 +14,7 @@
 Tsuchinoko is a transpiler that converts type-hinted Python code to Rust.
 Write algorithmic logic in Python's readable syntax and gain Rust's safety and performance.
 
-> **Coverage**: Supports ~56% of Python syntax features (45+ features), covering all essential constructs for algorithmic programming: variables, operators, control flow, functions, classes, and data structures.
+> **Coverage**: Supports ~60% of Python syntax features (52 features), covering essential constructs for algorithmic programming: variables, operators, control flow, functions, classes, data structures, and error handling.
 
 ## Design Philosophy
 
@@ -108,14 +108,16 @@ fn bubble_sort(lists: &[i64]) -> (Vec<i64>, i64) {
 
 For detailed feature lists, see:
 
-- [Supported Features](docs/supported_features.md) | [サポート機能一覧](docs/supported_features_ja.md)
-- [Unsupported Features](docs/unsupported_features.md) | [非サポート機能一覧](docs/unsupported_features_ja.md)
+- [Supported Features](docs/supported_features.md) | [サポート機能一覧](docs/supported_features_jp.md)
+- [Unsupported Features](docs/unsupported_features.md) | [非サポート機能一覧](docs/unsupported_features_jp.md)
 
 ## Future Roadmap
 
-- [ ] Named arguments support (`func(name="value")`)
+- [x] Named arguments support (`func(name="value")`)
+- [x] Default argument values (`def func(x=10)`)
+- [x] Exception handling (`try-except` → `catch_unwind`)
+- [ ] Variable-length arguments (`*args`, `**kwargs`)
 - [ ] Full class inheritance support
-- [ ] Exception handling (`try-except` → `Result`)
 - [ ] More standard library mappings
 
 ## Documentation

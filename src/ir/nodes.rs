@@ -237,6 +237,8 @@ pub enum IrBinOp {
     And,
     Or,
     Contains, // x in dict -> dict.contains_key(&x)
+    Is,       // x is None -> x.is_none()
+    IsNot,    // x is not None -> x.is_some()
 }
 
 /// IR unary operators

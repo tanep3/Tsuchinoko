@@ -11,7 +11,9 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Arithmetic operators**: `+`, `-`, `*`, `/`, `//`, `%`, `**`
 - **Comparison operators**: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - **Logical operators**: `and`, `or`, `not`
+- **Identity operators**: `is`, `is not` (with `None` comparison)
 - **Augmented assignment**: `+=`, `-=`, `*=`, `/=`, `//=`, `%=`
+- **Docstrings**: Triple-quoted strings converted to Rust comments
 
 ## Control Flow
 
@@ -29,6 +31,8 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Nested functions** (closure conversion to Rust closures)
 - **Lambda expressions** (`lambda x: x + 1`)
 - **Higher-order functions** (passing functions as arguments)
+- **Named arguments** (`func(name="value")`)
+- **Default argument values** (`def func(x=10)`)
 
 ## Data Structures
 
@@ -66,6 +70,7 @@ This document lists all Python features currently supported by Tsuchinoko transp
 
 ## Error Handling
 
+- **try/except** blocks (converted to `catch_unwind`)
 - **raise** statements (converted to `panic!`)
 - **ValueError**, **TypeError** (converted to `panic!`)
 
