@@ -306,21 +306,57 @@ impl RustEmitter {
                 try_body,
                 except_body,
             } => {
-                // For now, emit as a comment explaining the limitation
-                // In a full implementation, we would need to analyze the try body
-                // to determine what operations return Result and wrap them accordingly
-                let mut result = format!("{indent}// try-except: simplified translation\n");
-                result.push_str(&format!("{indent}// Try block:\n"));
-                for node in try_body {
-                    result.push_str(&self.emit_node(node));
-                    result.push('\n');
+                // Use std::panic::catch_unwind to catch panics (like division by zero)
+                // and fall back to except_body
+                let mut result = format!("{indent}match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{\n");
+                self.indent += 1;
+                
+                // Emit try body - convert return statements to just expressions for last statement
+                for (i, node) in try_body.iter().enumerate() {
+                    let is_last = i == try_body.len() - 1;
+                    if is_last {
+                        // For the last statement, if it's a return, emit just the expression
+                        match node {
+                            IrNode::Return(Some(expr)) => {
+                                let inner_indent = "    ".repeat(self.indent);
+                                result.push_str(&format!("{}{}\n", inner_indent, self.emit_expr(expr)));
+                            }
+                            _ => {
+                                result.push_str(&self.emit_node(node));
+                                result.push('\n');
+                            }
+                        }
+                    } else {
+                        result.push_str(&self.emit_node(node));
+                        result.push('\n');
+                    }
                 }
-                result.push_str(&format!(
-                    "{indent}// Except block (fallback - not automatically invoked):\n"
-                ));
+                
+                self.indent -= 1;
+                result.push_str(&format!("{indent}}})) {{\n"));
+                
+                // Ok case - return the value
+                result.push_str(&format!("{indent}    Ok(__val) => __val,\n"));
+                
+                // Err case - execute except body
+                result.push_str(&format!("{indent}    Err(_) => {{\n"));
+                self.indent += 2;
                 for node in except_body {
-                    result.push_str(&format!("{}// {}\n", indent, self.emit_node(node).trim()));
+                    // Convert return to just the expression for except body too
+                    match node {
+                        IrNode::Return(Some(expr)) => {
+                            let inner_indent = "    ".repeat(self.indent);
+                            result.push_str(&format!("{}{}\n", inner_indent, self.emit_expr(expr)));
+                        }
+                        _ => {
+                            result.push_str(&self.emit_node(node));
+                            result.push('\n');
+                        }
+                    }
                 }
+                self.indent -= 2;
+                result.push_str(&format!("{indent}    }}\n"));
+                result.push_str(&format!("{indent}}}\n"));
                 result
             }
             IrNode::ImplBlock {
