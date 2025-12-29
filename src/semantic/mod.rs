@@ -87,7 +87,7 @@ impl SemanticAnalyzer {
                                 let is_simple_main_call = then_body.len() == 1
                                     && matches!(
                                         &then_body[0],
-                                        Stmt::Expr(Expr::Call { func, args })
+                                        Stmt::Expr(Expr::Call { func, args, .. })
                                         if matches!(func.as_ref(), Expr::Ident(n) if n == "main") && args.is_empty()
                                     );
 
@@ -1277,9 +1277,9 @@ impl SemanticAnalyzer {
                     right: Box::new(ir_right),
                 })
             }
-            Expr::Call { func, args } => {
+            Expr::Call { func, args, kwargs } => {
                 if let Expr::Attribute { value: _, attr } = func.as_ref() {
-                    if attr == "items" && args.is_empty() {
+                    if attr == "items" && args.is_empty() && kwargs.is_empty() {
                         // Convert .items() to .iter() for HashMap
                         // Unwrap matches structure of Expr::Attribute.
                         if let Expr::Attribute { value, .. } = *func.clone() {
@@ -1291,10 +1291,19 @@ impl SemanticAnalyzer {
                         }
                     }
                 }
+                
+                // Combine positional args with kwargs values
+                // For now, we append kwargs values to the end of args in order
+                // A more sophisticated implementation would reorder based on function signature
+                let mut all_args: Vec<&Expr> = args.iter().collect();
+                for (_, value) in kwargs {
+                    all_args.push(value);
+                }
+                
                 match func.as_ref() {
                     Expr::Ident(name) => {
                         // Try built-in function handler first
-                        if let Some(ir_expr) = self.try_handle_builtin_call(name, args)? {
+                        if let Some(ir_expr) = self.try_handle_builtin_call(name, &all_args.iter().cloned().cloned().collect::<Vec<_>>())? {
                             return Ok(ir_expr);
                         }
 
@@ -1303,7 +1312,8 @@ impl SemanticAnalyzer {
                             // Struct constructor - use field types for Auto-Box
                             let expected_types: Vec<Type> =
                                 field_types.iter().map(|(_, ty)| ty.clone()).collect();
-                            let ir_args = self.analyze_call_args(args, &expected_types, name)?;
+                            let args_cloned: Vec<Expr> = all_args.iter().cloned().cloned().collect();
+                            let ir_args = self.analyze_call_args(&args_cloned, &expected_types, name)?;
                             return Ok(IrExpr::Call {
                                 func: Box::new(IrExpr::Var(name.clone())),
                                 args: ir_args,
@@ -1331,8 +1341,9 @@ impl SemanticAnalyzer {
                                     vec![]
                                 }
                             };
+                        let args_cloned: Vec<Expr> = all_args.iter().cloned().cloned().collect();
                         let ir_args = self.analyze_call_args(
-                            args,
+                            &args_cloned,
                             &expected_param_types,
                             &self.get_func_name_for_debug(func.as_ref()),
                         )?;
@@ -1466,6 +1477,7 @@ impl SemanticAnalyzer {
                 let ir_iter = if let Expr::Call {
                     func,
                     args: call_args,
+                    ..
                 } = iter.as_ref()
                 {
                     if call_args.is_empty() {
@@ -1738,7 +1750,7 @@ impl SemanticAnalyzer {
                     Type::Unknown
                 }
             }
-            Expr::Call { func, args } => {
+            Expr::Call { func, args, .. } => {
                 // Try to resolve return type
                 if let Expr::Ident(name) = func.as_ref() {
                     if name == "tuple" || name == "list" {
@@ -2280,6 +2292,7 @@ impl SemanticAnalyzer {
                 if let Expr::Call {
                     func,
                     args: call_args,
+                    ..
                 } = &args[0]
                 {
                     if call_args.is_empty() {

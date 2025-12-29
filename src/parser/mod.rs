@@ -423,11 +423,13 @@ fn parse_method_def(
             Param {
                 name: param_name,
                 type_hint: Some(parse_type_hint(type_str)?),
+                default: None,
             }
         } else {
             Param {
                 name: param_str.to_string(),
                 type_hint: None,
+                default: None,
             }
         };
         params.push(param);
@@ -526,7 +528,7 @@ fn infer_type_from_expr(
             }
         }
         // Function call - check arguments for parameters
-        Expr::Call { func, args } => {
+        Expr::Call { func, args, .. } => {
             // First check if any arg contains a param
             for arg in args {
                 let hint = infer_type_from_expr(arg, param_types);
@@ -880,19 +882,56 @@ fn parse_block(lines: &[&str], start: usize) -> Result<(Vec<Stmt>, usize), Tsuch
     Ok((statements, i - start))
 }
 
-/// Parse a function parameter
-fn parse_param(param_str: &str, _line_num: usize) -> Result<Param, TsuchinokoError> {
+/// Parse a function parameter (supports default values: param: type = default)
+fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoError> {
+    // Check for default value first (param: type = default or param = default)
+    // Find = that is not == or !=
+    let eq_pos = find_char_balanced(param_str, '=');
+    
+    if let Some(eq_idx) = eq_pos {
+        // Make sure it's not == or !=
+        let before = if eq_idx > 0 { param_str.chars().nth(eq_idx - 1) } else { None };
+        let after = param_str.chars().nth(eq_idx + 1);
+        
+        if before != Some('=') && before != Some('!') && before != Some('<') && before != Some('>') && after != Some('=') {
+            // This is a default value assignment
+            let left_part = param_str[..eq_idx].trim();
+            let default_str = param_str[eq_idx + 1..].trim();
+            let default_expr = parse_expr(default_str, line_num)?;
+            
+            // Parse left part (name: type or just name)
+            if let Some(colon_pos) = left_part.find(':') {
+                let name = left_part[..colon_pos].trim().to_string();
+                let type_str = left_part[colon_pos + 1..].trim();
+                return Ok(Param {
+                    name,
+                    type_hint: Some(parse_type_hint(type_str)?),
+                    default: Some(default_expr),
+                });
+            } else {
+                return Ok(Param {
+                    name: left_part.to_string(),
+                    type_hint: None,
+                    default: Some(default_expr),
+                });
+            }
+        }
+    }
+    
+    // No default value
     if let Some(colon_pos) = param_str.find(':') {
         let name = param_str[..colon_pos].trim().to_string();
         let type_str = param_str[colon_pos + 1..].trim();
         Ok(Param {
             name,
             type_hint: Some(parse_type_hint(type_str)?),
+            default: None,
         })
     } else {
         Ok(Param {
-            name: param_str.to_string(),
+            name: param_str.trim().to_string(),
             type_hint: None,
+            default: None,
         })
     }
 }
@@ -1610,8 +1649,8 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
             // If we have " (a) ", remove_parens strips it.
             // If we have "func(a)", func_part="func".
             if !func_part.trim().is_empty() {
-                let args = if args_part.trim().is_empty() {
-                    vec![]
+                let (args, kwargs) = if args_part.trim().is_empty() {
+                    (vec![], vec![])
                 } else {
                     // Check if this is a generator expression being passed as a single argument
                     // e.g. join(x for x in y) or func(a for a in b if c)
@@ -1631,15 +1670,40 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
                         split_by_comma_balanced(args_part)
                     };
 
-                    arg_parts
-                        .iter()
-                        .map(|s| parse_expr(s.trim(), line_num))
-                        .collect::<Result<Vec<_>, _>>()?
+                    // Separate positional args from keyword args
+                    let mut positional_args = Vec::new();
+                    let mut keyword_args = Vec::new();
+
+                    for arg_str in arg_parts {
+                        let arg_str = arg_str.trim();
+                        // Check for keyword argument pattern: name=value (not ==)
+                        // Must have = but not ==, and the left side must be a simple identifier
+                        if let Some(eq_pos) = find_char_balanced(arg_str, '=') {
+                            // Make sure it's not == or !=
+                            let before = if eq_pos > 0 { arg_str.chars().nth(eq_pos - 1) } else { None };
+                            let after = arg_str.chars().nth(eq_pos + 1);
+                            if before != Some('=') && before != Some('!') && before != Some('<') && before != Some('>') && after != Some('=') {
+                                let name_part = arg_str[..eq_pos].trim();
+                                let value_part = arg_str[eq_pos + 1..].trim();
+                                // Check if name_part is a valid identifier (simple ident, no dots, brackets etc)
+                                if !name_part.is_empty() && name_part.chars().all(|c| c.is_alphanumeric() || c == '_') && name_part.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) {
+                                    let value_expr = parse_expr(value_part, line_num)?;
+                                    keyword_args.push((name_part.to_string(), value_expr));
+                                    continue;
+                                }
+                            }
+                        }
+                        // Not a keyword argument, treat as positional
+                        positional_args.push(parse_expr(arg_str, line_num)?);
+                    }
+
+                    (positional_args, keyword_args)
                 };
 
                 return Ok(Expr::Call {
                     func: Box::new(parse_expr(func_part, line_num)?),
                     args,
+                    kwargs,
                 });
             }
         }

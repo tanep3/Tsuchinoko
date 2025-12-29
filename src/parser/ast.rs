@@ -23,8 +23,12 @@ pub enum Expr {
     },
     /// Unary operation
     UnaryOp { op: UnaryOp, operand: Box<Expr> },
-    /// Function call
-    Call { func: Box<Expr>, args: Vec<Expr> },
+    /// Function call with positional and keyword arguments
+    Call {
+        func: Box<Expr>,
+        args: Vec<Expr>,
+        kwargs: Vec<(String, Expr)>,
+    },
     /// List literal
     List(Vec<Expr>),
     /// List comprehension [elt for target in iter] or [elt for target in iter if cond]
@@ -192,11 +196,12 @@ pub enum Stmt {
     Continue,
 }
 
-/// Function parameter
+/// Function parameter with optional default value
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
     pub type_hint: Option<TypeHint>,
+    pub default: Option<Expr>,
 }
 
 /// Type hint
