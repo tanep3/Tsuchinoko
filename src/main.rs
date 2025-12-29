@@ -11,7 +11,7 @@ use tsuchinoko::transpile;
 #[derive(Parser, Debug)]
 #[command(name = "tnk")]
 #[command(author = "Tane Channel Technology")]
-#[command(version = "0.5.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Transpile Python code to Rust", long_about = None)]
 struct Cli {
     /// Input Python file

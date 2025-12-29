@@ -26,6 +26,8 @@ pub struct SemanticAnalyzer {
     struct_field_types: std::collections::HashMap<String, Vec<(String, Type)>>,
     /// Variables that need to be mutable (targets of AugAssign or reassignment)
     mutable_vars: std::collections::HashSet<String>,
+    /// Function name -> Vec of (param_name, param_type, default_expr) for default arg handling
+    func_param_info: std::collections::HashMap<String, Vec<(String, Type, Option<Expr>)>>,
 }
 
 impl Default for SemanticAnalyzer {
@@ -41,6 +43,7 @@ impl SemanticAnalyzer {
             current_return_type: None,
             struct_field_types: std::collections::HashMap::new(),
             mutable_vars: std::collections::HashSet::new(),
+            func_param_info: std::collections::HashMap::new(),
         }
     }
 
@@ -817,6 +820,17 @@ impl SemanticAnalyzer {
                     false,
                 );
 
+                // Register function parameter info for default argument handling at call sites
+                let param_info: Vec<(String, Type, Option<Expr>)> = params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        let ty = param_types.get(i).cloned().unwrap_or(Type::Unknown);
+                        (p.name.clone(), ty, p.default.clone())
+                    })
+                    .collect();
+                self.func_param_info.insert(name.clone(), param_info);
+
                 // Check if nested function (Closure conversion)
                 if self.scope.depth() > 0 {
                     self.scope.push();
@@ -1292,18 +1306,63 @@ impl SemanticAnalyzer {
                     }
                 }
                 
-                // Combine positional args with kwargs values
-                // For now, we append kwargs values to the end of args in order
-                // A more sophisticated implementation would reorder based on function signature
-                let mut all_args: Vec<&Expr> = args.iter().collect();
-                for (_, value) in kwargs {
-                    all_args.push(value);
-                }
+                // Build ordered argument list using func_param_info
+                // 1. Start with positional args
+                // 2. Match kwargs by parameter name
+                // 3. Fill missing args with default values
+                let resolved_args: Vec<Expr> = match func.as_ref() {
+                    Expr::Ident(name) => {
+                        if let Some(param_info) = self.func_param_info.get(name) {
+                            let mut result: Vec<Option<Expr>> = vec![None; param_info.len()];
+                            
+                            // Fill positional args
+                            for (i, arg) in args.iter().enumerate() {
+                                if i < result.len() {
+                                    result[i] = Some(arg.clone());
+                                }
+                            }
+                            
+                            // Fill kwargs by parameter name
+                            for (kwarg_name, kwarg_value) in kwargs {
+                                if let Some(pos) = param_info.iter().position(|(pname, _, _)| pname == kwarg_name) {
+                                    result[pos] = Some(kwarg_value.clone());
+                                }
+                            }
+                            
+                            // Fill defaults for any remaining None values
+                            for (i, slot) in result.iter_mut().enumerate() {
+                                if slot.is_none() {
+                                    if let Some((_, _, Some(default_expr))) = param_info.get(i) {
+                                        *slot = Some(default_expr.clone());
+                                    }
+                                }
+                            }
+                            
+                            // Collect non-None values (skip trailing None if function allows)
+                            result.into_iter().flatten().collect()
+                        } else {
+                            // No param info available - fall back to simple concatenation
+                            let mut all: Vec<Expr> = args.clone();
+                            for (_, value) in kwargs {
+                                all.push(value.clone());
+                            }
+                            all
+                        }
+                    }
+                    _ => {
+                        // Non-ident function call - simple concatenation
+                        let mut all: Vec<Expr> = args.clone();
+                        for (_, value) in kwargs {
+                            all.push(value.clone());
+                        }
+                        all
+                    }
+                };
                 
                 match func.as_ref() {
                     Expr::Ident(name) => {
                         // Try built-in function handler first
-                        if let Some(ir_expr) = self.try_handle_builtin_call(name, &all_args.iter().cloned().cloned().collect::<Vec<_>>())? {
+                        if let Some(ir_expr) = self.try_handle_builtin_call(name, &resolved_args)? {
                             return Ok(ir_expr);
                         }
 
@@ -1312,8 +1371,7 @@ impl SemanticAnalyzer {
                             // Struct constructor - use field types for Auto-Box
                             let expected_types: Vec<Type> =
                                 field_types.iter().map(|(_, ty)| ty.clone()).collect();
-                            let args_cloned: Vec<Expr> = all_args.iter().cloned().cloned().collect();
-                            let ir_args = self.analyze_call_args(&args_cloned, &expected_types, name)?;
+                            let ir_args = self.analyze_call_args(&resolved_args, &expected_types, name)?;
                             return Ok(IrExpr::Call {
                                 func: Box::new(IrExpr::Var(name.clone())),
                                 args: ir_args,
@@ -1341,9 +1399,8 @@ impl SemanticAnalyzer {
                                     vec![]
                                 }
                             };
-                        let args_cloned: Vec<Expr> = all_args.iter().cloned().cloned().collect();
                         let ir_args = self.analyze_call_args(
-                            &args_cloned,
+                            &resolved_args,
                             &expected_param_types,
                             &self.get_func_name_for_debug(func.as_ref()),
                         )?;
