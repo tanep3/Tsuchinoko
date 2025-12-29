@@ -1288,7 +1288,7 @@ impl SemanticAnalyzer {
                     if let Expr::NoneLiteral = right.as_ref() {
                         let left_ty = self.infer_type(left);
                         let ir_left = self.analyze_expr(left)?;
-                        
+
                         match left_ty {
                             Type::Optional(_) => {
                                 // Optional type: use is_some()/is_none()
@@ -1311,7 +1311,7 @@ impl SemanticAnalyzer {
                                 } else {
                                     ("true", "/* Warning: 'is not None' on non-Optional type is always true */")
                                 };
-                                return Ok(IrExpr::RawCode(format!("{} {}", warning, value)));
+                                return Ok(IrExpr::RawCode(format!("{warning} {value}")));
                             }
                         }
                     }
@@ -1340,7 +1340,7 @@ impl SemanticAnalyzer {
                         }
                     }
                 }
-                
+
                 // Build ordered argument list using func_param_info
                 // 1. Start with positional args
                 // 2. Match kwargs by parameter name
@@ -1349,21 +1349,24 @@ impl SemanticAnalyzer {
                     Expr::Ident(name) => {
                         if let Some(param_info) = self.func_param_info.get(name) {
                             let mut result: Vec<Option<Expr>> = vec![None; param_info.len()];
-                            
+
                             // Fill positional args
                             for (i, arg) in args.iter().enumerate() {
                                 if i < result.len() {
                                     result[i] = Some(arg.clone());
                                 }
                             }
-                            
+
                             // Fill kwargs by parameter name
                             for (kwarg_name, kwarg_value) in kwargs {
-                                if let Some(pos) = param_info.iter().position(|(pname, _, _)| pname == kwarg_name) {
+                                if let Some(pos) = param_info
+                                    .iter()
+                                    .position(|(pname, _, _)| pname == kwarg_name)
+                                {
                                     result[pos] = Some(kwarg_value.clone());
                                 }
                             }
-                            
+
                             // Fill defaults for any remaining None values
                             for (i, slot) in result.iter_mut().enumerate() {
                                 if slot.is_none() {
@@ -1372,7 +1375,7 @@ impl SemanticAnalyzer {
                                     }
                                 }
                             }
-                            
+
                             // Collect non-None values (skip trailing None if function allows)
                             result.into_iter().flatten().collect()
                         } else {
@@ -1393,7 +1396,7 @@ impl SemanticAnalyzer {
                         all
                     }
                 };
-                
+
                 match func.as_ref() {
                     Expr::Ident(name) => {
                         // Try built-in function handler first
@@ -1406,7 +1409,8 @@ impl SemanticAnalyzer {
                             // Struct constructor - use field types for Auto-Box
                             let expected_types: Vec<Type> =
                                 field_types.iter().map(|(_, ty)| ty.clone()).collect();
-                            let ir_args = self.analyze_call_args(&resolved_args, &expected_types, name)?;
+                            let ir_args =
+                                self.analyze_call_args(&resolved_args, &expected_types, name)?;
                             return Ok(IrExpr::Call {
                                 func: Box::new(IrExpr::Var(name.clone())),
                                 args: ir_args,

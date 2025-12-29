@@ -887,7 +887,7 @@ fn parse_block(lines: &[&str], start: usize) -> Result<(Vec<Stmt>, usize), Tsuch
 /// Parse a function parameter (supports default values: param: type = default, and variadic *args)
 fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoError> {
     let param_str = param_str.trim();
-    
+
     // Check for variadic parameter (*args)
     if param_str.starts_with('*') && !param_str.starts_with("**") {
         let name = param_str[1..].trim().to_string();
@@ -898,22 +898,31 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
             variadic: true,
         });
     }
-    
+
     // Check for default value first (param: type = default or param = default)
     // Find = that is not == or !=
     let eq_pos = find_char_balanced(param_str, '=');
-    
+
     if let Some(eq_idx) = eq_pos {
         // Make sure it's not == or !=
-        let before = if eq_idx > 0 { param_str.chars().nth(eq_idx - 1) } else { None };
+        let before = if eq_idx > 0 {
+            param_str.chars().nth(eq_idx - 1)
+        } else {
+            None
+        };
         let after = param_str.chars().nth(eq_idx + 1);
-        
-        if before != Some('=') && before != Some('!') && before != Some('<') && before != Some('>') && after != Some('=') {
+
+        if before != Some('=')
+            && before != Some('!')
+            && before != Some('<')
+            && before != Some('>')
+            && after != Some('=')
+        {
             // This is a default value assignment
             let left_part = param_str[..eq_idx].trim();
             let default_str = param_str[eq_idx + 1..].trim();
             let default_expr = parse_expr(default_str, line_num)?;
-            
+
             // Parse left part (name: type or just name)
             if let Some(colon_pos) = left_part.find(':') {
                 let name = left_part[..colon_pos].trim().to_string();
@@ -934,7 +943,7 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
             }
         }
     }
-    
+
     // No default value
     if let Some(colon_pos) = param_str.find(':') {
         let name = param_str[..colon_pos].trim().to_string();
@@ -1056,7 +1065,7 @@ fn try_parse_assignment(line: &str, line_num: usize) -> Result<Option<Stmt>, Tsu
     if left_parts.len() > 1 {
         // Check if all targets are either identifiers, index expressions, or starred (*var)
         let mut has_index_target = false;
-        let mut has_starred_target = false;
+        let mut _has_starred_target = false;
         for part in &left_parts {
             let part_trimmed = part.trim();
             if part_trimmed
@@ -1064,9 +1073,13 @@ fn try_parse_assignment(line: &str, line_num: usize) -> Result<Option<Stmt>, Tsu
                 .all(|c| c.is_alphanumeric() || c == '_')
             {
                 // Simple identifier - OK
-            } else if part_trimmed.starts_with('*') && part_trimmed[1..].chars().all(|c| c.is_alphanumeric() || c == '_') {
+            } else if part_trimmed.starts_with('*')
+                && part_trimmed[1..]
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_')
+            {
                 // Starred identifier (*tail) - OK
-                has_starred_target = true;
+                _has_starred_target = true;
             } else if part_trimmed.ends_with(']') {
                 // Index expression - also OK
                 has_index_target = true;
@@ -1732,13 +1745,29 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
                         // Must have = but not ==, and the left side must be a simple identifier
                         if let Some(eq_pos) = find_char_balanced(arg_str, '=') {
                             // Make sure it's not == or !=
-                            let before = if eq_pos > 0 { arg_str.chars().nth(eq_pos - 1) } else { None };
+                            let before = if eq_pos > 0 {
+                                arg_str.chars().nth(eq_pos - 1)
+                            } else {
+                                None
+                            };
                             let after = arg_str.chars().nth(eq_pos + 1);
-                            if before != Some('=') && before != Some('!') && before != Some('<') && before != Some('>') && after != Some('=') {
+                            if before != Some('=')
+                                && before != Some('!')
+                                && before != Some('<')
+                                && before != Some('>')
+                                && after != Some('=')
+                            {
                                 let name_part = arg_str[..eq_pos].trim();
                                 let value_part = arg_str[eq_pos + 1..].trim();
                                 // Check if name_part is a valid identifier (simple ident, no dots, brackets etc)
-                                if !name_part.is_empty() && name_part.chars().all(|c| c.is_alphanumeric() || c == '_') && name_part.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) {
+                                if !name_part.is_empty()
+                                    && name_part.chars().all(|c| c.is_alphanumeric() || c == '_')
+                                    && name_part
+                                        .chars()
+                                        .next()
+                                        .map(|c| c.is_alphabetic() || c == '_')
+                                        .unwrap_or(false)
+                                {
                                     let value_expr = parse_expr(value_part, line_num)?;
                                     keyword_args.push((name_part.to_string(), value_expr));
                                     continue;

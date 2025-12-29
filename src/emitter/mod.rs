@@ -284,10 +284,8 @@ impl RustEmitter {
                 // Convert standalone string literals (docstrings) to comments
                 if let IrExpr::StringLit(s) = expr {
                     // Multi-line docstrings become multi-line comments
-                    let comment_lines: Vec<String> = s
-                        .lines()
-                        .map(|line| format!("{}// {}", indent, line))
-                        .collect();
+                    let comment_lines: Vec<String> =
+                        s.lines().map(|line| format!("{indent}// {line}")).collect();
                     return comment_lines.join("\n");
                 }
                 format!("{}{};\n", indent, self.emit_expr(expr))
@@ -317,9 +315,11 @@ impl RustEmitter {
             } => {
                 // Use std::panic::catch_unwind to catch panics (like division by zero)
                 // and fall back to except_body
-                let mut result = format!("{indent}match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{\n");
+                let mut result = format!(
+                    "{indent}match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{\n"
+                );
                 self.indent += 1;
-                
+
                 // Emit try body - convert return statements to just expressions for last statement
                 for (i, node) in try_body.iter().enumerate() {
                     let is_last = i == try_body.len() - 1;
@@ -328,7 +328,11 @@ impl RustEmitter {
                         match node {
                             IrNode::Return(Some(expr)) => {
                                 let inner_indent = "    ".repeat(self.indent);
-                                result.push_str(&format!("{}{}\n", inner_indent, self.emit_expr(expr)));
+                                result.push_str(&format!(
+                                    "{}{}\n",
+                                    inner_indent,
+                                    self.emit_expr(expr)
+                                ));
                             }
                             _ => {
                                 result.push_str(&self.emit_node(node));
@@ -340,13 +344,13 @@ impl RustEmitter {
                         result.push('\n');
                     }
                 }
-                
+
                 self.indent -= 1;
                 result.push_str(&format!("{indent}}})) {{\n"));
-                
+
                 // Ok case - return the value
                 result.push_str(&format!("{indent}    Ok(__val) => __val,\n"));
-                
+
                 // Err case - execute except body
                 result.push_str(&format!("{indent}    Err(_) => {{\n"));
                 self.indent += 2;
@@ -512,7 +516,7 @@ impl RustEmitter {
                         if right_str == "None" {
                             return format!("{}.is_some()", self.emit_expr(left));
                         } else {
-                            // General case: != 
+                            // General case: !=
                             return format!("({} != {})", self.emit_expr(left), right_str);
                         }
                     }
