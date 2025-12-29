@@ -48,7 +48,7 @@ Python (3.x) と Tsuchinoko生成Rustコード (`rustc -O`でコンパイル) �
 ## インストール
 
 ```bash
-git clone https://github.com/TaneChannelTechnology/Tsuchinoko.git
+git clone https://github.com/tanep3/Tsuchinoko.git
 cd Tsuchinoko
 cargo build --release
 cargo install --path .
