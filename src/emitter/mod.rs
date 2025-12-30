@@ -957,6 +957,9 @@ impl RustEmitter {
             IrExpr::MutReference { target } => {
                 format!("&mut {}", self.emit_expr(target))
             }
+            IrExpr::Unwrap(inner) => {
+                format!("{}.unwrap()", self.emit_expr(inner))
+            }
         }
     }
 

@@ -1059,17 +1059,45 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                // Check for type narrowing pattern: `if x is None:` or `if x is not None:`
+                // Extract variable name and narrowing direction
+                let narrowing_info = self.extract_none_check(condition);
+
                 let ir_cond = self.analyze_expr(condition)?;
 
+                // Analyze then block with narrowing (if applicable)
                 self.scope.push();
+                if let Some((var_name, is_none_in_then)) = &narrowing_info {
+                    if *is_none_in_then {
+                        // In `if x is None:` then block, x is definitely None
+                        // (No specific narrowing needed - x stays Optional)
+                    } else {
+                        // In `if x is not None:` then block, x is definitely NOT None
+                        // Narrow to inner type
+                        if let Some(Type::Optional(inner)) = self.scope.get_effective_type(var_name) {
+                            self.scope.narrow_type(var_name, *inner.clone());
+                        }
+                    }
+                }
                 let mut ir_then = Vec::new();
                 for s in then_body {
                     ir_then.push(self.analyze_stmt(s)?);
                 }
                 self.scope.pop();
 
+                // Analyze else block with opposite narrowing
                 let mut ir_else = if let Some(else_stmts) = else_body {
                     self.scope.push();
+                    if let Some((var_name, is_none_in_then)) = &narrowing_info {
+                        if *is_none_in_then {
+                            // In `if x is None:` else block, x is definitely NOT None
+                            // Narrow to inner type
+                            if let Some(Type::Optional(inner)) = self.scope.lookup(var_name).map(|v| v.ty.clone()) {
+                                self.scope.narrow_type(var_name, *inner);
+                            }
+                        }
+                        // In `if x is not None:` else block, x is None (no narrowing needed)
+                    }
                     let mut stmts = Vec::new();
                     for s in else_stmts {
                         stmts.push(self.analyze_stmt(s)?);
@@ -1367,7 +1395,22 @@ impl SemanticAnalyzer {
             Expr::StringLiteral(s) => Ok(IrExpr::StringLit(s.clone())),
             Expr::BoolLiteral(b) => Ok(IrExpr::BoolLit(*b)),
             Expr::NoneLiteral => Ok(IrExpr::NoneLit),
-            Expr::Ident(name) => Ok(IrExpr::Var(name.clone())),
+            Expr::Ident(name) => {
+                // Check if this variable has a narrowed type
+                // If the original type is Optional<T> but it's narrowed to T, we need to unwrap
+                if let Some(original_info) = self.scope.lookup(name) {
+                    let original_ty = original_info.ty.clone();
+                    if let Some(narrowed_ty) = self.scope.get_effective_type(name) {
+                        // If original is Optional<T> and narrowed is T, emit Unwrap
+                        if let Type::Optional(inner) = &original_ty {
+                            if *inner.as_ref() == narrowed_ty {
+                                return Ok(IrExpr::Unwrap(Box::new(IrExpr::Var(name.clone()))));
+                            }
+                        }
+                    }
+                }
+                Ok(IrExpr::Var(name.clone()))
+            }
             Expr::BinOp { left, op, right } => {
                 // Handle 'in' operator: x in y -> y.contains(&x) or y.contains_key(&x)
                 if let AstBinOp::In = op {
@@ -2178,6 +2221,38 @@ impl SemanticAnalyzer {
             _ => Type::Unknown,
         }
     }
+    
+    /// Extract None check pattern from condition expression
+    /// Returns (variable_name, is_none_check) where is_none_check is true for `x is None`, false for `x is not None`
+    fn extract_none_check(&self, condition: &Expr) -> Option<(String, bool)> {
+        match condition {
+            Expr::BinOp { left, op, right } => {
+                match op {
+                    AstBinOp::Is => {
+                        // x is None
+                        if let (Expr::Ident(var), Expr::NoneLiteral) = (left.as_ref(), right.as_ref()) {
+                            return Some((var.clone(), true));
+                        }
+                    }
+                    AstBinOp::IsNot => {
+                        // x is not None
+                        if let (Expr::Ident(var), Expr::NoneLiteral) = (left.as_ref(), right.as_ref()) {
+                            return Some((var.clone(), false));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Expr::UnaryOp { op: AstUnaryOp::Not, operand } => {
+                // not (x is None) => equivalent to x is not None
+                if let Some((var, is_none)) = self.extract_none_check(operand) {
+                    return Some((var, !is_none));
+                }
+            }
+            _ => {}
+        }
+        None
+    }
 
     fn analyze_call_args(
         &mut self,
@@ -2222,6 +2297,21 @@ impl SemanticAnalyzer {
         // Strip all references from actual for comparison
         while let Type::Ref(inner) = resolved_actual {
             resolved_actual = *inner;
+        }
+        
+        // 1.5 Auto-Some: T -> Option<T>
+        // If expected is Option<T> and actual is T (not None), wrap in Some()
+        if let Type::Optional(inner_expected) = &resolved_target {
+            // Check if actual is NOT None/Optional
+            if !matches!(resolved_actual, Type::Optional(_)) && !matches!(expr, Expr::NoneLiteral) {
+                // Wrap the argument in Some()
+                return IrExpr::Call {
+                    func: Box::new(IrExpr::Var("Some".to_string())),
+                    args: vec![ir_arg],
+                };
+            }
+            // If actual is also Optional or None, use as-is
+            _ = inner_expected; // Suppress unused warning
         }
 
         // 2. Auto-Box: Fn -> Box<dyn Fn>
