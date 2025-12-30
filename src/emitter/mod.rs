@@ -103,8 +103,9 @@ use pyo3::types::PyList;
 
 // Note: To run this code, add to Cargo.toml:
 // [dependencies]
-// pyo3 = {{ version = "0.23", features = ["auto-initialize"] }}
+// pyo3 = {{ version = "0", features = ["auto-initialize"] }}
 //
+// Use: tnk --pyo3-version 0.27 input.py -p project
 // Activate your venv before running: source venv/bin/activate
 "#
         )

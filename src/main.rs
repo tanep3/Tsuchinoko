@@ -33,6 +33,10 @@ struct Cli {
     /// Check only (don't generate output)
     #[arg(short, long)]
     check: bool,
+
+    /// PyO3 version for generated project (default: "0" = latest major)
+    #[arg(long, default_value = "0")]
+    pyo3_version: String,
 }
 
 fn main() -> Result<()> {
@@ -67,7 +71,7 @@ fn main() -> Result<()> {
 
     // Project generation mode
     if let Some(project_name) = &cli.project {
-        generate_project(project_name, &rust_code)?;
+        generate_project(project_name, &rust_code, &cli.pyo3_version)?;
         println!("✅ Generated project: {project_name}/");
         println!("   Run: cd {project_name} && cargo build --release");
         return Ok(());
@@ -93,7 +97,7 @@ fn main() -> Result<()> {
 }
 
 /// Generate a complete Rust project
-fn generate_project(name: &str, rust_code: &str) -> Result<()> {
+fn generate_project(name: &str, rust_code: &str, pyo3_version: &str) -> Result<()> {
     use std::fs;
 
     // Extract just the project name from path (e.g., "tmp/myproj" -> "myproj")
@@ -110,10 +114,10 @@ fn generate_project(name: &str, rust_code: &str) -> Result<()> {
     
     // Create Cargo.toml with appropriate dependencies
     let dependencies = if uses_pyo3 {
-        r#"pyo3 = { version = "0.23", features = ["auto-initialize"] }
-"#
+        format!(r#"pyo3 = {{ version = "{pyo3_version}", features = ["auto-initialize"] }}
+"#)
     } else {
-        ""
+        String::new()
     };
     
     let cargo_toml = format!(
