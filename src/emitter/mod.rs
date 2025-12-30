@@ -137,11 +137,17 @@ use pyo3::types::PyList;
         format!(
             r#"fn main() -> PyResult<()> {{
     Python::with_gil(|py| {{
-        // venv support
+        // venv support - try multiple Python versions
         if let Ok(venv) = std::env::var("TSUCHINOKO_VENV") {{
             let sys = py.import("sys")?;
-            let site_packages = format!("{{}}/lib/python3.11/site-packages", venv);
-            sys.getattr("path")?.call_method1("insert", (0, site_packages))?;
+            // Try common Python versions
+            for version in &["python3.11", "python3.12", "python3.10"] {{
+                let site_packages = format!("{{}}/lib/{{}}/site-packages", venv, version);
+                if std::path::Path::new(&site_packages).exists() {{
+                    sys.getattr("path")?.call_method1("insert", (0, site_packages))?;
+                    break;
+                }}
+            }}
         }}
 
         // Import modules

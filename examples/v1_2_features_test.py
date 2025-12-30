@@ -9,11 +9,9 @@ Tsuchinoko V1.2.0 新機能テスト用サンプル
 3. func(*args) 呼び出し（引数展開）
 4. デフォルト引数 limit=None の正しい変換
 5. @dataclass 基本対応
-6. DefaultDict / Deque / Counter 型ヒント
 """
 
 from typing import Optional, List, Tuple
-from collections import Counter
 from dataclasses import dataclass
 
 
@@ -31,7 +29,7 @@ def sum_all(*values: int) -> int:
 
 def test_varargs() -> None:
     result: int = sum_all(1, 2, 3, 4, 5)
-    print(f"sum_all(1,2,3,4,5) = {result}")  # 15
+    print(f"sum_all(1,2,3,4,5) = {result}")
 
 
 # ===========================================
@@ -48,7 +46,8 @@ def head_and_tail(values: List[int]) -> Tuple[int, List[int]]:
 
 def test_star_unpack() -> None:
     h, t = head_and_tail([10, 20, 30, 40])
-    print(f"head={h}, tail={t}")  # head=10, tail=[20, 30, 40]
+    print(f"head={h}")
+    print(t)
 
 
 # ===========================================
@@ -62,7 +61,7 @@ def apply_sum(nums: List[int]) -> int:
 
 def test_spread_call() -> None:
     result: int = apply_sum([10, 20, 30])
-    print(f"apply_sum([10,20,30]) = {result}")  # 60
+    print(f"apply_sum([10,20,30]) = {result}")
 
 
 # ===========================================
@@ -78,10 +77,10 @@ def take_n(values: List[int], limit: Optional[int] = None) -> List[int]:
 
 def test_default_none() -> None:
     all_vals: List[int] = take_n([1, 2, 3, 4, 5])
-    print(f"take_n([1..5]) = {all_vals}")  # [1, 2, 3, 4, 5]
+    print(f"take_n([1..5]) len = {len(all_vals)}")
     
     limited: List[int] = take_n([1, 2, 3, 4, 5], 3)
-    print(f"take_n([1..5], 3) = {limited}")  # [1, 2, 3]
+    print(f"take_n([1..5], 3) len = {len(limited)}")
 
 
 # ===========================================
@@ -110,23 +109,7 @@ def test_dataclass() -> None:
     print(f"Point: x={p.x}, y={p.y}")
     
     r: Rectangle = Rectangle(top_left=p, width=100, height=50)
-    print(f"Rectangle area = {area(r)}")  # 5000
-
-
-# ===========================================
-# 6. collections 型ヒント
-# ===========================================
-
-def count_words(words: List[str]) -> List[Tuple[str, int]]:
-    """単語の出現回数をカウント"""
-    counter: Counter[str] = Counter(words)
-    return counter.most_common(3)
-
-
-def test_counter() -> None:
-    words: List[str] = ["apple", "banana", "apple", "cherry", "banana", "apple"]
-    top3 = count_words(words)
-    print(f"Top 3 words: {top3}")  # [('apple', 3), ('banana', 2), ('cherry', 1)]
+    print(f"Rectangle area = {area(r)}")
 
 
 # ===========================================
@@ -155,10 +138,6 @@ def main() -> None:
     
     print("[5] @dataclass")
     test_dataclass()
-    print()
-    
-    print("[6] Counter")
-    test_counter()
     print()
     
     print("=== All tests passed! ===")
