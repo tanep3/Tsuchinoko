@@ -1241,6 +1241,19 @@ impl SemanticAnalyzer {
                         } else {
                             ir
                         };
+                        
+                        // If returning a string literal to a String return type, add .to_string()
+                        let ir = if matches!(self.current_return_type, Some(Type::String))
+                            && matches!(ir, IrExpr::StringLit(_))
+                        {
+                            IrExpr::MethodCall {
+                                target: Box::new(ir),
+                                method: "to_string".to_string(),
+                                args: vec![],
+                            }
+                        } else {
+                            ir
+                        };
 
                         // Wrap in Some() if returning to Optional and value is not None
                         if is_optional_return && !matches!(ir, IrExpr::NoneLit) {
@@ -2443,10 +2456,23 @@ impl SemanticAnalyzer {
         if let Type::Optional(inner_expected) = &resolved_target {
             // Check if actual is NOT None/Optional
             if !matches!(resolved_actual, Type::Optional(_)) && !matches!(expr, Expr::NoneLiteral) {
+                // If inner is String and arg is a string literal, add .to_string()
+                let wrapped_arg = if matches!(inner_expected.as_ref(), Type::String)
+                    && matches!(ir_arg, IrExpr::StringLit(_))
+                {
+                    IrExpr::MethodCall {
+                        target: Box::new(ir_arg),
+                        method: "to_string".to_string(),
+                        args: vec![],
+                    }
+                } else {
+                    ir_arg
+                };
+                
                 // Wrap the argument in Some()
                 return IrExpr::Call {
                     func: Box::new(IrExpr::Var("Some".to_string())),
-                    args: vec![ir_arg],
+                    args: vec![wrapped_arg],
                 };
             }
             // If actual is also Optional or None, use as-is

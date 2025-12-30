@@ -18,6 +18,34 @@ use pest_derive::Parser;
 #[grammar = "parser/python.pest"]
 pub struct PythonParser;
 
+/// Strip trailing comment from a line, respecting strings
+/// e.g., `print("hello")  # comment` -> `print("hello")  `
+fn strip_trailing_comment(line: &str) -> &str {
+    let mut in_string = false;
+    let mut string_char = ' ';
+    
+    for (i, c) in line.char_indices() {
+        if in_string {
+            if c == string_char {
+                in_string = false;
+            }
+            continue;
+        }
+        
+        match c {
+            '"' | '\'' => {
+                in_string = true;
+                string_char = c;
+            }
+            '#' => {
+                return &line[..i];
+            }
+            _ => {}
+        }
+    }
+    line
+}
+
 /// Preprocess source to join lines with unclosed brackets/parens
 fn preprocess_multiline(source: &str) -> String {
     let mut result = Vec::new();
@@ -28,7 +56,9 @@ fn preprocess_multiline(source: &str) -> String {
     let mut in_string = false;
     let mut string_char = ' ';
 
-    for line in source.lines() {
+    for raw_line in source.lines() {
+        // Strip trailing comments before processing
+        let line = strip_trailing_comment(raw_line);
         // Count brackets in the line
         for c in line.chars() {
             if in_string {
@@ -155,11 +185,31 @@ pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
     let mut i = 0;
 
     while i < lines.len() {
-        let line = lines[i].trim();
+        let line = strip_trailing_comment(lines[i]).trim();
 
         // Skip empty lines and comments
         if line.is_empty() || line.starts_with('#') {
             i += 1;
+            continue;
+        }
+        
+        // Skip top-level docstrings (""" or ''')
+        if line.starts_with("\"\"\"") || line.starts_with("'''") {
+            let quote = if line.starts_with("\"\"\"") { "\"\"\"" } else { "'''" };
+            // Check if docstring ends on the same line
+            if line.len() > 3 && line[3..].contains(quote) {
+                i += 1;
+                continue;
+            }
+            // Multi-line docstring: skip until closing quote
+            i += 1;
+            while i < lines.len() {
+                if lines[i].contains(quote) {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
             continue;
         }
         
