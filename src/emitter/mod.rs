@@ -36,6 +36,8 @@ pub struct RustEmitter {
     struct_defs: HashMap<String, Vec<String>>,
     /// Whether PyO3 is needed for this file
     uses_pyo3: bool,
+    /// PyO3 imports: (module, alias) - e.g., ("numpy", "np")
+    pyo3_imports: Vec<(String, String)>,
 }
 
 /// Convert camelCase/PascalCase to snake_case
@@ -66,20 +68,25 @@ impl RustEmitter {
             indent: 0,
             struct_defs: HashMap::new(),
             uses_pyo3: false,
+            pyo3_imports: Vec::new(),
         }
     }
 
     pub fn emit_nodes(&mut self, nodes: &[IrNode]) -> String {
-        // First pass: emit all nodes to detect PyO3 usage
+        // If we're at indent 0, this is a top-level call
+        let is_top_level = self.indent == 0;
+        
+        // Emit all nodes
         let code: Vec<String> = nodes
             .iter()
             .map(|n| self.emit_node(n))
+            .filter(|s| !s.is_empty())
             .collect();
         
         let body = code.join("\n");
         
-        // If PyO3 is used, add prelude and wrapper
-        if self.uses_pyo3 {
+        // Only add PyO3 prelude at top level
+        if is_top_level && self.uses_pyo3 {
             self.emit_pyo3_wrapped(&body)
         } else {
             body
@@ -100,6 +107,52 @@ use pyo3::types::PyList;
 //
 // Set TSUCHINOKO_VENV to your venv path if using external packages.
 "#
+        )
+    }
+    
+    /// Generate PyO3-wrapped main function
+    fn emit_pyo3_main(&self, user_body: &str) -> String {
+        // Generate import statements for each PyO3 module
+        let imports: Vec<String> = self.pyo3_imports.iter()
+            .map(|(module, alias)| {
+                format!("        let {} = py.import(\"{}\").expect(\"Failed to import {}\");",
+                    alias, module, module)
+            })
+            .collect();
+        
+        let imports_str = imports.join("\n");
+        
+        // Indent user body
+        let indented_body: String = user_body.lines()
+            .map(|line| {
+                if line.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("        {}", line)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        
+        format!(
+            r#"fn main() -> PyResult<()> {{
+    Python::with_gil(|py| {{
+        // venv support
+        if let Ok(venv) = std::env::var("TSUCHINOKO_VENV") {{
+            let sys = py.import("sys")?;
+            let site_packages = format!("{{}}/lib/python3.11/site-packages", venv);
+            sys.getattr("path")?.call_method1("insert", (0, site_packages))?;
+        }}
+
+        // Import modules
+{imports_str}
+
+        // User code
+{indented_body}
+
+        Ok(())
+    }})
+}}"#
         )
     }
 
@@ -232,15 +285,20 @@ use pyo3::types::PyList;
                 let body_str = self.emit_nodes(body);
                 self.indent -= 1;
 
-                format!(
-                    "{}fn {}({}) -> {} {{\n{}\n{}}}",
-                    indent,
-                    snake_name,
-                    params_str.join(", "),
-                    ret_str,
-                    body_str,
-                    indent
-                )
+                // Special handling for main when PyO3 is used
+                if name == "main" && self.uses_pyo3 {
+                    self.emit_pyo3_main(&body_str)
+                } else {
+                    format!(
+                        "{}fn {}({}) -> {} {{\n{}\n{}}}",
+                        indent,
+                        snake_name,
+                        params_str.join(", "),
+                        ret_str,
+                        body_str,
+                        indent
+                    )
+                }
             }
             IrNode::If {
                 cond,
@@ -479,11 +537,13 @@ use pyo3::types::PyList;
                     .join("\n")
             }
             IrNode::PyO3Import { module, alias } => {
-                // Mark that PyO3 is needed
+                // Mark that PyO3 is needed and track the import
                 self.uses_pyo3 = true;
-                let alias_str = alias.as_ref().map(|a| format!(" as {a}")).unwrap_or_default();
-                // Just emit a comment; actual PyO3 setup is in prelude
-                format!("// PyO3 import: {module}{alias_str}")
+                let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
+                self.pyo3_imports.push((module.clone(), effective_alias));
+                
+                // Don't emit anything here - imports are handled in main wrapper
+                String::new()
             }
         }
     }
