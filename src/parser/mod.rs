@@ -339,6 +339,25 @@ fn parse_class_body(
             i += consumed;
             continue;
         }
+        
+        // Skip docstrings (""" or ''')
+        if line_trim.starts_with("\"\"\"") || line_trim.starts_with("'''") {
+            // Single-line docstring: """..."""
+            if (line_trim.starts_with("\"\"\"") && line_trim.ends_with("\"\"\"") && line_trim.len() > 6)
+                || (line_trim.starts_with("'''") && line_trim.ends_with("'''") && line_trim.len() > 6)
+            {
+                i += 1;
+                continue;
+            }
+            // Multi-line docstring
+            let end_marker = if line_trim.starts_with("\"\"\"") { "\"\"\"" } else { "'''" };
+            i += 1;
+            while i < lines.len() && !lines[i].trim().ends_with(end_marker) {
+                i += 1;
+            }
+            i += 1; // Skip the closing """
+            continue;
+        }
 
         // Parse field: field_name: type (for dataclass style)
         let line_num = i + 1;

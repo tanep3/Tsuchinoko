@@ -1524,6 +1524,34 @@ impl SemanticAnalyzer {
                 })
             }
             Expr::Call { func, args, kwargs } => {
+                // Handle static method calls: ClassName.method() -> ClassName::method()
+                if let Expr::Attribute { value, attr } = func.as_ref() {
+                    if let Expr::Ident(class_name) = value.as_ref() {
+                        // Check if this is a known struct (class)
+                        if self.struct_field_types.contains_key(class_name)
+                            || class_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                        {
+                            // Static method call: ClassName.method() -> ClassName::method()
+                            let ir_args: Vec<IrExpr> = args
+                                .iter()
+                                .map(|a| self.analyze_expr(a))
+                                .collect::<Result<Vec<_>, _>>()?;
+                            
+                            // Generate raw code for static call with ::
+                            let args_str = if ir_args.is_empty() {
+                                String::new()
+                            } else {
+                                // We'll handle args in the IrExpr::Call
+                                return Ok(IrExpr::Call {
+                                    func: Box::new(IrExpr::RawCode(format!("{}::{}", class_name, attr))),
+                                    args: ir_args,
+                                });
+                            };
+                            return Ok(IrExpr::RawCode(format!("{}::{}({})", class_name, attr, args_str)));
+                        }
+                    }
+                }
+                
                 // Handle math module functions: math.sqrt(x) -> x.sqrt()
                 if let Expr::Attribute { value, attr } = func.as_ref() {
                     if let Expr::Ident(module) = value.as_ref() {
