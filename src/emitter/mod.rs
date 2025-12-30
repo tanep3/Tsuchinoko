@@ -103,9 +103,9 @@ use pyo3::types::PyList;
 
 // Note: To run this code, add to Cargo.toml:
 // [dependencies]
-// pyo3 = {{ version = "0.20", features = ["auto-initialize"] }}
+// pyo3 = {{ version = "0.23", features = ["auto-initialize"] }}
 //
-// Set TSUCHINOKO_VENV to your venv path if using external packages.
+// Activate your venv before running: source venv/bin/activate
 "#
         )
     }
@@ -137,11 +137,21 @@ use pyo3::types::PyList;
         format!(
             r#"fn main() -> PyResult<()> {{
     Python::with_gil(|py| {{
-        // venv support - try multiple Python versions
-        if let Ok(venv) = std::env::var("TSUCHINOKO_VENV") {{
+        // venv support - auto-detect from VIRTUAL_ENV (set by 'source venv/bin/activate')
+        if let Ok(venv) = std::env::var("VIRTUAL_ENV") {{
             let sys = py.import("sys")?;
             // Try common Python versions
-            for version in &["python3.11", "python3.12", "python3.10"] {{
+            for version in &["python3.11", "python3.12", "python3.10", "python3.9"] {{
+                let site_packages = format!("{{}}/lib/{{}}/site-packages", venv, version);
+                if std::path::Path::new(&site_packages).exists() {{
+                    sys.getattr("path")?.call_method1("insert", (0, site_packages))?;
+                    break;
+                }}
+            }}
+        }} else if let Ok(venv) = std::env::var("TSUCHINOKO_VENV") {{
+            // Fallback to TSUCHINOKO_VENV for non-activated usage
+            let sys = py.import("sys")?;
+            for version in &["python3.11", "python3.12", "python3.10", "python3.9"] {{
                 let site_packages = format!("{{}}/lib/{{}}/site-packages", venv, version);
                 if std::path::Path::new(&site_packages).exists() {{
                     sys.getattr("path")?.call_method1("insert", (0, site_packages))?;

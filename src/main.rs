@@ -96,18 +96,34 @@ fn main() -> Result<()> {
 fn generate_project(name: &str, rust_code: &str) -> Result<()> {
     use std::fs;
 
+    // Extract just the project name from path (e.g., "tmp/myproj" -> "myproj")
+    let project_name = std::path::Path::new(name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(name);
+
     // Create project directory
     fs::create_dir_all(format!("{name}/src"))?;
 
-    // Create Cargo.toml
+    // Check if PyO3 is needed (used in the generated code)
+    let uses_pyo3 = rust_code.contains("use pyo3::prelude::*");
+    
+    // Create Cargo.toml with appropriate dependencies
+    let dependencies = if uses_pyo3 {
+        r#"pyo3 = { version = "0.23", features = ["auto-initialize"] }
+"#
+    } else {
+        ""
+    };
+    
     let cargo_toml = format!(
         r#"[package]
-name = "{name}"
+name = "{project_name}"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-"#
+{dependencies}"#
     );
     fs::write(format!("{name}/Cargo.toml"), cargo_toml)?;
 
