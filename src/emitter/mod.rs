@@ -463,6 +463,9 @@ impl RustEmitter {
                 // Don't snake_case qualified paths like std::collections::HashMap
                 if name.contains("::") {
                     name.clone()
+                } else if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    // Don't snake_case class names (PascalCase)
+                    name.clone()
                 } else {
                     to_snake_case(name)
                 }

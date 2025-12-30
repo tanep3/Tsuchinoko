@@ -1524,6 +1524,50 @@ impl SemanticAnalyzer {
                 })
             }
             Expr::Call { func, args, kwargs } => {
+                // Handle math module functions: math.sqrt(x) -> x.sqrt()
+                if let Expr::Attribute { value, attr } = func.as_ref() {
+                    if let Expr::Ident(module) = value.as_ref() {
+                        if module == "math" && args.len() == 1 && kwargs.is_empty() {
+                            // Map math module functions to Rust f64 methods
+                            let method = match attr.as_str() {
+                                "sqrt" => Some("sqrt"),
+                                "sin" => Some("sin"),
+                                "cos" => Some("cos"),
+                                "tan" => Some("tan"),
+                                "asin" => Some("asin"),
+                                "acos" => Some("acos"),
+                                "atan" => Some("atan"),
+                                "exp" => Some("exp"),
+                                "log" => Some("ln"),  // Python log() = Rust ln()
+                                "log10" => Some("log10"),
+                                "log2" => Some("log2"),
+                                "abs" => Some("abs"),
+                                "floor" => Some("floor"),
+                                "ceil" => Some("ceil"),
+                                "round" => Some("round"),
+                                _ => None,
+                            };
+                            
+                            if let Some(rust_method) = method {
+                                let ir_arg = self.analyze_expr(&args[0])?;
+                                return Ok(IrExpr::MethodCall {
+                                    target: Box::new(ir_arg),
+                                    method: rust_method.to_string(),
+                                    args: vec![],
+                                });
+                            }
+                        }
+                        // math.pi, math.e - constants
+                        if module == "math" && args.is_empty() && kwargs.is_empty() {
+                            match attr.as_str() {
+                                "pi" => return Ok(IrExpr::RawCode("std::f64::consts::PI".to_string())),
+                                "e" => return Ok(IrExpr::RawCode("std::f64::consts::E".to_string())),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                
                 if let Expr::Attribute { value: _, attr } = func.as_ref() {
                     if attr == "items" && args.is_empty() && kwargs.is_empty() {
                         // Convert .items() to .iter() for HashMap
