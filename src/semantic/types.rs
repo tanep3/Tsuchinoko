@@ -106,7 +106,14 @@ impl Type {
                     v.to_rust_string()
                 )
             }
-            Type::Optional(inner) => format!("Option<{}>", inner.to_rust_string()),
+            Type::Optional(inner) => {
+                // For struct types, use Box to avoid infinite size
+                if let Type::Struct(_) = inner.as_ref() {
+                    format!("Option<Box<{}>>", inner.to_rust_string())
+                } else {
+                    format!("Option<{}>", inner.to_rust_string())
+                }
+            }
             Type::Ref(inner) => {
                 // For List types, emit &[T] slice instead of &Vec<T> (more idiomatic)
                 if let Type::List(elem_type) = inner.as_ref() {
