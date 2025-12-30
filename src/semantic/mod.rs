@@ -26,8 +26,8 @@ pub struct SemanticAnalyzer {
     struct_field_types: std::collections::HashMap<String, Vec<(String, Type)>>,
     /// Variables that need to be mutable (targets of AugAssign or reassignment)
     mutable_vars: std::collections::HashSet<String>,
-    /// Function name -> Vec of (param_name, param_type, default_expr) for default arg handling
-    func_param_info: std::collections::HashMap<String, Vec<(String, Type, Option<Expr>)>>,
+    /// Function name -> Vec of (param_name, param_type, default_expr, is_variadic) for default arg handling
+    func_param_info: std::collections::HashMap<String, Vec<(String, Type, Option<Expr>, bool)>>,
 }
 
 impl Default for SemanticAnalyzer {
@@ -644,7 +644,128 @@ impl SemanticAnalyzer {
                     value: Box::new(ir_value),
                 })
             }
-            Stmt::TupleAssign { targets, value } => {
+            Stmt::TupleAssign { targets, value, starred_index } => {
+                // Handle star unpacking: head, *tail = values
+                if let Some(star_idx) = starred_index {
+                    let ir_value = self.analyze_expr(value)?;
+                    let value_ty = self.infer_type(value);
+                    
+                    // Get the element type from the source value
+                    let elem_ty = match &value_ty {
+                        Type::List(inner) => *inner.clone(),
+                        Type::Ref(inner) => {
+                            if let Type::List(elem) = inner.as_ref() {
+                                *elem.clone()
+                            } else {
+                                Type::Unknown
+                            }
+                        }
+                        _ => Type::Unknown,
+                    };
+                    
+                    // Generate individual assignments
+                    let mut nodes = Vec::new();
+                    
+                    for (i, target) in targets.iter().enumerate() {
+                        if i == *star_idx {
+                            // This is the starred target (e.g., *tail)
+                            // Generate: let tail = values[1..].to_vec();
+                            let start_idx = i;
+                            let end_offset = targets.len() - i - 1;
+                            
+                            let ty = Type::List(Box::new(elem_ty.clone()));
+                            self.scope.define(target, ty.clone(), false);
+                            
+                            // Build slice expression: values[start_idx..]  or values[start_idx..len-end_offset]
+                            let slice_expr = if end_offset == 0 {
+                                // values[i..].to_vec()
+                                IrExpr::MethodCall {
+                                    target: Box::new(IrExpr::Slice {
+                                        target: Box::new(ir_value.clone()),
+                                        start: Some(Box::new(IrExpr::IntLit(start_idx as i64))),
+                                        end: None,
+                                    }),
+                                    method: "to_vec".to_string(),
+                                    args: vec![],
+                                }
+                            } else {
+                                // values[i..len-end_offset].to_vec()
+                                // Need to calculate end index
+                                let len_call = IrExpr::MethodCall {
+                                    target: Box::new(ir_value.clone()),
+                                    method: "len".to_string(),
+                                    args: vec![],
+                                };
+                                let end_expr = IrExpr::BinOp {
+                                    left: Box::new(len_call),
+                                    op: IrBinOp::Sub,
+                                    right: Box::new(IrExpr::IntLit(end_offset as i64)),
+                                };
+                                IrExpr::MethodCall {
+                                    target: Box::new(IrExpr::Slice {
+                                        target: Box::new(ir_value.clone()),
+                                        start: Some(Box::new(IrExpr::IntLit(start_idx as i64))),
+                                        end: Some(Box::new(end_expr)),
+                                    }),
+                                    method: "to_vec".to_string(),
+                                    args: vec![],
+                                }
+                            };
+                            
+                            nodes.push(IrNode::VarDecl {
+                                name: target.clone(),
+                                ty,
+                                mutable: false,
+                                init: Some(Box::new(slice_expr)),
+                            });
+                        } else if i < *star_idx {
+                            // Before starred: head = values[i]
+                            self.scope.define(target, elem_ty.clone(), false);
+                            
+                            let index_expr = IrExpr::Index {
+                                target: Box::new(ir_value.clone()),
+                                index: Box::new(IrExpr::IntLit(i as i64)),
+                            };
+                            
+                            nodes.push(IrNode::VarDecl {
+                                name: target.clone(),
+                                ty: elem_ty.clone(),
+                                mutable: false,
+                                init: Some(Box::new(index_expr)),
+                            });
+                        } else {
+                            // After starred: use negative indexing from end
+                            // values[len - (targets.len() - i)]
+                            let offset_from_end = targets.len() - i;
+                            self.scope.define(target, elem_ty.clone(), false);
+                            
+                            let len_call = IrExpr::MethodCall {
+                                target: Box::new(ir_value.clone()),
+                                method: "len".to_string(),
+                                args: vec![],
+                            };
+                            let index_expr = IrExpr::Index {
+                                target: Box::new(ir_value.clone()),
+                                index: Box::new(IrExpr::BinOp {
+                                    left: Box::new(len_call),
+                                    op: IrBinOp::Sub,
+                                    right: Box::new(IrExpr::IntLit(offset_from_end as i64)),
+                                }),
+                            };
+                            
+                            nodes.push(IrNode::VarDecl {
+                                name: target.clone(),
+                                ty: elem_ty.clone(),
+                                mutable: false,
+                                init: Some(Box::new(index_expr)),
+                            });
+                        }
+                    }
+                    
+                    return Ok(IrNode::Sequence(nodes));
+                }
+                
+                // Regular tuple unpacking (no star)
                 // Determine if this is a declaration or assignment based on first variable
                 // (Simplified logic: if first var is not in scope, assume declaration for all)
                 let is_decl = self.scope.lookup(&targets[0]).is_none();
@@ -765,11 +886,19 @@ impl SemanticAnalyzer {
 
                 let mut param_types = Vec::new();
                 for p in params {
-                    let ty = p
+                    let base_ty = p
                         .type_hint
                         .as_ref()
                         .map(|th| self.type_from_hint(th))
                         .unwrap_or(Type::Unknown);
+                    
+                    // For variadic parameters (*args), wrap in Vec<T>
+                    let ty = if p.variadic {
+                        Type::List(Box::new(base_ty))
+                    } else {
+                        base_ty
+                    };
+                    
                     // In Rust, we pass objects by reference.
                     // So if ty is List/Dict/Struct/String/Tuple, the function signature should reflect Ref(ty).
                     // If the parameter is mutated in the function body, use MutRef instead.
@@ -821,12 +950,12 @@ impl SemanticAnalyzer {
                 );
 
                 // Register function parameter info for default argument handling at call sites
-                let param_info: Vec<(String, Type, Option<Expr>)> = params
+                let param_info: Vec<(String, Type, Option<Expr>, bool)> = params
                     .iter()
                     .enumerate()
                     .map(|(i, p)| {
                         let ty = param_types.get(i).cloned().unwrap_or(Type::Unknown);
-                        (p.name.clone(), ty, p.default.clone())
+                        (p.name.clone(), ty, p.default.clone(), p.variadic)
                     })
                     .collect();
                 self.func_param_info.insert(name.clone(), param_info);
@@ -1345,39 +1474,97 @@ impl SemanticAnalyzer {
                 // 1. Start with positional args
                 // 2. Match kwargs by parameter name
                 // 3. Fill missing args with default values
+                // 4. Handle variadic parameters (*args)
                 let resolved_args: Vec<Expr> = match func.as_ref() {
                     Expr::Ident(name) => {
                         if let Some(param_info) = self.func_param_info.get(name) {
-                            let mut result: Vec<Option<Expr>> = vec![None; param_info.len()];
-
-                            // Fill positional args
-                            for (i, arg) in args.iter().enumerate() {
-                                if i < result.len() {
-                                    result[i] = Some(arg.clone());
-                                }
-                            }
-
-                            // Fill kwargs by parameter name
-                            for (kwarg_name, kwarg_value) in kwargs {
-                                if let Some(pos) = param_info
-                                    .iter()
-                                    .position(|(pname, _, _)| pname == kwarg_name)
-                                {
-                                    result[pos] = Some(kwarg_value.clone());
-                                }
-                            }
-
-                            // Fill defaults for any remaining None values
-                            for (i, slot) in result.iter_mut().enumerate() {
-                                if slot.is_none() {
-                                    if let Some((_, _, Some(default_expr))) = param_info.get(i) {
-                                        *slot = Some(default_expr.clone());
+                            // Check if the last (or any) parameter is variadic
+                            let variadic_idx = param_info.iter().position(|(_, _, _, is_variadic)| *is_variadic);
+                            
+                            if let Some(var_idx) = variadic_idx {
+                                // Handle variadic function call
+                                let non_variadic_count = var_idx;
+                                let mut result: Vec<Expr> = Vec::new();
+                                
+                                // Fill non-variadic positional args
+                                for (i, arg) in args.iter().enumerate() {
+                                    if i < non_variadic_count {
+                                        result.push(arg.clone());
                                     }
                                 }
-                            }
+                                
+                                // Fill defaults for missing non-variadic args
+                                for i in result.len()..non_variadic_count {
+                                    if let Some((_, _, Some(default_expr), _)) = param_info.get(i) {
+                                        result.push(default_expr.clone());
+                                    }
+                                }
+                                
+                                // Collect remaining args for the variadic parameter
+                                let variadic_args: Vec<Expr> = args.iter()
+                                    .skip(non_variadic_count)
+                                    .cloned()
+                                    .collect();
+                                
+                                // Check if there's a single starred argument (e.g., *nums)
+                                // In this case, pass it directly instead of wrapping in a list
+                                if variadic_args.len() == 1 {
+                                    if let Expr::Starred(inner) = &variadic_args[0] {
+                                        // Starred expression - pass the inner expression directly
+                                        result.push(*inner.clone());
+                                    } else {
+                                        // Single non-starred arg - wrap in list
+                                        result.push(Expr::List(variadic_args));
+                                    }
+                                } else if variadic_args.iter().any(|a| matches!(a, Expr::Starred(_))) {
+                                    // Mixed starred and non-starred - for now, just use the args
+                                    // TODO: Handle more complex cases
+                                    for arg in variadic_args {
+                                        if let Expr::Starred(inner) = arg {
+                                            result.push(*inner);
+                                        } else {
+                                            result.push(arg);
+                                        }
+                                    }
+                                } else {
+                                    // Create a List expression for the variadic args
+                                    result.push(Expr::List(variadic_args));
+                                }
+                                
+                                result
+                            } else {
+                                // Non-variadic function - normal handling
+                                let mut result: Vec<Option<Expr>> = vec![None; param_info.len()];
 
-                            // Collect non-None values (skip trailing None if function allows)
-                            result.into_iter().flatten().collect()
+                                // Fill positional args
+                                for (i, arg) in args.iter().enumerate() {
+                                    if i < result.len() {
+                                        result[i] = Some(arg.clone());
+                                    }
+                                }
+
+                                // Fill kwargs by parameter name
+                                for (kwarg_name, kwarg_value) in kwargs {
+                                    if let Some(pos) = param_info
+                                        .iter()
+                                        .position(|(pname, _, _, _)| pname == kwarg_name)
+                                    {
+                                        result[pos] = Some(kwarg_value.clone());
+                                    }
+                                }
+
+                                // Fill defaults for any remaining None values
+                                for (i, slot) in result.iter_mut().enumerate() {
+                                    if slot.is_none() {
+                                        if let Some((_, _, Some(default_expr), _)) = param_info.get(i) {
+                                            *slot = Some(default_expr.clone());
+                                        }
+                                    }
+                                }
+
+                                // Collect non-None values (skip trailing None if function allows)
+                                result.into_iter().flatten().collect()
+                            }
                         } else {
                             // No param info available - fall back to simple concatenation
                             let mut all: Vec<Expr> = args.clone();

@@ -144,8 +144,13 @@ pub enum Stmt {
         op: AugAssignOp,
         value: Expr,
     },
-    /// Tuple unpacking assignment (a, b = func())
-    TupleAssign { targets: Vec<String>, value: Expr },
+    /// Tuple unpacking assignment (a, b = func() or head, *tail = values)
+    TupleAssign {
+        targets: Vec<String>,
+        value: Expr,
+        /// If Some(i), targets[i] is a starred target (*tail)
+        starred_index: Option<usize>,
+    },
     /// Index swap (a[i], a[j] = a[j], a[i])
     IndexSwap {
         left_targets: Vec<Expr>,

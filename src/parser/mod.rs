@@ -888,15 +888,27 @@ fn parse_block(lines: &[&str], start: usize) -> Result<(Vec<Stmt>, usize), Tsuch
 fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoError> {
     let param_str = param_str.trim();
 
-    // Check for variadic parameter (*args)
+    // Check for variadic parameter (*args or *args: type)
     if param_str.starts_with('*') && !param_str.starts_with("**") {
-        let name = param_str[1..].trim().to_string();
-        return Ok(Param {
-            name,
-            type_hint: None,
-            default: None,
-            variadic: true,
-        });
+        let rest = param_str[1..].trim();
+        // Check if there's a type hint (*args: int)
+        if let Some(colon_pos) = rest.find(':') {
+            let name = rest[..colon_pos].trim().to_string();
+            let type_str = rest[colon_pos + 1..].trim();
+            return Ok(Param {
+                name,
+                type_hint: Some(parse_type_hint(type_str)?),
+                default: None,
+                variadic: true,
+            });
+        } else {
+            return Ok(Param {
+                name: rest.to_string(),
+                type_hint: None,
+                default: None,
+                variadic: true,
+            });
+        }
     }
 
     // Check for default value first (param: type = default or param = default)
@@ -1113,11 +1125,24 @@ fn try_parse_assignment(line: &str, line_num: usize) -> Result<Option<Stmt>, Tsu
             }));
         }
 
-        // Simple tuple assign
-        let targets: Vec<String> = left_parts.iter().map(|s| s.trim().to_string()).collect();
+        // Simple tuple assign - detect starred targets
+        let mut starred_index: Option<usize> = None;
+        let targets: Vec<String> = left_parts
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let trimmed = s.trim();
+                if trimmed.starts_with('*') {
+                    starred_index = Some(i);
+                    trimmed[1..].to_string() // Remove * prefix
+                } else {
+                    trimmed.to_string()
+                }
+            })
+            .collect();
 
         let value = parse_expr(right, line_num)?;
-        return Ok(Some(Stmt::TupleAssign { targets, value }));
+        return Ok(Some(Stmt::TupleAssign { targets, value, starred_index }));
     }
 
     // Check for index assignment: arr[i] = val
