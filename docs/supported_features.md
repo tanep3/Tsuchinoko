@@ -80,3 +80,27 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Callable types** (`Callable[[T], U]`)
 - **Function type inference**
 - **Automatic type coercion** (Auto-Ref, Auto-Deref, Auto-Clone)
+
+## V1.2.0 New Features
+
+- **`@dataclass`** decorator (basic support)
+- **Star unpacking** (`head, *tail = values`)
+- **Star args** (`def func(*args)`)
+- **Argument spread** (`func(*list)`)
+- **Import statements** parsing
+- **Type narrowing** (`if x is None` / `if x is not None`)
+
+## PyO3 Integration (Experimental)
+
+> [!WARNING]
+> PyO3 integration is experimental. Compatibility depends on your environment.
+
+- **numpy/pandas import** → PyO3 bridge code generation
+- **`tnk -p project`** generates Cargo project with PyO3 dependency
+- **`--pyo3-version`** option to specify PyO3 version
+
+### Limitations
+
+- **numpy < 2.0 required** (rust-numpy/PyO3 constraint)
+- **ctypes compatibility issues** may occur depending on Python build
+- **venv must be activated** before running generated binary

@@ -4,8 +4,8 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 
 ## Language Features
 
-- **Variable-length arguments** (`*args`, `**kwargs`)
-- **Decorators** (except `@staticmethod`)
+- **`**kwargs`** (keyword variable-length arguments)
+- **Decorators** (except `@staticmethod`, `@dataclass`)
 - **Generators** (`yield` statements)
 - **Async/Await** syntax
 - **Context managers** (`with` statements)
@@ -48,12 +48,19 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 ## Advanced Features
 
 - **Multiple assignment** (`a, b, c = 1, 2, 3` - partial support only for index swap)
-- **Starred expressions** (`first, *rest = [1, 2, 3]`)
 - **Dictionary comprehensions** (`{k: v for k, v in ...}`)
 - **Set comprehensions** (`{x for x in ...}`)
 - **Global/Nonlocal** statements
-- **Import statements**
-- **Module system**
+- **Module system** (multi-file projects)
+
+## PyO3 / External Libraries
+
+> [!IMPORTANT]
+> PyO3 integration is experimental.
+
+- **numpy >= 2.0** (use numpy < 2.0 due to rust-numpy/ctypes constraints)
+- **Complex PyO3 operations** (direct C API calls may fail)
+- **Awaiting PyO3/rust-numpy updates for numpy 2.x support**
 
 ## Notes
 
