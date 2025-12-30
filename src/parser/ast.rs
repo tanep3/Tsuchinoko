@@ -199,6 +199,12 @@ pub enum Stmt {
         exception_type: String,
         message: Expr,
     },
+    /// Import statement (import x as y, from x import y)
+    Import {
+        module: String,
+        alias: Option<String>,
+        items: Option<Vec<String>>,  // for "from x import a, b, c"
+    },
     /// Break statement
     Break,
     /// Continue statement

@@ -105,6 +105,11 @@ pub enum IrNode {
     Continue,
     /// Sequence of nodes (for returning multiple top-level items like StructDef + ImplBlock)
     Sequence(Vec<IrNode>),
+    /// PyO3 import (for numpy, pandas, etc.)
+    PyO3Import {
+        module: String,
+        alias: Option<String>,
+    },
 }
 
 /// IR expression types

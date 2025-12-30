@@ -28,6 +28,8 @@ pub struct SemanticAnalyzer {
     mutable_vars: std::collections::HashSet<String>,
     /// Function name -> Vec of (param_name, param_type, default_expr, is_variadic) for default arg handling
     func_param_info: std::collections::HashMap<String, Vec<(String, Type, Option<Expr>, bool)>>,
+    /// PyO3 imports: (module, alias) - e.g., ("numpy", "np")
+    pyo3_imports: Vec<(String, String)>,
 }
 
 impl Default for SemanticAnalyzer {
@@ -44,6 +46,7 @@ impl SemanticAnalyzer {
             struct_field_types: std::collections::HashMap::new(),
             mutable_vars: std::collections::HashSet::new(),
             func_param_info: std::collections::HashMap::new(),
+            pyo3_imports: Vec::new(),
         }
     }
 
@@ -1410,6 +1413,20 @@ impl SemanticAnalyzer {
             }
             Stmt::Break => Ok(IrNode::Break),
             Stmt::Continue => Ok(IrNode::Continue),
+            Stmt::Import { module, alias, items: _ } => {
+                // Register PyO3 imports for numpy/pandas
+                let effective_name = alias.as_ref().unwrap_or(module);
+                if module == "numpy" || module == "pandas" {
+                    // Track this import for PyO3 wrapping
+                    self.pyo3_imports.push((module.clone(), effective_name.clone()));
+                }
+                // For now, return an empty sequence (no IR generated)
+                // The PyO3 wrapper will be added in emit phase
+                Ok(IrNode::PyO3Import {
+                    module: module.clone(),
+                    alias: alias.clone(),
+                })
+            }
         }
     }
 

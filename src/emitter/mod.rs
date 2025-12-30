@@ -34,6 +34,8 @@ pub struct RustEmitter {
     indent: usize,
     /// Map of struct name -> field names (in order)
     struct_defs: HashMap<String, Vec<String>>,
+    /// Whether PyO3 is needed for this file
+    uses_pyo3: bool,
 }
 
 /// Convert camelCase/PascalCase to snake_case
@@ -63,6 +65,7 @@ impl RustEmitter {
         Self {
             indent: 0,
             struct_defs: HashMap::new(),
+            uses_pyo3: false,
         }
     }
 
@@ -448,6 +451,13 @@ impl RustEmitter {
                     .map(|n| self.emit_node_internal(n))
                     .collect::<Vec<_>>()
                     .join("\n")
+            }
+            IrNode::PyO3Import { module, alias } => {
+                // Mark that PyO3 is needed
+                self.uses_pyo3 = true;
+                let alias_str = alias.as_ref().map(|a| format!(" as {a}")).unwrap_or_default();
+                // Just emit a comment; actual PyO3 setup is in prelude
+                format!("// PyO3 import: {module}{alias_str}")
             }
         }
     }

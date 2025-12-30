@@ -76,6 +76,76 @@ fn preprocess_multiline(source: &str) -> String {
     result.join("\n")
 }
 
+/// Parse import line: "import x as y" or "from x import y, z"
+/// Returns None for typing/dataclasses/typing_extensions (skip these)
+fn parse_import_line(line: &str) -> Result<Option<Stmt>, TsuchinokoError> {
+    let line = line.trim();
+    
+    // "import module as alias" or "import module"
+    if line.starts_with("import ") {
+        let rest = line.strip_prefix("import ").unwrap().trim();
+        
+        // Check for "as" alias
+        let (module, alias) = if let Some(as_pos) = rest.find(" as ") {
+            let module = rest[..as_pos].trim();
+            let alias = rest[as_pos + 4..].trim();
+            (module.to_string(), Some(alias.to_string()))
+        } else {
+            (rest.to_string(), None)
+        };
+        
+        // Skip standard library / typing imports
+        if is_skip_import(&module) {
+            return Ok(None);
+        }
+        
+        return Ok(Some(Stmt::Import {
+            module,
+            alias,
+            items: None,
+        }));
+    }
+    
+    // "from module import x, y, z"
+    if line.starts_with("from ") {
+        let rest = line.strip_prefix("from ").unwrap().trim();
+        
+        // Find "import" keyword
+        if let Some(import_pos) = rest.find(" import ") {
+            let module = rest[..import_pos].trim().to_string();
+            let items_str = rest[import_pos + 8..].trim();
+            
+            // Skip standard library / typing imports
+            if is_skip_import(&module) {
+                return Ok(None);
+            }
+            
+            // Parse items (comma separated)
+            let items: Vec<String> = items_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect();
+            
+            return Ok(Some(Stmt::Import {
+                module,
+                alias: None,
+                items: Some(items),
+            }));
+        }
+    }
+    
+    Ok(None)
+}
+
+/// Check if module should be skipped (standard library, typing, etc.)
+fn is_skip_import(module: &str) -> bool {
+    matches!(
+        module,
+        "typing" | "typing_extensions" | "dataclasses" | "__future__"
+            | "collections" | "abc" | "functools" | "itertools"
+    )
+}
+
 /// Parse Python source code into AST
 pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
     // Preprocess: join lines with unclosed brackets
@@ -89,6 +159,16 @@ pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
 
         // Skip empty lines and comments
         if line.is_empty() || line.starts_with('#') {
+            i += 1;
+            continue;
+        }
+        
+        // Parse import statements
+        if line.starts_with("import ") || line.starts_with("from ") {
+            if let Some(stmt) = parse_import_line(line)? {
+                statements.push(stmt);
+            }
+            // Either way, skip the line
             i += 1;
             continue;
         }
