@@ -446,6 +446,31 @@ impl SemanticAnalyzer {
             // Analyze with mutability info
             let ir_node = self.analyze_stmt_with_mut_info(stmt, &reassigned_vars, &mutated_vars)?;
             ir_nodes.push(ir_node);
+            
+            // Check for early return narrowing AFTER processing the if statement
+            // `if x is None: return ...` - after this, x is guaranteed to be non-None
+            if let Stmt::If { condition, then_body, elif_clauses, else_body } = stmt {
+                if else_body.is_none() && elif_clauses.is_empty() {
+                    // Check if then_body contains only a return statement
+                    let is_early_return = then_body.len() == 1 && matches!(&then_body[0], Stmt::Return { .. });
+                    
+                    if is_early_return {
+                        if let Some((var_name, is_none_check)) = self.extract_none_check(condition) {
+                            if is_none_check {
+                                // `if x is None: return ...` pattern detected
+                                // After this statement, x is guaranteed to be non-None
+                                // Apply narrowing to subsequent statements
+                                if let Some(var_info) = self.scope.lookup(&var_name) {
+                                    if let Type::Optional(inner) = &var_info.ty {
+                                        // Narrow x to T for the rest of this block
+                                        self.scope.narrow_type(&var_name, *inner.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Ok(ir_nodes)
