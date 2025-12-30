@@ -140,6 +140,12 @@ pub enum IrExpr {
         func: Box<IrExpr>,
         args: Vec<IrExpr>,
     },
+    /// PyO3 module method call (np.array(...), pd.DataFrame(...))
+    PyO3Call {
+        module: String,   // e.g., "np", "pd"
+        method: String,   // e.g., "array", "mean"
+        args: Vec<IrExpr>,
+    },
     /// Unwrap Option<T> to T (generates .unwrap())
     Unwrap(Box<IrExpr>),
     /// Closure (lambda / nested function)

@@ -1541,6 +1541,31 @@ impl SemanticAnalyzer {
                 })
             }
             Expr::Call { func, args, kwargs } => {
+                // Handle PyO3 module calls: np.array(...) -> np.call_method1("array", (...))?
+                if let Expr::Attribute { value, attr } = func.as_ref() {
+                    if let Expr::Ident(module_alias) = value.as_ref() {
+                        // Check if this is a PyO3 import alias
+                        let is_pyo3_module = self.pyo3_imports.iter()
+                            .any(|(_, alias)| alias == module_alias);
+                        
+                        if is_pyo3_module {
+                            // Convert to PyO3 call
+                            let ir_args: Vec<IrExpr> = args
+                                .iter()
+                                .map(|a| self.analyze_expr(a))
+                                .collect::<Result<Vec<_>, _>>()?;
+                            
+                            // Return structured PyO3 call
+                            return Ok(IrExpr::PyO3Call {
+                                module: module_alias.clone(),
+                                method: attr.clone(),
+                                args: ir_args,
+                            });
+                        }
+                    }
+                }
+                
+                // Handle static method calls: ClassName.method() -> ClassName::method()
                 // Handle static method calls: ClassName.method() -> ClassName::method()
                 if let Expr::Attribute { value, attr } = func.as_ref() {
                     if let Expr::Ident(class_name) = value.as_ref() {

@@ -70,11 +70,37 @@ impl RustEmitter {
     }
 
     pub fn emit_nodes(&mut self, nodes: &[IrNode]) -> String {
-        nodes
+        // First pass: emit all nodes to detect PyO3 usage
+        let code: Vec<String> = nodes
             .iter()
             .map(|n| self.emit_node(n))
-            .collect::<Vec<_>>()
-            .join("\n")
+            .collect();
+        
+        let body = code.join("\n");
+        
+        // If PyO3 is used, add prelude and wrapper
+        if self.uses_pyo3 {
+            self.emit_pyo3_wrapped(&body)
+        } else {
+            body
+        }
+    }
+    
+    /// Wrap the code with PyO3 setup
+    fn emit_pyo3_wrapped(&self, body: &str) -> String {
+        format!(
+            r#"use pyo3::prelude::*;
+use pyo3::types::PyList;
+
+{body}
+
+// Note: To run this code, add to Cargo.toml:
+// [dependencies]
+// pyo3 = {{ version = "0.20", features = ["auto-initialize"] }}
+//
+// Set TSUCHINOKO_VENV to your venv path if using external packages.
+"#
+        )
     }
 
     fn emit_node_internal(&mut self, node: &IrNode) -> String {
@@ -972,6 +998,21 @@ impl RustEmitter {
             }
             IrExpr::Unwrap(inner) => {
                 format!("{}.unwrap()", self.emit_expr(inner))
+            }
+            IrExpr::PyO3Call { module, method, args } => {
+                if args.is_empty() {
+                    format!("{}.call_method0(\"{}\").unwrap()", module, method)
+                } else {
+                    let args_str: Vec<String> = args.iter()
+                        .map(|a| self.emit_expr(a))
+                        .collect();
+                    format!(
+                        "{}.call_method1(\"{}\", ({},)).unwrap()",
+                        module,
+                        method,
+                        args_str.join(", ")
+                    )
+                }
             }
         }
     }
