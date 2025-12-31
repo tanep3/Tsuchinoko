@@ -95,12 +95,28 @@ This document lists all Python features currently supported by Tsuchinoko transp
 > [!WARNING]
 > PyO3 integration is experimental. Compatibility depends on your environment.
 
-- **numpy/pandas import** → PyO3 bridge code generation
 - **`tnk -p project`** generates Cargo project with PyO3 dependency
 - **`--pyo3-version`** option to specify PyO3 version
-
-### Limitations
-
-- **numpy < 2.0 required** (rust-numpy/PyO3 constraint)
-- **ctypes compatibility issues** may occur depending on Python build
 - **venv must be activated** before running generated binary
+
+### Supported External Libraries (via PyO3)
+
+| Library | Status | Notes |
+|---------|--------|-------|
+| json | ✅ OK | JSON parsing/serialization |
+| math | ✅ OK | Math functions |
+| re | ✅ OK | Regular expressions |
+| datetime | ✅ OK | Date/time handling |
+| os | ✅ OK | OS information |
+
+### Unsupported External Libraries (via PyO3)
+
+| Library | Status | Reason |
+|---------|--------|--------|
+| ctypes | ❌ NG | Conflicts with PyO3 auto-initialize |
+| numpy | ❌ NG | Depends on ctypes |
+| pandas | ❌ NG | Depends on numpy → ctypes |
+
+> [!NOTE]
+> Libraries that use Python's `ctypes` module cannot work with PyO3's `auto-initialize` feature.
+> This is a known limitation of embedding Python in Rust binaries.

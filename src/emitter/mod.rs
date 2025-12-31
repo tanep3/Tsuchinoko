@@ -799,13 +799,14 @@ use pyo3::types::PyList;
                 }
             }
             IrExpr::FString { parts, values } => {
-                // Generate format string: "{}{}{}" from parts
+                // Generate format string: "{:?}{:?}{:?}" from parts
+                // Use {:?} (Debug) instead of {} (Display) to support Vec and other types
                 let format_str: String = parts
                     .iter()
                     .enumerate()
                     .map(|(i, part)| {
                         if i < parts.len() - 1 {
-                            format!("{part}{{}}")
+                            format!("{part}{{:?}}")
                         } else {
                             part.clone()
                         }
@@ -1049,6 +1050,9 @@ use pyo3::types::PyList;
                 if args.is_empty() {
                     if method == "len" {
                         format!("{}.{}() as i64", self.emit_expr(target), method)
+                    } else if method == "copy" {
+                        // Python list.copy() -> Rust .to_vec()
+                        format!("{}.to_vec()", self.emit_expr(target))
                     } else {
                         format!("{}.{}()", self.emit_expr(target), method)
                     }

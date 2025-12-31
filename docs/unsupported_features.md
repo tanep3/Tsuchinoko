@@ -53,14 +53,29 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 - **Global/Nonlocal** statements
 - **Module system** (multi-file projects)
 
-## PyO3 / External Libraries
+## PyO3 / External Libraries (Not Supported)
 
 > [!IMPORTANT]
-> PyO3 integration is experimental.
+> PyO3 integration is experimental. The following libraries do NOT work via PyO3.
 
-- **numpy >= 2.0** (use numpy < 2.0 due to rust-numpy/ctypes constraints)
-- **Complex PyO3 operations** (direct C API calls may fail)
-- **Awaiting PyO3/rust-numpy updates for numpy 2.x support**
+| Library | Reason |
+|---------|--------|
+| **ctypes** | Conflicts with PyO3 `auto-initialize` feature |
+| **numpy** | Depends on ctypes |
+| **pandas** | Depends on numpy → ctypes |
+| **scipy** | Depends on numpy → ctypes |
+| **pillow** | Depends on ctypes |
+
+### Root Cause
+
+Python's `ctypes` module and PyO3's `auto-initialize` feature have a known incompatibility
+when embedding Python in Rust binaries. This is a limitation of PyO3, not Tsuchinoko.
+
+### Workaround
+
+For numpy/pandas workloads, consider:
+- Using pure Rust libraries (`ndarray`, `polars`)
+- Building as Python extension module with `maturin` (different architecture)
 
 ## Notes
 
