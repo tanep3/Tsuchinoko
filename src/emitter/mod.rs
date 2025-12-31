@@ -399,9 +399,8 @@ use pyo3::types::PyList;
                         .collect();
 
                     // Hack: If return type is Unit but body has Return with value, force return type to Value
-                    let has_value_return = body
-                        .iter()
-                        .any(|n| matches!(n, IrNode::Return(Some(_))));
+                    let has_value_return =
+                        body.iter().any(|n| matches!(n, IrNode::Return(Some(_))));
 
                     let effective_ret = if *ret == Type::Unit && has_value_return {
                         &Type::Any // Will be emitted as serde_json::Value
@@ -1392,8 +1391,7 @@ use pyo3::types::PyList;
                     ));
                 }
 
-                let args_str: Vec<String> =
-                    (0..args.len()).map(|i| format!("_arg_{i}")).collect();
+                let args_str: Vec<String> = (0..args.len()).map(|i| format!("_arg_{i}")).collect();
 
                 // 方式選択テーブルを参照
                 use crate::bridge::module_table::{

@@ -48,8 +48,7 @@ impl PythonBridge {
     fn send_request(&mut self, request: serde_json::Value) -> Result<serde_json::Value, String> {
         // リクエスト送信
         let stdin = self.process.stdin.as_mut().ok_or("Failed to get stdin")?;
-        writeln!(stdin, "{request}")
-            .map_err(|e| format!("Failed to write to stdin: {e}"))?;
+        writeln!(stdin, "{request}").map_err(|e| format!("Failed to write to stdin: {e}"))?;
         stdin
             .flush()
             .map_err(|e| format!("Failed to flush stdin: {e}"))?;
@@ -194,8 +193,7 @@ impl PythonBridge {
         });
 
         let stdin = self.process.stdin.as_mut().ok_or("Failed to get stdin")?;
-        writeln!(stdin, "{request}")
-            .map_err(|e| format!("Failed to write to stdin: {e}"))?;
+        writeln!(stdin, "{request}").map_err(|e| format!("Failed to write to stdin: {e}"))?;
         stdin
             .flush()
             .map_err(|e| format!("Failed to flush stdin: {e}"))?;
