@@ -67,10 +67,35 @@ def get_object(handle_data):
             return _objects[id_str]
     raise ValueError(f"Invalid handle: {handle_data}")
 
-def serialize_result(result):
-    """結果を JSON 化可能な形式に変換。変換できない場合はハンドルを返す。"""
+def serialize_result(result, force_value=False):
+    """結果を JSON 化可能な形式に変換。変換できない場合はハンドルを返す。
+    
+    force_value=True の場合、ハンドルではなく値を返す（表示目的）。
+    """
     if result is None or isinstance(result, (int, float, bool, str)):
         return result
+    
+    # NumPy 配列の場合はリストに変換（常に）
+    try:
+        import numpy as np
+        if isinstance(result, np.ndarray):
+            return result.tolist()
+        if isinstance(result, (np.integer, np.floating)):
+            return result.item()
+    except ImportError:
+        pass
+    
+    # Pandas DataFrame/Series の場合
+    try:
+        import pandas as pd
+        if isinstance(result, pd.DataFrame):
+            # DataFrame はメソッドチェーンに使うのでハンドルとして保持
+            # ただし to_string() 等の結果は文字列として返される
+            return store_object(result)
+        if isinstance(result, pd.Series):
+            return result.tolist()
+    except ImportError:
+        pass
     
     # JSON 化を試行
     try:
