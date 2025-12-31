@@ -130,7 +130,9 @@ For detailed feature lists, see:
 - [x] Named arguments support (`func(name="value")`)
 - [x] Default argument values (`def func(x=10)`)
 - [x] Exception handling (`try-except` → `catch_unwind`)
-- [ ] Variable-length arguments (`*args`, `**kwargs`)
+- [x] Variable-length arguments (`*args` via spread operator)
+- [x] NumPy/Pandas support via Resident Python Worker
+- [ ] Full `**kwargs` support
 - [ ] Full class inheritance support
 - [ ] More standard library mappings
 
