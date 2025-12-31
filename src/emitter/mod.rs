@@ -84,7 +84,7 @@ impl RustEmitter {
     pub fn emit_nodes(&mut self, nodes: &[IrNode]) -> String {
         // If we're at indent 0, this is a top-level call
         let is_top_level = self.indent == 0;
-        
+
         // Pass 1: Collect all PyO3Import nodes first (top-level only)
         if is_top_level {
             for node in nodes {
@@ -95,16 +95,16 @@ impl RustEmitter {
                 }
             }
         }
-        
+
         // Pass 2: Emit all nodes
         let code: Vec<String> = nodes
             .iter()
             .map(|n| self.emit_node(n))
             .filter(|s| !s.is_empty())
             .collect();
-        
+
         let body = code.join("\n");
-        
+
         // Only add wrapper at top level
         if is_top_level {
             if self.needs_resident {
@@ -121,7 +121,7 @@ impl RustEmitter {
             body
         }
     }
-    
+
     /// Wrap the code with PyO3 setup (legacy, kept for reference)
     #[allow(dead_code)]
     fn emit_pyo3_wrapped(&self, body: &str) -> String {
@@ -140,7 +140,7 @@ use pyo3::types::PyList;
 "#
         )
     }
-    
+
     /// Wrap the code with py_bridge runtime (常駐プロセス方式)
     fn emit_resident_wrapped(&self, body: &str) -> String {
         format!(
@@ -154,26 +154,31 @@ use pyo3::types::PyList;
 "#
         )
     }
-    
+
     /// Generate PyO3-wrapped main function
+    #[allow(dead_code)]
     fn emit_pyo3_main(&self, user_body: &str) -> String {
         // Generate import statements for each PyO3 module
-        let imports: Vec<String> = self.pyo3_imports.iter()
+        let imports: Vec<String> = self
+            .pyo3_imports
+            .iter()
             .map(|(module, alias)| {
-                format!("        let {} = py.import(\"{}\").expect(\"Failed to import {}\");",
-                    alias, module, module)
+                format!(
+                    "        let {alias} = py.import(\"{module}\").expect(\"Failed to import {module}\");"
+                )
             })
             .collect();
-        
+
         let imports_str = imports.join("\n");
-        
+
         // Indent user body
-        let indented_body: String = user_body.lines()
+        let indented_body: String = user_body
+            .lines()
             .map(|line| {
                 if line.trim().is_empty() {
                     String::new()
                 } else {
-                    format!("        {}", line)
+                    format!("        {line}")
                 }
             })
             .collect::<Vec<_>>()
@@ -193,17 +198,18 @@ use pyo3::types::PyList;
     /// Generate main with py_bridge initialization (常駐プロセス方式)
     fn emit_resident_main(&self, user_body: &str) -> String {
         // Indent user body
-        let indented_body: String = user_body.lines()
+        let indented_body: String = user_body
+            .lines()
             .map(|line| {
                 if line.trim().is_empty() {
                     String::new()
                 } else {
-                    format!("    {}", line)
+                    format!("    {line}")
                 }
             })
             .collect::<Vec<_>>()
             .join("\n");
-        
+
         format!(
             r#"fn main() {{
     let mut py_bridge = tsuchinoko::bridge::PythonBridge::new()
@@ -313,7 +319,12 @@ use pyo3::types::PyList;
                 let has_unknown = targets.iter().any(|(_, t, _)| t.contains_unknown());
 
                 if has_unknown {
-                    format!("{}let ({}) = {};", indent, vars_str.join(", "), self.emit_expr(value))
+                    format!(
+                        "{}let ({}) = {};",
+                        indent,
+                        vars_str.join(", "),
+                        self.emit_expr(value)
+                    )
                 } else {
                     let types_str: Vec<_> =
                         targets.iter().map(|(_, t, _)| t.to_rust_string()).collect();
@@ -336,28 +347,29 @@ use pyo3::types::PyList;
                 // Check if this is the auto-generated top-level function -> "fn main"
                 if name == "__top_level__" {
                     self.indent += 1;
-                    
+
                     // needs_resident をバックアップ
                     let needs_resident_backup = self.needs_resident;
                     self.needs_resident = false;
-                    
+
                     let body_str = self.emit_nodes(body);
-                    
+
                     // 関数内で resident 機能が使われたか
                     let func_needs_resident = self.needs_resident;
-                    
+
                     // グローバルステートを復元（OR演算）
                     self.needs_resident = needs_resident_backup || func_needs_resident;
-                    
+
                     self.indent -= 1;
-                    
-                    if func_needs_resident || self.needs_resident { // self.needs_resident is global state (might be set by previous nodes)
+
+                    if func_needs_resident || self.needs_resident {
+                        // self.needs_resident is global state (might be set by previous nodes)
                         self.emit_resident_main(&body_str)
                     } else {
-                         // Regular main (no resident needed)
-                         // Even if no resident features are used, if we are in a mode where resident is required by others, or simply default main?
-                         // If this comes from semantic top level wrap, it's our entry point.
-                         format!("fn main() {{\n{}\n}}", body_str)
+                        // Regular main (no resident needed)
+                        // Even if no resident features are used, if we are in a mode where resident is required by others, or simply default main?
+                        // If this comes from semantic top level wrap, it's our entry point.
+                        format!("fn main() {{\n{body_str}\n}}")
                     }
                 } else {
                     let snake_name = if name == "main" {
@@ -366,31 +378,31 @@ use pyo3::types::PyList;
                     } else {
                         to_snake_case(name)
                     };
-                    
+
                     // needs_resident をバックアップして、この関数内での変化を追跡
                     let needs_resident_backup = self.needs_resident;
                     self.needs_resident = false;
-                    
+
                     self.indent += 1;
                     let body_str = self.emit_nodes(body);
                     self.indent -= 1;
-                    
+
                     let func_needs_resident = self.needs_resident;
-                    
+
                     // グローバルステートを復元（OR演算）
                     self.needs_resident = needs_resident_backup || func_needs_resident;
-                    
+
                     // 通常のパラメータ
                     let mut params_str: Vec<_> = params
                         .iter()
                         .map(|(n, t)| format!("{}: {}", to_snake_case(n), t.to_rust_string()))
                         .collect();
-                    
+
                     // Hack: If return type is Unit but body has Return with value, force return type to Value
-                    let has_value_return = body.iter().any(|n| {
-                         if let IrNode::Return(Some(_)) = n { true } else { false }
-                    });
-                    
+                    let has_value_return = body
+                        .iter()
+                        .any(|n| matches!(n, IrNode::Return(Some(_))));
+
                     let effective_ret = if *ret == Type::Unit && has_value_return {
                         &Type::Any // Will be emitted as serde_json::Value
                     } else {
@@ -405,11 +417,11 @@ use pyo3::types::PyList;
                         // ONLY set this if we are NOT in the special __top_level__ (fn main)
                         // Actually, this block is the "else" (non-__top_level__) path, so it's always true.
                         self.is_inside_resident_func = true;
-                        
+
                         // Reset needs_resident just in case, though we know it will become true
                         self.needs_resident = false;
                         let s = self.emit_nodes(body);
-                        
+
                         self.is_inside_resident_func = backup_flag;
                         self.indent -= 1;
                         s
@@ -420,11 +432,14 @@ use pyo3::types::PyList;
                     let ret_str = effective_ret.to_rust_string();
 
                     if func_needs_resident {
-                        params_str.insert(0, "py_bridge: &mut tsuchinoko::bridge::PythonBridge".to_string());
+                        params_str.insert(
+                            0,
+                            "py_bridge: &mut tsuchinoko::bridge::PythonBridge".to_string(),
+                        );
                         // 関数を resident_functions セットに登録
                         self.resident_functions.insert(snake_name.clone());
                     }
-                    
+
                     format!(
                         "{}fn {}({}) -> {} {{\n{}\n{}}}",
                         indent,
@@ -677,7 +692,7 @@ use pyo3::types::PyList;
                 self.uses_pyo3 = true;
                 let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
                 self.pyo3_imports.push((module.clone(), effective_alias));
-                
+
                 // Don't emit anything here - imports are handled in main wrapper
                 String::new()
             }
@@ -695,7 +710,12 @@ use pyo3::types::PyList;
                 // Don't snake_case qualified paths like std::collections::HashMap
                 if name.contains("::") {
                     name.clone()
-                } else if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                } else if name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false)
+                {
                     // Don't snake_case class names (PascalCase)
                     name.clone()
                 } else {
@@ -837,16 +857,16 @@ use pyo3::types::PyList;
                     if let Some(name) = func_name_opt {
                         // Handle native type casts: int(x), float(x), str(x)
                         if name == "int" && args.len() == 1 {
-                             let arg_str = self.emit_expr_no_outer_parens(&args[0]);
-                             return format!("({} as i64)", arg_str);
+                            let arg_str = self.emit_expr_no_outer_parens(&args[0]);
+                            return format!("({arg_str} as i64)");
                         }
                         if name == "float" && args.len() == 1 {
-                             let arg_str = self.emit_expr_no_outer_parens(&args[0]);
-                             return format!("({} as f64)", arg_str);
+                            let arg_str = self.emit_expr_no_outer_parens(&args[0]);
+                            return format!("({arg_str} as f64)");
                         }
                         if name == "str" && args.len() == 1 {
-                             let arg_str = self.emit_expr_no_outer_parens(&args[0]);
-                             return format!("{}.to_string()", arg_str);
+                            let arg_str = self.emit_expr_no_outer_parens(&args[0]);
+                            return format!("{arg_str}.to_string()");
                         }
 
                         // Check if this is a struct constructor
@@ -895,9 +915,9 @@ use pyo3::types::PyList;
                                     // BUT, we need to be carefully distinguishes between "inside main" and "inside other resident func".
                                     // We'll rely on a new field `is_inside_resident_func`.
                                     if self.is_inside_resident_func {
-                                         args_str.insert(0, "py_bridge".to_string());
+                                        args_str.insert(0, "py_bridge".to_string());
                                     } else {
-                                         args_str.insert(0, "&mut py_bridge".to_string());
+                                        args_str.insert(0, "&mut py_bridge".to_string());
                                     }
                                 } else {
                                     args_str.insert(0, "&mut py_bridge".to_string());
@@ -935,8 +955,7 @@ use pyo3::types::PyList;
                 value_type,
                 entries,
             } => {
-                let use_json = matches!(key_type, Type::Any)
-                    || matches!(value_type, Type::Any);
+                let use_json = matches!(key_type, Type::Any) || matches!(value_type, Type::Any);
 
                 if entries.is_empty() {
                     if use_json {
@@ -950,18 +969,24 @@ use pyo3::types::PyList;
                         .map(|(k, v)| {
                             let mut key_str = self.emit_expr_no_outer_parens(k);
                             let mut val_str = self.emit_expr_no_outer_parens(v);
-                            
+
                             if !use_json {
                                 // For HashMap, we need owned Strings if the type is String
-                                if matches!(key_type, Type::String) && key_str.starts_with('"') && !key_str.contains(".to_string()") {
-                                    key_str = format!("{}.to_string()", key_str);
+                                if matches!(key_type, Type::String)
+                                    && key_str.starts_with('"')
+                                    && !key_str.contains(".to_string()")
+                                {
+                                    key_str = format!("{key_str}.to_string()");
                                 }
-                                if matches!(value_type, Type::String) && val_str.starts_with('"') && !val_str.contains(".to_string()") {
-                                    val_str = format!("{}.to_string()", val_str);
+                                if matches!(value_type, Type::String)
+                                    && val_str.starts_with('"')
+                                    && !val_str.contains(".to_string()")
+                                {
+                                    val_str = format!("{val_str}.to_string()");
                                 }
-                                format!("({}, {})", key_str, val_str)
+                                format!("({key_str}, {val_str})")
                             } else {
-                                format!("{}: {}", key_str, val_str)
+                                format!("{key_str}: {val_str}")
                             }
                         })
                         .collect();
@@ -969,10 +994,7 @@ use pyo3::types::PyList;
                     if use_json {
                         format!("serde_json::json!({{ {} }})", pairs.join(", "))
                     } else {
-                        format!(
-                            "std::collections::HashMap::from([{}])",
-                            pairs.join(", ")
-                        )
+                        format!("std::collections::HashMap::from([{}])", pairs.join(", "))
                     }
                 }
             }
@@ -1129,10 +1151,10 @@ use pyo3::types::PyList;
             IrExpr::JsonConversion { target, convert_to } => {
                 let target_code = self.emit_expr_internal(target);
                 match convert_to.as_str() {
-                    "f64" => format!("{}.as_f64().unwrap()", target_code),
-                    "i64" => format!("{}.as_i64().unwrap()", target_code),
-                    "String" => format!("{}.as_str().unwrap().to_string()", target_code),
-                    "bool" => format!("{}.as_bool().unwrap()", target_code),
+                    "f64" => format!("{target_code}.as_f64().unwrap()"),
+                    "i64" => format!("{target_code}.as_i64().unwrap()"),
+                    "String" => format!("{target_code}.as_str().unwrap().to_string()"),
+                    "bool" => format!("{target_code}.as_bool().unwrap()"),
                     _ => target_code,
                 }
             }
@@ -1160,11 +1182,7 @@ use pyo3::types::PyList;
                         return format!("{}[{}.len() - {}]", target_str, target_str, n.abs());
                     }
                 }
-                format!(
-                    "{}[{}]",
-                    self.emit_expr(target),
-                    self.emit_expr(index)
-                )
+                format!("{}[{}]", self.emit_expr(target), self.emit_expr(index))
             }
             IrExpr::Slice { target, start, end } => {
                 // Handle Python-style slices: [:n], [n:], [s:e], [:]
@@ -1245,7 +1263,8 @@ use pyo3::types::PyList;
                         format!("{}.{}()", self.emit_expr_internal(target), method)
                     }
                 } else {
-                    let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_internal(a)).collect();
+                    let args_str: Vec<_> =
+                        args.iter().map(|a| self.emit_expr_internal(a)).collect();
                     format!(
                         "{}.{}({})",
                         self.emit_expr_internal(target),
@@ -1262,11 +1281,15 @@ use pyo3::types::PyList;
                 self.needs_resident = true;
                 let mut arg_evals = Vec::new();
                 for (i, arg) in args.iter().enumerate() {
-                    arg_evals.push(format!("let _arg_{} = {};", i, self.emit_expr_internal(arg)));
+                    arg_evals.push(format!(
+                        "let _arg_{} = {};",
+                        i,
+                        self.emit_expr_internal(arg)
+                    ));
                 }
-                
+
                 let args_json: Vec<String> = (0..args.len())
-                    .map(|i| format!("serde_json::json!(_arg_{})", i))
+                    .map(|i| format!("serde_json::json!(_arg_{i})"))
                     .collect();
 
                 format!(
@@ -1280,7 +1303,11 @@ use pyo3::types::PyList;
             IrExpr::FieldAccess { target, field } => {
                 // Strip dunder prefix for Rust struct field (Python private -> Rust private convention)
                 let rust_field = field.trim_start_matches("__");
-                format!("{}.{}", self.emit_expr_internal(target), to_snake_case(rust_field))
+                format!(
+                    "{}.{}",
+                    self.emit_expr_internal(target),
+                    to_snake_case(rust_field)
+                )
             }
             IrExpr::Reference { target } => {
                 format!("&{}", self.emit_expr_internal(target))
@@ -1294,16 +1321,22 @@ use pyo3::types::PyList;
                 if args.is_empty() {
                     "println!()".to_string()
                 } else {
-                    let format_specs: Vec<&str> = args.iter()
+                    let format_specs: Vec<&str> = args
+                        .iter()
                         .map(|(_, ty)| {
                             // Use {} for Type::Any (serde_json::Value) and Type::String
                             // to avoid escape characters and quotes
-                            if matches!(ty, Type::Any | Type::String) { "{}" } else { "{:?}" }
+                            if matches!(ty, Type::Any | Type::String) {
+                                "{}"
+                            } else {
+                                "{:?}"
+                            }
                         })
                         .collect();
                     let format_string = format_specs.join(" ");
-                    
-                    let arg_strs: Vec<String> = args.iter()
+
+                    let arg_strs: Vec<String> = args
+                        .iter()
                         .map(|(expr, ty)| {
                             let expr_str = self.emit_expr_internal(expr);
                             // For string literals, emit directly
@@ -1312,7 +1345,10 @@ use pyo3::types::PyList;
                             } else if matches!(ty, Type::Any) {
                                 // For Type::Any (serde_json::Value), use display_value helper
                                 // to handle Value::String without quotes
-                                format!("bridge::display_value(&{})", expr_str.trim_start_matches('&'))
+                                format!(
+                                    "bridge::display_value(&{})",
+                                    expr_str.trim_start_matches('&')
+                                )
                             } else if expr_str.starts_with('&') {
                                 expr_str
                             } else {
@@ -1320,47 +1356,57 @@ use pyo3::types::PyList;
                             }
                         })
                         .collect();
-                    
+
                     format!("println!(\"{}\", {})", format_string, arg_strs.join(", "))
                 }
             }
             IrExpr::Unwrap(inner) => {
                 format!("{}.unwrap()", self.emit_expr_internal(inner))
             }
-            IrExpr::PyO3Call { module, method, args } => {
+            IrExpr::PyO3Call {
+                module,
+                method,
+                args,
+            } => {
                 // エイリアス → 実モジュール名に変換（静的マッピング）
                 let real_module = match module.as_str() {
                     "np" => "numpy".to_string(),
                     "pd" => "pandas".to_string(),
                     _ => {
                         // pyo3_imports から逆引き
-                        self.pyo3_imports.iter()
+                        self.pyo3_imports
+                            .iter()
                             .find(|(_, alias)| alias == module)
                             .map(|(real, _)| real.clone())
                             .unwrap_or_else(|| module.clone())
                     }
                 };
-                
-                let target = format!("{}.{}", real_module, method);
+
+                let target = format!("{real_module}.{method}");
                 let mut arg_evals = Vec::new();
                 for (i, arg) in args.iter().enumerate() {
-                    arg_evals.push(format!("let _arg_{} = {};", i, self.emit_expr_internal(arg)));
+                    arg_evals.push(format!(
+                        "let _arg_{} = {};",
+                        i,
+                        self.emit_expr_internal(arg)
+                    ));
                 }
 
-                let args_str: Vec<String> = (0..args.len())
-                    .map(|i| format!("_arg_{}", i))
-                    .collect();
-                
+                let args_str: Vec<String> =
+                    (0..args.len()).map(|i| format!("_arg_{i}")).collect();
+
                 // 方式選択テーブルを参照
-                use crate::bridge::module_table::{get_import_mode, generate_native_code, ImportMode};
-                
+                use crate::bridge::module_table::{
+                    generate_native_code, get_import_mode, ImportMode,
+                };
+
                 match get_import_mode(&target) {
                     ImportMode::Native => {
                         // Rust ネイティブ実装 - PyO3/Resident 不要
                         // Native の場合は、既に arg_evals があると困るかもしれないが、
                         // Expression block にすれば OK
                         let native_code = generate_native_code(&target, &args_str)
-                            .unwrap_or_else(|| format!("/* Native not implemented: {} */", target));
+                            .unwrap_or_else(|| format!("/* Native not implemented: {target} */"));
                         format!(
                             "{{\n{}    {}\n}}",
                             arg_evals.join("\n    ") + "\n",
@@ -1371,7 +1417,7 @@ use pyo3::types::PyList;
                         // 常駐プロセス方式が必要
                         self.needs_resident = true;
                         let args_json: Vec<String> = (0..args.len())
-                            .map(|i| format!("serde_json::json!(_arg_{})", i))
+                            .map(|i| format!("serde_json::json!(_arg_{i})"))
                             .collect();
                         format!(
                             "{{\n{}    py_bridge.call_json::<serde_json::Value>(\"{}\", &[{}]).unwrap()\n}}",

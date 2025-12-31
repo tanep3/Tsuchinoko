@@ -203,7 +203,7 @@ pub enum Stmt {
     Import {
         module: String,
         alias: Option<String>,
-        items: Option<Vec<String>>,  // for "from x import a, b, c"
+        items: Option<Vec<String>>, // for "from x import a, b, c"
     },
     /// Break statement
     Break,

@@ -34,19 +34,20 @@ pub fn get_import_mode(target: &str) -> ImportMode {
 
 /// Native 実装済みかどうか
 fn is_native_target(target: &str) -> bool {
-    matches!(target,
+    matches!(
+        target,
         // math モジュール（Rust の f64 メソッドで実装）
-        "math.sqrt" |
-        "math.sin" |
-        "math.cos" |
-        "math.tan" |
-        "math.floor" |
-        "math.ceil" |
-        "math.abs" |
-        "math.pow" |
-        "math.log" |
-        "math.log10" |
-        "math.exp"
+        "math.sqrt"
+            | "math.sin"
+            | "math.cos"
+            | "math.tan"
+            | "math.floor"
+            | "math.ceil"
+            | "math.abs"
+            | "math.pow"
+            | "math.log"
+            | "math.log10"
+            | "math.exp"
     )
 }
 
@@ -62,48 +63,48 @@ pub fn generate_native_code(target: &str, args: &[String]) -> Option<String> {
     match target {
         "math.sqrt" => {
             let arg = args.first()?;
-            Some(format!("({} as f64).sqrt()", arg))
+            Some(format!("({arg} as f64).sqrt()"))
         }
         "math.sin" => {
             let arg = args.first()?;
-            Some(format!("({} as f64).sin()", arg))
+            Some(format!("({arg} as f64).sin()"))
         }
         "math.cos" => {
             let arg = args.first()?;
-            Some(format!("({} as f64).cos()", arg))
+            Some(format!("({arg} as f64).cos()"))
         }
         "math.tan" => {
             let arg = args.first()?;
-            Some(format!("({} as f64).tan()", arg))
+            Some(format!("({arg} as f64).tan()"))
         }
         "math.floor" => {
             let arg = args.first()?;
-            Some(format!("({} as f64).floor()", arg))
+            Some(format!("({arg} as f64).floor()"))
         }
         "math.ceil" => {
             let arg = args.first()?;
-            Some(format!("({} as f64).ceil()", arg))
+            Some(format!("({arg} as f64).ceil()"))
         }
         "math.abs" => {
             let arg = args.first()?;
-            Some(format!("({} as f64).abs()", arg))
+            Some(format!("({arg} as f64).abs()"))
         }
         "math.pow" => {
             let base = args.first()?;
             let exp = args.get(1)?;
-            Some(format!("({} as f64).powf({} as f64)", base, exp))
+            Some(format!("({base} as f64).powf({exp} as f64)"))
         }
         "math.log" => {
             let arg = args.first()?;
-            Some(format!("({} as f64).ln()", arg))
+            Some(format!("({arg} as f64).ln()"))
         }
         "math.log10" => {
             let arg = args.first()?;
-            Some(format!("({} as f64).log10()", arg))
+            Some(format!("({arg} as f64).log10()"))
         }
         "math.exp" => {
             let arg = args.first()?;
-            Some(format!("({} as f64).exp()", arg))
+            Some(format!("({arg} as f64).exp()"))
         }
         _ => None,
     }

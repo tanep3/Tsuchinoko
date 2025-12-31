@@ -23,7 +23,7 @@ pub struct PythonParser;
 fn strip_trailing_comment(line: &str) -> &str {
     let mut in_string = false;
     let mut string_char = ' ';
-    
+
     for (i, c) in line.char_indices() {
         if in_string {
             if c == string_char {
@@ -31,7 +31,7 @@ fn strip_trailing_comment(line: &str) -> &str {
             }
             continue;
         }
-        
+
         match c {
             '"' | '\'' => {
                 in_string = true;
@@ -110,11 +110,11 @@ fn preprocess_multiline(source: &str) -> String {
 /// Returns None for typing/dataclasses/typing_extensions (skip these)
 fn parse_import_line(line: &str) -> Result<Option<Stmt>, TsuchinokoError> {
     let line = line.trim();
-    
+
     // "import module as alias" or "import module"
     if line.starts_with("import ") {
         let rest = line.strip_prefix("import ").unwrap().trim();
-        
+
         // Check for "as" alias
         let (module, alias) = if let Some(as_pos) = rest.find(" as ") {
             let module = rest[..as_pos].trim();
@@ -123,39 +123,36 @@ fn parse_import_line(line: &str) -> Result<Option<Stmt>, TsuchinokoError> {
         } else {
             (rest.to_string(), None)
         };
-        
+
         // Skip standard library / typing imports
         if is_skip_import(&module) {
             return Ok(None);
         }
-        
+
         return Ok(Some(Stmt::Import {
             module,
             alias,
             items: None,
         }));
     }
-    
+
     // "from module import x, y, z"
     if line.starts_with("from ") {
         let rest = line.strip_prefix("from ").unwrap().trim();
-        
+
         // Find "import" keyword
         if let Some(import_pos) = rest.find(" import ") {
             let module = rest[..import_pos].trim().to_string();
             let items_str = rest[import_pos + 8..].trim();
-            
+
             // Skip standard library / typing imports
             if is_skip_import(&module) {
                 return Ok(None);
             }
-            
+
             // Parse items (comma separated)
-            let items: Vec<String> = items_str
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect();
-            
+            let items: Vec<String> = items_str.split(',').map(|s| s.trim().to_string()).collect();
+
             return Ok(Some(Stmt::Import {
                 module,
                 alias: None,
@@ -163,7 +160,7 @@ fn parse_import_line(line: &str) -> Result<Option<Stmt>, TsuchinokoError> {
             }));
         }
     }
-    
+
     Ok(None)
 }
 
@@ -171,8 +168,14 @@ fn parse_import_line(line: &str) -> Result<Option<Stmt>, TsuchinokoError> {
 fn is_skip_import(module: &str) -> bool {
     matches!(
         module,
-        "typing" | "typing_extensions" | "dataclasses" | "__future__"
-            | "collections" | "abc" | "functools" | "itertools"
+        "typing"
+            | "typing_extensions"
+            | "dataclasses"
+            | "__future__"
+            | "collections"
+            | "abc"
+            | "functools"
+            | "itertools"
     )
 }
 
@@ -192,10 +195,14 @@ pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
             i += 1;
             continue;
         }
-        
+
         // Skip top-level docstrings (""" or ''')
         if line.starts_with("\"\"\"") || line.starts_with("'''") {
-            let quote = if line.starts_with("\"\"\"") { "\"\"\"" } else { "'''" };
+            let quote = if line.starts_with("\"\"\"") {
+                "\"\"\""
+            } else {
+                "'''"
+            };
             // Check if docstring ends on the same line
             if line.len() > 3 && line[3..].contains(quote) {
                 i += 1;
@@ -212,7 +219,7 @@ pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
             }
             continue;
         }
-        
+
         // Parse import statements
         if line.starts_with("import ") || line.starts_with("from ") {
             if let Some(stmt) = parse_import_line(line)? {
@@ -469,18 +476,26 @@ fn parse_class_body(
             i += consumed;
             continue;
         }
-        
+
         // Skip docstrings (""" or ''')
         if line_trim.starts_with("\"\"\"") || line_trim.starts_with("'''") {
             // Single-line docstring: """..."""
-            if (line_trim.starts_with("\"\"\"") && line_trim.ends_with("\"\"\"") && line_trim.len() > 6)
-                || (line_trim.starts_with("'''") && line_trim.ends_with("'''") && line_trim.len() > 6)
+            if (line_trim.starts_with("\"\"\"")
+                && line_trim.ends_with("\"\"\"")
+                && line_trim.len() > 6)
+                || (line_trim.starts_with("'''")
+                    && line_trim.ends_with("'''")
+                    && line_trim.len() > 6)
             {
                 i += 1;
                 continue;
             }
             // Multi-line docstring
-            let end_marker = if line_trim.starts_with("\"\"\"") { "\"\"\"" } else { "'''" };
+            let end_marker = if line_trim.starts_with("\"\"\"") {
+                "\"\"\""
+            } else {
+                "'''"
+            };
             i += 1;
             while i < lines.len() && !lines[i].trim().ends_with(end_marker) {
                 i += 1;
@@ -1281,9 +1296,9 @@ fn try_parse_assignment(line: &str, line_num: usize) -> Result<Option<Stmt>, Tsu
             .enumerate()
             .map(|(i, s)| {
                 let trimmed = s.trim();
-                if trimmed.starts_with('*') {
+                if let Some(stripped) = trimmed.strip_prefix('*') {
                     starred_index = Some(i);
-                    trimmed[1..].to_string() // Remove * prefix
+                    stripped.to_string()
                 } else {
                     trimmed.to_string()
                 }
@@ -1291,7 +1306,11 @@ fn try_parse_assignment(line: &str, line_num: usize) -> Result<Option<Stmt>, Tsu
             .collect();
 
         let value = parse_expr(right, line_num)?;
-        return Ok(Some(Stmt::TupleAssign { targets, value, starred_index }));
+        return Ok(Some(Stmt::TupleAssign {
+            targets,
+            value,
+            starred_index,
+        }));
     }
 
     // Check for index assignment: arr[i] = val

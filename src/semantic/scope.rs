@@ -48,11 +48,11 @@ impl Scope {
     pub fn lookup(&self, name: &str) -> Option<&VarInfo> {
         self.variables.get(name)
     }
-    
+
     pub fn narrow_type(&mut self, name: &str, ty: Type) {
         self.narrowed_types.insert(name.to_string(), ty);
     }
-    
+
     pub fn get_narrowed_type(&self, name: &str) -> Option<&Type> {
         self.narrowed_types.get(name)
     }
@@ -105,14 +105,14 @@ impl ScopeStack {
         }
         None
     }
-    
+
     /// Narrow the type of a variable in the current scope
     pub fn narrow_type(&mut self, name: &str, ty: Type) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.narrow_type(name, ty);
         }
     }
-    
+
     /// Get the effective type of a variable (considering narrowing)
     pub fn get_effective_type(&self, name: &str) -> Option<Type> {
         // First check if the type is narrowed in any scope (most recent first)

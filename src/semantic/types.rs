@@ -171,7 +171,12 @@ impl Type {
 
     /// Check if this type is compatible with another type (considering Unknown as wildcard)
     pub fn is_compatible_with(&self, other: &Type) -> bool {
-        if self == other || *self == Type::Unknown || *other == Type::Unknown || *self == Type::Any || *other == Type::Any {
+        if self == other
+            || *self == Type::Unknown
+            || *other == Type::Unknown
+            || *self == Type::Any
+            || *other == Type::Any
+        {
             return true;
         }
 

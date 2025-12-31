@@ -137,7 +137,7 @@ pub enum IrExpr {
     },
     /// Print statement with type information for format selection
     Print {
-        args: Vec<(IrExpr, Type)>,  // (expression, type) pairs
+        args: Vec<(IrExpr, Type)>, // (expression, type) pairs
     },
     /// Function call
     Call {
@@ -146,8 +146,8 @@ pub enum IrExpr {
     },
     /// PyO3 module method call (np.array(...), pd.DataFrame(...))
     PyO3Call {
-        module: String,   // e.g., "np", "pd"
-        method: String,   // e.g., "array", "mean"
+        module: String, // e.g., "np", "pd"
+        method: String, // e.g., "array", "mean"
         args: Vec<IrExpr>,
     },
     /// Unwrap Option<T> to T (generates .unwrap())
@@ -242,7 +242,7 @@ pub enum IrExpr {
     /// Convert serde_json::Value to concrete type (for PyO3 returns)
     JsonConversion {
         target: Box<IrExpr>,
-        convert_to: String,  // "f64", "i64", "String", "bool"
+        convert_to: String, // "f64", "i64", "String", "bool"
     },
 }
 

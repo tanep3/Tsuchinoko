@@ -27,6 +27,7 @@ pub struct SemanticAnalyzer {
     /// Variables that need to be mutable (targets of AugAssign or reassignment)
     mutable_vars: std::collections::HashSet<String>,
     /// Function name -> Vec of (param_name, param_type, default_expr, is_variadic) for default arg handling
+    #[allow(clippy::type_complexity)]
     func_param_info: std::collections::HashMap<String, Vec<(String, Type, Option<Expr>, bool)>>,
     /// PyO3 imports: (module, alias) - e.g., ("numpy", "np")
     pyo3_imports: Vec<(String, String)>,
@@ -170,8 +171,17 @@ impl SemanticAnalyzer {
 
         if main_body.is_empty() {
             // Check if we have a standalone def main() that should be our entry point
-            if let Some(pos) = other_decls.iter().position(|n| matches!(n, IrNode::FuncDecl { name, .. } if name == "main")) {
-                if let IrNode::FuncDecl { name: _, params, ret, body } = other_decls.remove(pos) {
+            if let Some(pos) = other_decls
+                .iter()
+                .position(|n| matches!(n, IrNode::FuncDecl { name, .. } if name == "main"))
+            {
+                if let IrNode::FuncDecl {
+                    name: _,
+                    params,
+                    ret,
+                    body,
+                } = other_decls.remove(pos)
+                {
                     other_decls.push(IrNode::FuncDecl {
                         name: "__top_level__".to_string(),
                         params,
@@ -462,16 +472,24 @@ impl SemanticAnalyzer {
             // Analyze with mutability info
             let ir_node = self.analyze_stmt_with_mut_info(stmt, &reassigned_vars, &mutated_vars)?;
             ir_nodes.push(ir_node);
-            
+
             // Check for early return narrowing AFTER processing the if statement
             // `if x is None: return ...` - after this, x is guaranteed to be non-None
-            if let Stmt::If { condition, then_body, elif_clauses, else_body } = stmt {
+            if let Stmt::If {
+                condition,
+                then_body,
+                elif_clauses,
+                else_body,
+            } = stmt
+            {
                 if else_body.is_none() && elif_clauses.is_empty() {
                     // Check if then_body contains only a return statement
-                    let is_early_return = then_body.len() == 1 && matches!(&then_body[0], Stmt::Return { .. });
-                    
+                    let is_early_return =
+                        then_body.len() == 1 && matches!(&then_body[0], Stmt::Return { .. });
+
                     if is_early_return {
-                        if let Some((var_name, is_none_check)) = self.extract_none_check(condition) {
+                        if let Some((var_name, is_none_check)) = self.extract_none_check(condition)
+                        {
                             if is_none_check {
                                 // `if x is None: return ...` pattern detected
                                 // After this statement, x is guaranteed to be non-None
@@ -550,25 +568,26 @@ impl SemanticAnalyzer {
                 // If type hint is concrete (String, Int, etc.) but expression is Type::Any,
                 // wrap with JsonConversion for proper type conversion
                 let expr_ty = self.infer_type(value);
-                let ir_value = if matches!(expr_ty, Type::Any) && !matches!(ty, Type::Any | Type::Unknown) {
-                    let conversion = match &ty {
-                        Type::Float => Some("f64"),
-                        Type::Int => Some("i64"),
-                        Type::String => Some("String"),
-                        Type::Bool => Some("bool"),
-                        _ => None,
-                    };
-                    if let Some(conv) = conversion {
-                        IrExpr::JsonConversion {
-                            target: Box::new(ir_value),
-                            convert_to: conv.to_string(),
+                let ir_value =
+                    if matches!(expr_ty, Type::Any) && !matches!(ty, Type::Any | Type::Unknown) {
+                        let conversion = match &ty {
+                            Type::Float => Some("f64"),
+                            Type::Int => Some("i64"),
+                            Type::String => Some("String"),
+                            Type::Bool => Some("bool"),
+                            _ => None,
+                        };
+                        if let Some(conv) = conversion {
+                            IrExpr::JsonConversion {
+                                target: Box::new(ir_value),
+                                convert_to: conv.to_string(),
+                            }
+                        } else {
+                            ir_value
                         }
                     } else {
                         ir_value
-                    }
-                } else {
-                    ir_value
-                };
+                    };
 
                 if is_reassign {
                     Ok(IrNode::Assign {
@@ -650,25 +669,26 @@ impl SemanticAnalyzer {
                 // If type hint is concrete (String, Int, etc.) but expression is Type::Any,
                 // wrap with JsonConversion for proper type conversion
                 let expr_ty = self.infer_type(value);
-                let ir_value = if matches!(expr_ty, Type::Any) && !matches!(ty, Type::Any | Type::Unknown) {
-                    let conversion = match &ty {
-                        Type::Float => Some("f64"),
-                        Type::Int => Some("i64"),
-                        Type::String => Some("String"),
-                        Type::Bool => Some("bool"),
-                        _ => None,
-                    };
-                    if let Some(conv) = conversion {
-                        IrExpr::JsonConversion {
-                            target: Box::new(ir_value),
-                            convert_to: conv.to_string(),
+                let ir_value =
+                    if matches!(expr_ty, Type::Any) && !matches!(ty, Type::Any | Type::Unknown) {
+                        let conversion = match &ty {
+                            Type::Float => Some("f64"),
+                            Type::Int => Some("i64"),
+                            Type::String => Some("String"),
+                            Type::Bool => Some("bool"),
+                            _ => None,
+                        };
+                        if let Some(conv) = conversion {
+                            IrExpr::JsonConversion {
+                                target: Box::new(ir_value),
+                                convert_to: conv.to_string(),
+                            }
+                        } else {
+                            ir_value
                         }
                     } else {
                         ir_value
-                    }
-                } else {
-                    ir_value
-                };
+                    };
 
                 if is_reassign {
                     Ok(IrNode::Assign {
@@ -721,12 +741,10 @@ impl SemanticAnalyzer {
                     }))
                 } else {
                     let final_index = match current_target_ty {
-                        Type::List(_) | Type::Tuple(_) | Type::String => {
-                            IrExpr::Cast {
-                                target: Box::new(ir_index),
-                                ty: "usize".to_string(),
-                            }
-                        }
+                        Type::List(_) | Type::Tuple(_) | Type::String => IrExpr::Cast {
+                            target: Box::new(ir_index),
+                            ty: "usize".to_string(),
+                        },
                         _ => ir_index,
                     };
 
@@ -754,12 +772,16 @@ impl SemanticAnalyzer {
                     value: Box::new(ir_value),
                 })
             }
-            Stmt::TupleAssign { targets, value, starred_index } => {
+            Stmt::TupleAssign {
+                targets,
+                value,
+                starred_index,
+            } => {
                 // Handle star unpacking: head, *tail = values
                 if let Some(star_idx) = starred_index {
                     let ir_value = self.analyze_expr(value)?;
                     let value_ty = self.infer_type(value);
-                    
+
                     // Get the element type from the source value
                     let elem_ty = match &value_ty {
                         Type::List(inner) => *inner.clone(),
@@ -772,20 +794,20 @@ impl SemanticAnalyzer {
                         }
                         _ => Type::Unknown,
                     };
-                    
+
                     // Generate individual assignments
                     let mut nodes = Vec::new();
-                    
+
                     for (i, target) in targets.iter().enumerate() {
                         if i == *star_idx {
                             // This is the starred target (e.g., *tail)
                             // Generate: let tail = values[1..].to_vec();
                             let start_idx = i;
                             let end_offset = targets.len() - i - 1;
-                            
+
                             let ty = Type::List(Box::new(elem_ty.clone()));
                             self.scope.define(target, ty.clone(), false);
-                            
+
                             // Build slice expression: values[start_idx..]  or values[start_idx..len-end_offset]
                             let slice_expr = if end_offset == 0 {
                                 // values[i..].to_vec()
@@ -821,7 +843,7 @@ impl SemanticAnalyzer {
                                     args: vec![],
                                 }
                             };
-                            
+
                             nodes.push(IrNode::VarDecl {
                                 name: target.clone(),
                                 ty,
@@ -831,7 +853,7 @@ impl SemanticAnalyzer {
                         } else if i < *star_idx {
                             // Before starred: head = values[i]
                             self.scope.define(target, elem_ty.clone(), false);
-                            
+
                             let index_expr = IrExpr::Index {
                                 target: Box::new(ir_value.clone()),
                                 index: Box::new(IrExpr::Cast {
@@ -839,7 +861,7 @@ impl SemanticAnalyzer {
                                     ty: "usize".to_string(),
                                 }),
                             };
-                            
+
                             nodes.push(IrNode::VarDecl {
                                 name: target.clone(),
                                 ty: elem_ty.clone(),
@@ -851,7 +873,7 @@ impl SemanticAnalyzer {
                             // values[len - (targets.len() - i)]
                             let offset_from_end = targets.len() - i;
                             self.scope.define(target, elem_ty.clone(), false);
-                            
+
                             let len_call = IrExpr::MethodCall {
                                 target: Box::new(ir_value.clone()),
                                 method: "len".to_string(),
@@ -868,7 +890,7 @@ impl SemanticAnalyzer {
                                     ty: "usize".to_string(),
                                 }),
                             };
-                            
+
                             nodes.push(IrNode::VarDecl {
                                 name: target.clone(),
                                 ty: elem_ty.clone(),
@@ -877,10 +899,10 @@ impl SemanticAnalyzer {
                             });
                         }
                     }
-                    
+
                     return Ok(IrNode::Sequence(nodes));
                 }
-                
+
                 // Regular tuple unpacking (no star)
                 // Determine if this is a declaration or assignment based on first variable
                 // (Simplified logic: if first var is not in scope, assume declaration for all)
@@ -1007,14 +1029,14 @@ impl SemanticAnalyzer {
                         .as_ref()
                         .map(|th| self.type_from_hint(th))
                         .unwrap_or(Type::Unknown);
-                    
+
                     // For variadic parameters (*args), wrap in Vec<T>
                     let ty = if p.variadic {
                         Type::List(Box::new(base_ty))
                     } else {
                         base_ty
                     };
-                    
+
                     // In Rust, we pass objects by reference.
                     // So if ty is List/Dict/Struct/String/Tuple, the function signature should reflect Ref(ty).
                     // If the parameter is mutated in the function body, use MutRef instead.
@@ -1190,7 +1212,8 @@ impl SemanticAnalyzer {
                     } else {
                         // In `if x is not None:` then block, x is definitely NOT None
                         // Narrow to inner type
-                        if let Some(Type::Optional(inner)) = self.scope.get_effective_type(var_name) {
+                        if let Some(Type::Optional(inner)) = self.scope.get_effective_type(var_name)
+                        {
                             self.scope.narrow_type(var_name, *inner.clone());
                         }
                     }
@@ -1208,7 +1231,9 @@ impl SemanticAnalyzer {
                         if *is_none_in_then {
                             // In `if x is None:` else block, x is definitely NOT None
                             // Narrow to inner type
-                            if let Some(Type::Optional(inner)) = self.scope.lookup(var_name).map(|v| v.ty.clone()) {
+                            if let Some(Type::Optional(inner)) =
+                                self.scope.lookup(var_name).map(|v| v.ty.clone())
+                            {
                                 self.scope.narrow_type(var_name, *inner);
                             }
                         }
@@ -1329,7 +1354,7 @@ impl SemanticAnalyzer {
                         } else {
                             ir
                         };
-                        
+
                         // If returning a string literal to a String return type, add .to_string()
                         let ir = if matches!(self.current_return_type, Some(Type::String))
                             && matches!(ir, IrExpr::StringLit(_))
@@ -1535,12 +1560,17 @@ impl SemanticAnalyzer {
             }
             Stmt::Break => Ok(IrNode::Break),
             Stmt::Continue => Ok(IrNode::Continue),
-            Stmt::Import { module, alias, items: _ } => {
+            Stmt::Import {
+                module,
+                alias,
+                items: _,
+            } => {
                 // Register PyO3 imports for numpy/pandas
                 let effective_name = alias.as_ref().unwrap_or(module);
                 if module == "numpy" || module == "pandas" {
                     // Track this import for PyO3 wrapping
-                    self.pyo3_imports.push((module.clone(), effective_name.clone()));
+                    self.pyo3_imports
+                        .push((module.clone(), effective_name.clone()));
                 }
                 // For now, return an empty sequence (no IR generated)
                 // The PyO3 wrapper will be added in emit phase
@@ -1677,21 +1707,23 @@ impl SemanticAnalyzer {
                         return Ok(IrExpr::Print { args: typed_args? });
                     }
                 }
-                
+
                 // Handle PyO3 module calls: np.array(...) -> np.call_method1("array", (...))?
                 if let Expr::Attribute { value, attr } = func.as_ref() {
                     if let Expr::Ident(module_alias) = value.as_ref() {
                         // Check if this is a PyO3 import alias
-                        let is_pyo3_module = self.pyo3_imports.iter()
+                        let is_pyo3_module = self
+                            .pyo3_imports
+                            .iter()
                             .any(|(_, alias)| alias == module_alias);
-                        
+
                         if is_pyo3_module {
                             // Convert to PyO3 call
                             let ir_args: Vec<IrExpr> = args
                                 .iter()
                                 .map(|a| self.analyze_expr(a))
                                 .collect::<Result<Vec<_>, _>>()?;
-                            
+
                             // Return structured PyO3 call
                             return Ok(IrExpr::PyO3Call {
                                 module: module_alias.clone(),
@@ -1701,36 +1733,44 @@ impl SemanticAnalyzer {
                         }
                     }
                 }
-                
+
                 // Handle static method calls: ClassName.method() -> ClassName::method()
                 // Handle static method calls: ClassName.method() -> ClassName::method()
                 if let Expr::Attribute { value, attr } = func.as_ref() {
                     if let Expr::Ident(class_name) = value.as_ref() {
                         // Check if this is a known struct (class)
                         if self.struct_field_types.contains_key(class_name)
-                            || class_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                            || class_name
+                                .chars()
+                                .next()
+                                .map(|c| c.is_uppercase())
+                                .unwrap_or(false)
                         {
                             // Static method call: ClassName.method() -> ClassName::method()
                             let ir_args: Vec<IrExpr> = args
                                 .iter()
                                 .map(|a| self.analyze_expr(a))
                                 .collect::<Result<Vec<_>, _>>()?;
-                            
+
                             // Generate raw code for static call with ::
                             let args_str = if ir_args.is_empty() {
                                 String::new()
                             } else {
                                 // We'll handle args in the IrExpr::Call
                                 return Ok(IrExpr::Call {
-                                    func: Box::new(IrExpr::RawCode(format!("{}::{}", class_name, attr))),
+                                    func: Box::new(IrExpr::RawCode(format!(
+                                        "{class_name}::{attr}"
+                                    ))),
                                     args: ir_args,
                                 });
                             };
-                            return Ok(IrExpr::RawCode(format!("{}::{}({})", class_name, attr, args_str)));
+                            return Ok(IrExpr::RawCode(format!(
+                                "{class_name}::{attr}({args_str})"
+                            )));
                         }
                     }
                 }
-                
+
                 // Handle math module functions: math.sqrt(x) -> x.sqrt()
                 if let Expr::Attribute { value, attr } = func.as_ref() {
                     if let Expr::Ident(module) = value.as_ref() {
@@ -1745,7 +1785,7 @@ impl SemanticAnalyzer {
                                 "acos" => Some("acos"),
                                 "atan" => Some("atan"),
                                 "exp" => Some("exp"),
-                                "log" => Some("ln"),  // Python log() = Rust ln()
+                                "log" => Some("ln"), // Python log() = Rust ln()
                                 "log10" => Some("log10"),
                                 "log2" => Some("log2"),
                                 "abs" => Some("abs"),
@@ -1754,7 +1794,7 @@ impl SemanticAnalyzer {
                                 "round" => Some("round"),
                                 _ => None,
                             };
-                            
+
                             if let Some(rust_method) = method {
                                 let ir_arg = self.analyze_expr(&args[0])?;
                                 return Ok(IrExpr::MethodCall {
@@ -1767,14 +1807,18 @@ impl SemanticAnalyzer {
                         // math.pi, math.e - constants
                         if module == "math" && args.is_empty() && kwargs.is_empty() {
                             match attr.as_str() {
-                                "pi" => return Ok(IrExpr::RawCode("std::f64::consts::PI".to_string())),
-                                "e" => return Ok(IrExpr::RawCode("std::f64::consts::E".to_string())),
+                                "pi" => {
+                                    return Ok(IrExpr::RawCode("std::f64::consts::PI".to_string()))
+                                }
+                                "e" => {
+                                    return Ok(IrExpr::RawCode("std::f64::consts::E".to_string()))
+                                }
                                 _ => {}
                             }
                         }
                     }
                 }
-                
+
                 if let Expr::Attribute { value: _, attr } = func.as_ref() {
                     if attr == "items" && args.is_empty() && kwargs.is_empty() {
                         // Convert .items() to .iter() for HashMap
@@ -1798,33 +1842,33 @@ impl SemanticAnalyzer {
                     Expr::Ident(name) => {
                         if let Some(param_info) = self.func_param_info.get(name) {
                             // Check if the last (or any) parameter is variadic
-                            let variadic_idx = param_info.iter().position(|(_, _, _, is_variadic)| *is_variadic);
-                            
+                            let variadic_idx = param_info
+                                .iter()
+                                .position(|(_, _, _, is_variadic)| *is_variadic);
+
                             if let Some(var_idx) = variadic_idx {
                                 // Handle variadic function call
                                 let non_variadic_count = var_idx;
                                 let mut result: Vec<Expr> = Vec::new();
-                                
+
                                 // Fill non-variadic positional args
                                 for (i, arg) in args.iter().enumerate() {
                                     if i < non_variadic_count {
                                         result.push(arg.clone());
                                     }
                                 }
-                                
+
                                 // Fill defaults for missing non-variadic args
                                 for i in result.len()..non_variadic_count {
                                     if let Some((_, _, Some(default_expr), _)) = param_info.get(i) {
                                         result.push(default_expr.clone());
                                     }
                                 }
-                                
+
                                 // Collect remaining args for the variadic parameter
-                                let variadic_args: Vec<Expr> = args.iter()
-                                    .skip(non_variadic_count)
-                                    .cloned()
-                                    .collect();
-                                
+                                let variadic_args: Vec<Expr> =
+                                    args.iter().skip(non_variadic_count).cloned().collect();
+
                                 // Check if there's a single starred argument (e.g., *nums)
                                 // In this case, pass it directly instead of wrapping in a list
                                 if variadic_args.len() == 1 {
@@ -1835,7 +1879,10 @@ impl SemanticAnalyzer {
                                         // Single non-starred arg - wrap in list
                                         result.push(Expr::List(variadic_args));
                                     }
-                                } else if variadic_args.iter().any(|a| matches!(a, Expr::Starred(_))) {
+                                } else if variadic_args
+                                    .iter()
+                                    .any(|a| matches!(a, Expr::Starred(_)))
+                                {
                                     // Mixed starred and non-starred - for now, just use the args
                                     // TODO: Handle more complex cases
                                     for arg in variadic_args {
@@ -1849,7 +1896,7 @@ impl SemanticAnalyzer {
                                     // Create a List expression for the variadic args
                                     result.push(Expr::List(variadic_args));
                                 }
-                                
+
                                 result
                             } else {
                                 // Non-variadic function - normal handling
@@ -1875,7 +1922,9 @@ impl SemanticAnalyzer {
                                 // Fill defaults for any remaining None values
                                 for (i, slot) in result.iter_mut().enumerate() {
                                     if slot.is_none() {
-                                        if let Some((_, _, Some(default_expr), _)) = param_info.get(i) {
+                                        if let Some((_, _, Some(default_expr), _)) =
+                                            param_info.get(i)
+                                        {
                                             *slot = Some(default_expr.clone());
                                         }
                                     }
@@ -2089,12 +2138,10 @@ impl SemanticAnalyzer {
                 }
 
                 let final_index = match current_target_ty {
-                    Type::List(_) | Type::Tuple(_) | Type::String => {
-                        IrExpr::Cast {
-                            target: Box::new(ir_index),
-                            ty: "usize".to_string(),
-                        }
-                    }
+                    Type::List(_) | Type::Tuple(_) | Type::String => IrExpr::Cast {
+                        target: Box::new(ir_index),
+                        ty: "usize".to_string(),
+                    },
                     _ => ir_index,
                 };
 
@@ -2253,7 +2300,7 @@ impl SemanticAnalyzer {
                     for (k, v) in entries.iter().skip(1) {
                         let kt = self.infer_type(k);
                         let vt = self.infer_type(v);
-                        
+
                         if kt != final_key_type {
                             final_key_type = Type::Any;
                         }
@@ -2419,7 +2466,9 @@ impl SemanticAnalyzer {
                 // Check for PyO3 module calls first: np.*, pd.*, etc.
                 if let Expr::Attribute { value, .. } = func.as_ref() {
                     if let Expr::Ident(module_alias) = value.as_ref() {
-                        let is_pyo3_module = self.pyo3_imports.iter()
+                        let is_pyo3_module = self
+                            .pyo3_imports
+                            .iter()
                             .any(|(_, alias)| alias == module_alias);
                         if is_pyo3_module {
                             return Type::Any;
@@ -2508,10 +2557,14 @@ impl SemanticAnalyzer {
                         (Type::String, "join") => return Type::String,
                         _ => {}
                     }
-                    
+
                     // Check if this is a PyO3 module call (np.array, pd.DataFrame, etc.)
                     if let Expr::Ident(module_alias) = value.as_ref() {
-                        if self.pyo3_imports.iter().any(|(_, alias)| alias == module_alias) {
+                        if self
+                            .pyo3_imports
+                            .iter()
+                            .any(|(_, alias)| alias == module_alias)
+                        {
                             return Type::Any;
                         }
                     }
@@ -2576,29 +2629,37 @@ impl SemanticAnalyzer {
             _ => Type::Unknown,
         }
     }
-    
+
     /// Extract None check pattern from condition expression
     /// Returns (variable_name, is_none_check) where is_none_check is true for `x is None`, false for `x is not None`
+    #[allow(clippy::only_used_in_recursion)]
     fn extract_none_check(&self, condition: &Expr) -> Option<(String, bool)> {
         match condition {
             Expr::BinOp { left, op, right } => {
                 match op {
                     AstBinOp::Is => {
                         // x is None
-                        if let (Expr::Ident(var), Expr::NoneLiteral) = (left.as_ref(), right.as_ref()) {
+                        if let (Expr::Ident(var), Expr::NoneLiteral) =
+                            (left.as_ref(), right.as_ref())
+                        {
                             return Some((var.clone(), true));
                         }
                     }
                     AstBinOp::IsNot => {
                         // x is not None
-                        if let (Expr::Ident(var), Expr::NoneLiteral) = (left.as_ref(), right.as_ref()) {
+                        if let (Expr::Ident(var), Expr::NoneLiteral) =
+                            (left.as_ref(), right.as_ref())
+                        {
                             return Some((var.clone(), false));
                         }
                     }
                     _ => {}
                 }
             }
-            Expr::UnaryOp { op: AstUnaryOp::Not, operand } => {
+            Expr::UnaryOp {
+                op: AstUnaryOp::Not,
+                operand,
+            } => {
                 // not (x is None) => equivalent to x is not None
                 if let Some((var, is_none)) = self.extract_none_check(operand) {
                     return Some((var, !is_none));
@@ -2653,7 +2714,7 @@ impl SemanticAnalyzer {
         while let Type::Ref(inner) = resolved_actual {
             resolved_actual = *inner;
         }
-        
+
         // 1.5 Auto-Some: T -> Option<T>
         // If expected is Option<T> and actual is T (not None), wrap in Some()
         if let Type::Optional(inner_expected) = &resolved_target {
@@ -2671,7 +2732,7 @@ impl SemanticAnalyzer {
                 } else {
                     ir_arg
                 };
-                
+
                 // Wrap the argument in Some()
                 return IrExpr::Call {
                     func: Box::new(IrExpr::Var("Some".to_string())),

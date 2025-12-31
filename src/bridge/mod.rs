@@ -36,7 +36,7 @@ impl PythonBridge {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .map_err(|e| format!("Failed to spawn Python worker: {}", e))?;
+            .map_err(|e| format!("Failed to spawn Python worker: {e}"))?;
 
         Ok(Self {
             process,
@@ -47,23 +47,23 @@ impl PythonBridge {
     /// リクエストを送信してレスポンスを受信
     fn send_request(&mut self, request: serde_json::Value) -> Result<serde_json::Value, String> {
         // リクエスト送信
-        let stdin = self.process.stdin.as_mut()
-            .ok_or("Failed to get stdin")?;
-        writeln!(stdin, "{}", request.to_string())
-            .map_err(|e| format!("Failed to write to stdin: {}", e))?;
-        stdin.flush()
-            .map_err(|e| format!("Failed to flush stdin: {}", e))?;
+        let stdin = self.process.stdin.as_mut().ok_or("Failed to get stdin")?;
+        writeln!(stdin, "{request}")
+            .map_err(|e| format!("Failed to write to stdin: {e}"))?;
+        stdin
+            .flush()
+            .map_err(|e| format!("Failed to flush stdin: {e}"))?;
 
         // レスポンス受信
-        let stdout = self.process.stdout.as_mut()
-            .ok_or("Failed to get stdout")?;
+        let stdout = self.process.stdout.as_mut().ok_or("Failed to get stdout")?;
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
-        reader.read_line(&mut line)
-            .map_err(|e| format!("Failed to read from stdout: {}", e))?;
+        reader
+            .read_line(&mut line)
+            .map_err(|e| format!("Failed to read from stdout: {e}"))?;
 
-        let response: serde_json::Value = serde_json::from_str(&line)
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
+        let response: serde_json::Value =
+            serde_json::from_str(&line).map_err(|e| format!("Failed to parse response: {e}"))?;
 
         if response["ok"].as_bool() == Some(true) {
             Ok(response["result"].clone())
@@ -72,9 +72,13 @@ impl PythonBridge {
         }
     }
 
-    fn call_raw(&mut self, target: &str, args: &[serde_json::Value]) -> Result<serde_json::Value, String> {
+    fn call_raw(
+        &mut self,
+        target: &str,
+        args: &[serde_json::Value],
+    ) -> Result<serde_json::Value, String> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        
+
         let request = serde_json::json!({
             "id": id,
             "op": "call",
@@ -88,45 +92,76 @@ impl PythonBridge {
     /// i64 を返す呼び出し
     pub fn call_i64(&mut self, target: &str, args: &[serde_json::Value]) -> Result<i64, String> {
         let result = self.call_raw(target, args)?;
-        result.as_i64().ok_or_else(|| format!("Expected i64, got: {}", result))
+        result
+            .as_i64()
+            .ok_or_else(|| format!("Expected i64, got: {result}"))
     }
 
     /// f64 を返す呼び出し
     pub fn call_f64(&mut self, target: &str, args: &[serde_json::Value]) -> Result<f64, String> {
         let result = self.call_raw(target, args)?;
-        result.as_f64().ok_or_else(|| format!("Expected f64, got: {}", result))
+        result
+            .as_f64()
+            .ok_or_else(|| format!("Expected f64, got: {result}"))
     }
 
     /// String を返す呼び出し
-    pub fn call_string(&mut self, target: &str, args: &[serde_json::Value]) -> Result<String, String> {
+    pub fn call_string(
+        &mut self,
+        target: &str,
+        args: &[serde_json::Value],
+    ) -> Result<String, String> {
         let result = self.call_raw(target, args)?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| format!("Expected string, got: {}", result))
+        result
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| format!("Expected string, got: {result}"))
     }
 
     /// Vec<i64> を返す呼び出し
-    pub fn call_vec_i64(&mut self, target: &str, args: &[serde_json::Value]) -> Result<Vec<i64>, String> {
+    pub fn call_vec_i64(
+        &mut self,
+        target: &str,
+        args: &[serde_json::Value],
+    ) -> Result<Vec<i64>, String> {
         let result = self.call_raw(target, args)?;
-        result.as_array()
-            .ok_or_else(|| format!("Expected array, got: {}", result))?
+        result
+            .as_array()
+            .ok_or_else(|| format!("Expected array, got: {result}"))?
             .iter()
-            .map(|v| v.as_i64().ok_or_else(|| format!("Expected i64 in array, got: {}", v)))
+            .map(|v| {
+                v.as_i64()
+                    .ok_or_else(|| format!("Expected i64 in array, got: {v}"))
+            })
             .collect()
     }
 
     /// Vec<f64> を返す呼び出し
-    pub fn call_vec_f64(&mut self, target: &str, args: &[serde_json::Value]) -> Result<Vec<f64>, String> {
+    pub fn call_vec_f64(
+        &mut self,
+        target: &str,
+        args: &[serde_json::Value],
+    ) -> Result<Vec<f64>, String> {
         let result = self.call_raw(target, args)?;
-        result.as_array()
-            .ok_or_else(|| format!("Expected array, got: {}", result))?
+        result
+            .as_array()
+            .ok_or_else(|| format!("Expected array, got: {result}"))?
             .iter()
-            .map(|v| v.as_f64().ok_or_else(|| format!("Expected f64 in array, got: {}", v)))
+            .map(|v| {
+                v.as_f64()
+                    .ok_or_else(|| format!("Expected f64 in array, got: {v}"))
+            })
             .collect()
     }
 
     /// JSON を返す呼び出し（汎用、自動変換サポート）
-    pub fn call_json<T: serde::de::DeserializeOwned>(&mut self, target: &str, args: &[serde_json::Value]) -> Result<T, String> {
+    pub fn call_json<T: serde::de::DeserializeOwned>(
+        &mut self,
+        target: &str,
+        args: &[serde_json::Value],
+    ) -> Result<T, String> {
         let result = self.call_raw(target, args)?;
-        serde_json::from_value(result).map_err(|e| format!("Type conversion failed: {}", e))
+        serde_json::from_value(result).map_err(|e| format!("Type conversion failed: {e}"))
     }
 
     /// ハンドルに対してメソッドを呼び出し、結果を返す
@@ -146,7 +181,8 @@ impl PythonBridge {
         });
 
         let result = self.send_request(request)?;
-        serde_json::from_value(result).map_err(|e| format!("Method result type conversion failed: {}", e))
+        serde_json::from_value(result)
+            .map_err(|e| format!("Method result type conversion failed: {e}"))
     }
 
     /// ping テスト
@@ -157,22 +193,22 @@ impl PythonBridge {
             "op": "ping",
         });
 
-        let stdin = self.process.stdin.as_mut()
-            .ok_or("Failed to get stdin")?;
-        writeln!(stdin, "{}", request.to_string())
-            .map_err(|e| format!("Failed to write to stdin: {}", e))?;
-        stdin.flush()
-            .map_err(|e| format!("Failed to flush stdin: {}", e))?;
+        let stdin = self.process.stdin.as_mut().ok_or("Failed to get stdin")?;
+        writeln!(stdin, "{request}")
+            .map_err(|e| format!("Failed to write to stdin: {e}"))?;
+        stdin
+            .flush()
+            .map_err(|e| format!("Failed to flush stdin: {e}"))?;
 
-        let stdout = self.process.stdout.as_mut()
-            .ok_or("Failed to get stdout")?;
+        let stdout = self.process.stdout.as_mut().ok_or("Failed to get stdout")?;
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
-        reader.read_line(&mut line)
-            .map_err(|e| format!("Failed to read from stdout: {}", e))?;
+        reader
+            .read_line(&mut line)
+            .map_err(|e| format!("Failed to read from stdout: {e}"))?;
 
-        let response: serde_json::Value = serde_json::from_str(&line)
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
+        let response: serde_json::Value =
+            serde_json::from_str(&line).map_err(|e| format!("Failed to parse response: {e}"))?;
 
         Ok(response["ok"].as_bool() == Some(true) && response["result"] == "pong")
     }
@@ -186,11 +222,13 @@ impl PythonBridge {
         });
 
         if let Some(stdin) = self.process.stdin.as_mut() {
-            let _ = writeln!(stdin, "{}", request.to_string());
+            let _ = writeln!(stdin, "{request}");
             let _ = stdin.flush();
         }
 
-        self.process.wait().map_err(|e| format!("Failed to wait for worker: {}", e))?;
+        self.process
+            .wait()
+            .map_err(|e| format!("Failed to wait for worker: {e}"))?;
         Ok(())
     }
 }
