@@ -4,8 +4,9 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.1.0-green.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/Version-1.2.0-green.svg)](Cargo.toml)
 [![Coverage](https://img.shields.io/badge/Python構文カバレッジ-~60%25-blue.svg)](#機能ドキュメント)
+[![Changelog](https://img.shields.io/badge/History-変更履歴-blue.svg)](CHANGELOG_jp.md)
 
 [🇺🇸 English version](README.md)
 
@@ -32,6 +33,7 @@ Tsuchinokoは汎用的なPythonコンパイラではありません。以下の�
 - **基本クラス対応** - `__init__`とメソッドを持つ構造体的クラス
 - **リスト内包表記** - `[x*2 for x in nums if x > 0]`
 - **スマート型推論** - Auto-Ref, Auto-Deref, 最小`mut`
+- **常駐プロセス方式** - `numpy` / `pandas` 等をIPC経由でサポート
 
 ## ベンチマーク 🚀
 
@@ -69,6 +71,17 @@ tnk your_file.py --project my_project
 # チェックのみ（出力なし）
 tnk your_file.py --check
 ```
+
+> [!NOTE]
+> 外部ライブラリ (`import`) を使用する場合は、`--project` オプションを使用して依存関係を含む Cargo プロジェクトを作成してください。
+
+> [!IMPORTANT]
+> **venv 環境が必要です**: Resident Worker (NumPy/Pandas等) を使用するコードは、Python の仮想環境内で `tnk` を実行し、生成されたバイナリも同じ venv 環境内で実行してください。
+> ```bash
+> source venv/bin/activate
+> tnk script.py --project my_app
+> cd my_app && cargo run --release
+> ```
 
 ### 入力例 (Python)
 

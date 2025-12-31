@@ -6,6 +6,7 @@
 //! # Author
 //! Tane Channel Technology
 
+pub mod bridge;
 pub mod emitter;
 pub mod error;
 pub mod ir;

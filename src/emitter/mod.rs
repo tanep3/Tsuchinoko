@@ -36,8 +36,14 @@ pub struct RustEmitter {
     struct_defs: HashMap<String, Vec<String>>,
     /// Whether PyO3 is needed for this file
     uses_pyo3: bool,
+    /// Whether resident Python process is needed
+    needs_resident: bool,
     /// PyO3 imports: (module, alias) - e.g., ("numpy", "np")
     pyo3_imports: Vec<(String, String)>,
+    /// Functions that require py_bridge argument
+    resident_functions: std::collections::HashSet<String>,
+    /// Whether we are currently emitting inside a function wrapper that already has py_bridge
+    is_inside_resident_func: bool,
 }
 
 /// Convert camelCase/PascalCase to snake_case
@@ -68,7 +74,10 @@ impl RustEmitter {
             indent: 0,
             struct_defs: HashMap::new(),
             uses_pyo3: false,
+            needs_resident: false,
             pyo3_imports: Vec::new(),
+            resident_functions: std::collections::HashSet::new(),
+            is_inside_resident_func: false,
         }
     }
 
@@ -76,7 +85,18 @@ impl RustEmitter {
         // If we're at indent 0, this is a top-level call
         let is_top_level = self.indent == 0;
         
-        // Emit all nodes
+        // Pass 1: Collect all PyO3Import nodes first (top-level only)
+        if is_top_level {
+            for node in nodes {
+                if let IrNode::PyO3Import { module, alias } = node {
+                    self.uses_pyo3 = true;
+                    let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
+                    self.pyo3_imports.push((module.clone(), effective_alias));
+                }
+            }
+        }
+        
+        // Pass 2: Emit all nodes
         let code: Vec<String> = nodes
             .iter()
             .map(|n| self.emit_node(n))
@@ -85,15 +105,25 @@ impl RustEmitter {
         
         let body = code.join("\n");
         
-        // Only add PyO3 prelude at top level
-        if is_top_level && self.uses_pyo3 {
-            self.emit_pyo3_wrapped(&body)
+        // Only add wrapper at top level
+        if is_top_level {
+            if self.needs_resident {
+                // py_bridge ランタイムを挿入（常駐プロセス方式）
+                self.emit_resident_wrapped(&body)
+            } else if self.uses_pyo3 {
+                // Native で全て対応できたが import があった場合
+                // → PyO3 不要、シンプルな Rust コード
+                body
+            } else {
+                body
+            }
         } else {
             body
         }
     }
     
-    /// Wrap the code with PyO3 setup
+    /// Wrap the code with PyO3 setup (legacy, kept for reference)
+    #[allow(dead_code)]
     fn emit_pyo3_wrapped(&self, body: &str) -> String {
         format!(
             r#"use pyo3::prelude::*;
@@ -111,6 +141,43 @@ use pyo3::types::PyList;
         )
     }
     
+    /// Wrap the code with py_bridge runtime (常駐プロセス方式)
+    fn emit_resident_wrapped(&self, body: &str) -> String {
+        format!(
+            r#"use tsuchinoko::bridge::PythonBridge;
+
+{body}
+
+// Note: This code uses the PythonBridge for calling Python libraries.
+// Make sure Python is installed and the required libraries are available.
+// The Python worker process will be started automatically.
+"#
+        )
+    }
+    
+    /// Generate main with py_bridge initialization (常駐プロセス方式)
+    fn emit_resident_main(&self, user_body: &str) -> String {
+        // Indent user body
+        let indented_body: String = user_body.lines()
+            .map(|line| {
+                if line.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("    {}", line)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        
+        format!(
+            r#"fn main() {{
+    let mut py_bridge = tsuchinoko::bridge::PythonBridge::new()
+        .expect("Failed to start Python worker");
+    
+{indented_body}
+}}"#
+        )
+    }
     /// Generate PyO3-wrapped main function
     fn emit_pyo3_main(&self, user_body: &str) -> String {
         // Generate import statements for each PyO3 module
@@ -183,7 +250,12 @@ use pyo3::types::PyList;
                 init,
             } => {
                 let mut_kw = if *mutable { "mut " } else { "" };
-                let ty_str = ty.to_rust_string();
+                let ty_annotation = if ty.contains_unknown() {
+                    "".to_string()
+                } else {
+                    format!(": {}", ty.to_rust_string())
+                };
+
                 let snake_name = to_snake_case(name);
                 match init {
                     Some(expr) => {
@@ -199,10 +271,10 @@ use pyo3::types::PyList;
                         } else {
                             self.emit_expr_no_outer_parens(expr)
                         };
-                        format!("{indent}let {mut_kw}{snake_name}: {ty_str} = {expr_str};")
+                        format!("{indent}let {mut_kw}{snake_name}{ty_annotation} = {expr_str};")
                     }
                     None => {
-                        format!("{indent}let {mut_kw}{snake_name}: {ty_str};")
+                        format!("{indent}let {mut_kw}{snake_name}{ty_annotation};")
                     }
                 }
             }
@@ -264,22 +336,22 @@ use pyo3::types::PyList;
                     })
                     .collect();
 
-                // We typically don't need types in the pattern if they are inferred from the right side,
-                // but since we resolved them, we could add type annotation to the let binding if we wanted.
-                // However, syntax "let (x, y): (int, int) = ..." works.
-                // For simplicity, let's try to trust inference or just emit the pattern "let (mut x, y) = ..."
-                // Adding full type annotation for tuple destructuring "let (x, y): (T1, T2)" is also good.
+                let has_unknown = targets.iter().any(|(_, t, _)| t.contains_unknown());
 
-                let types_str: Vec<_> =
-                    targets.iter().map(|(_, t, _)| t.to_rust_string()).collect();
+                if has_unknown {
+                    format!("{}let ({}) = {};", indent, vars_str.join(", "), self.emit_expr(value))
+                } else {
+                    let types_str: Vec<_> =
+                        targets.iter().map(|(_, t, _)| t.to_rust_string()).collect();
 
-                format!(
-                    "{}let ({}) : ({}) = {};",
-                    indent,
-                    vars_str.join(", "),
-                    types_str.join(", "),
-                    self.emit_expr(value)
-                )
+                    format!(
+                        "{}let ({}) : ({}) = {};",
+                        indent,
+                        vars_str.join(", "),
+                        types_str.join(", "),
+                        self.emit_expr(value)
+                    )
+                }
             }
             IrNode::FuncDecl {
                 name,
@@ -287,32 +359,105 @@ use pyo3::types::PyList;
                 ret,
                 body,
             } => {
-                let snake_name = if name == "main" {
-                    name.clone()
+                // Check if this is the auto-generated top-level function -> "fn main"
+                if name == "__top_level__" {
+                    self.indent += 1;
+                    
+                    // needs_resident をバックアップ
+                    let needs_resident_backup = self.needs_resident;
+                    self.needs_resident = false;
+                    
+                    let body_str = self.emit_nodes(body);
+                    
+                    // 関数内で resident 機能が使われたか
+                    let func_needs_resident = self.needs_resident;
+                    
+                    // グローバルステートを復元（OR演算）
+                    self.needs_resident = needs_resident_backup || func_needs_resident;
+                    
+                    self.indent -= 1;
+                    
+                    if func_needs_resident || self.needs_resident { // self.needs_resident is global state (might be set by previous nodes)
+                        self.emit_resident_main(&body_str)
+                    } else {
+                         // Regular main (no resident needed)
+                         // Even if no resident features are used, if we are in a mode where resident is required by others, or simply default main?
+                         // If this comes from semantic top level wrap, it's our entry point.
+                         format!("fn main() {{\n{}\n}}", body_str)
+                    }
                 } else {
-                    to_snake_case(name)
-                };
-                let params_str: Vec<_> = params
-                    .iter()
-                    .map(|(n, t)| format!("{}: {}", to_snake_case(n), t.to_rust_string()))
-                    .collect();
-                let ret_str = ret.to_rust_string();
+                    let snake_name = if name == "main" {
+                        // Rename user's 'main' to 'main_py' to avoid conflict with Rust's entry point
+                        "main_py".to_string()
+                    } else {
+                        to_snake_case(name)
+                    };
+                    
+                    // needs_resident をバックアップして、この関数内での変化を追跡
+                    let needs_resident_backup = self.needs_resident;
+                    self.needs_resident = false;
+                    
+                    self.indent += 1;
+                    let body_str = self.emit_nodes(body);
+                    self.indent -= 1;
+                    
+                    let func_needs_resident = self.needs_resident;
+                    
+                    // グローバルステートを復元（OR演算）
+                    self.needs_resident = needs_resident_backup || func_needs_resident;
+                    
+                    // 通常のパラメータ
+                    let mut params_str: Vec<_> = params
+                        .iter()
+                        .map(|(n, t)| format!("{}: {}", to_snake_case(n), t.to_rust_string()))
+                        .collect();
+                    
+                    // Hack: If return type is Unit but body has Return with value, force return type to Value
+                    let has_value_return = body.iter().any(|n| {
+                         if let IrNode::Return(Some(_)) = n { true } else { false }
+                    });
+                    
+                    let effective_ret = if *ret == Type::Unit && has_value_return {
+                        &Type::Any // Will be emitted as serde_json::Value
+                    } else {
+                        ret
+                    };
 
-                self.indent += 1;
-                let body_str = self.emit_nodes(body);
-                self.indent -= 1;
+                    // Re-generate body if resident features are needed, to ensure correct args passing
+                    let final_body_str = if func_needs_resident {
+                        // Re-emit with flag set
+                        self.indent += 1;
+                        let backup_flag = self.is_inside_resident_func;
+                        // ONLY set this if we are NOT in the special __top_level__ (fn main)
+                        // Actually, this block is the "else" (non-__top_level__) path, so it's always true.
+                        self.is_inside_resident_func = true;
+                        
+                        // Reset needs_resident just in case, though we know it will become true
+                        self.needs_resident = false;
+                        let s = self.emit_nodes(body);
+                        
+                        self.is_inside_resident_func = backup_flag;
+                        self.indent -= 1;
+                        s
+                    } else {
+                        body_str
+                    };
 
-                // Special handling for main when PyO3 is used
-                if name == "main" && self.uses_pyo3 {
-                    self.emit_pyo3_main(&body_str)
-                } else {
+                    let ret_str = effective_ret.to_rust_string();
+
+                    if func_needs_resident {
+                        params_str.insert(0, "py_bridge: &mut tsuchinoko::bridge::PythonBridge".to_string());
+                        // 関数を resident_functions セットに登録
+                        self.resident_functions.insert(snake_name.clone());
+                    }
+                    
                     format!(
                         "{}fn {}({}) -> {} {{\n{}\n{}}}",
                         indent,
                         snake_name,
                         params_str.join(", "),
                         ret_str,
-                        body_str,
+                        final_body_str,
                         indent
                     )
                 }
@@ -716,6 +861,20 @@ use pyo3::types::PyList;
                     };
 
                     if let Some(name) = func_name_opt {
+                        // Handle native type casts: int(x), float(x), str(x)
+                        if name == "int" && args.len() == 1 {
+                             let arg_str = self.emit_expr_no_outer_parens(&args[0]);
+                             return format!("({} as i64)", arg_str);
+                        }
+                        if name == "float" && args.len() == 1 {
+                             let arg_str = self.emit_expr_no_outer_parens(&args[0]);
+                             return format!("({} as f64)", arg_str);
+                        }
+                        if name == "str" && args.len() == 1 {
+                             let arg_str = self.emit_expr_no_outer_parens(&args[0]);
+                             return format!("{}.to_string()", arg_str);
+                        }
+
                         // Check if this is a struct constructor
                         let _defs = self.struct_defs.clone(); // Clone expensive map? Or name lookups?
                                                               // Better: Get field names and clone result
@@ -734,7 +893,7 @@ use pyo3::types::PyList;
                                 .collect();
                             format!("{} {{ {} }}", name, field_inits.join(", "))
                         } else {
-                            let args_str: Vec<_> = args
+                            let mut args_str: Vec<_> = args
                                 .iter()
                                 .map(|a| self.emit_expr_no_outer_parens(a))
                                 .collect();
@@ -746,9 +905,30 @@ use pyo3::types::PyList;
                                 || name.contains("::")
                             {
                                 name.clone()
+                            } else if name == "main" {
+                                "main_py".to_string()
                             } else {
                                 to_snake_case(&name)
                             };
+                            // resident_functions に登録された関数なら py_bridge を追加
+                            if self.resident_functions.contains(&func_name) {
+                                self.needs_resident = true;
+                                if self.indent > 0 && name != "main" && name != "__top_level__" {
+                                    // Make sure we check if we are actually INSIDE a function that has py_bridge argument.
+                                    // self.indent > 0 implies inside a block/function.
+                                    // A more robust way is to track "current_function_has_bridge".
+                                    // For now, assuming indent > 0 and not main means we are inside a resident function (because of propagation).
+                                    // BUT, we need to be carefully distinguishes between "inside main" and "inside other resident func".
+                                    // We'll rely on a new field `is_inside_resident_func`.
+                                    if self.is_inside_resident_func {
+                                         args_str.insert(0, "py_bridge".to_string());
+                                    } else {
+                                         args_str.insert(0, "&mut py_bridge".to_string());
+                                    }
+                                } else {
+                                    args_str.insert(0, "&mut py_bridge".to_string());
+                                }
+                            }
                             format!("{}({})", func_name, args_str.join(", "))
                         }
                     } else {
@@ -777,25 +957,49 @@ use pyo3::types::PyList;
                 format!("vec![{}]", elems.join(", "))
             }
             IrExpr::Dict {
-                key_type: _,
-                value_type: _,
+                key_type,
+                value_type,
                 entries,
             } => {
+                let use_json = matches!(key_type, Type::Any)
+                    || matches!(value_type, Type::Any);
+
                 if entries.is_empty() {
-                    "std::collections::HashMap::new()".to_string()
+                    if use_json {
+                        "serde_json::json!({})".to_string()
+                    } else {
+                        "std::collections::HashMap::new()".to_string()
+                    }
                 } else {
                     let pairs: Vec<_> = entries
                         .iter()
                         .map(|(k, v)| {
-                            // For string keys, add .to_string()
-                            let key_str = match k {
-                                IrExpr::StringLit(s) => format!("\"{s}\".to_string()"),
-                                _ => self.emit_expr_internal(k),
-                            };
-                            format!("({}, {})", key_str, self.emit_expr_internal(v))
+                            let mut key_str = self.emit_expr_no_outer_parens(k);
+                            let mut val_str = self.emit_expr_no_outer_parens(v);
+                            
+                            if !use_json {
+                                // For HashMap, we need owned Strings if the type is String
+                                if matches!(key_type, Type::String) && key_str.starts_with('"') && !key_str.contains(".to_string()") {
+                                    key_str = format!("{}.to_string()", key_str);
+                                }
+                                if matches!(value_type, Type::String) && val_str.starts_with('"') && !val_str.contains(".to_string()") {
+                                    val_str = format!("{}.to_string()", val_str);
+                                }
+                                format!("({}, {})", key_str, val_str)
+                            } else {
+                                format!("{}: {}", key_str, val_str)
+                            }
                         })
                         .collect();
-                    format!("std::collections::HashMap::from([{}])", pairs.join(", "))
+
+                    if use_json {
+                        format!("serde_json::json!({{ {} }})", pairs.join(", "))
+                    } else {
+                        format!(
+                            "std::collections::HashMap::from([{}])",
+                            pairs.join(", ")
+                        )
+                    }
                 }
             }
             IrExpr::FString { parts, values } => {
@@ -1081,18 +1285,46 @@ use pyo3::types::PyList;
                 format!("{}.unwrap()", self.emit_expr(inner))
             }
             IrExpr::PyO3Call { module, method, args } => {
-                if args.is_empty() {
-                    format!("{}.call_method0(\"{}\").unwrap()", module, method)
-                } else {
-                    let args_str: Vec<String> = args.iter()
-                        .map(|a| self.emit_expr(a))
-                        .collect();
-                    format!(
-                        "{}.call_method1(\"{}\", ({},)).unwrap()",
-                        module,
-                        method,
-                        args_str.join(", ")
-                    )
+                // エイリアス → 実モジュール名に変換（静的マッピング）
+                let real_module = match module.as_str() {
+                    "np" => "numpy".to_string(),
+                    "pd" => "pandas".to_string(),
+                    _ => {
+                        // pyo3_imports から逆引き
+                        self.pyo3_imports.iter()
+                            .find(|(_, alias)| alias == module)
+                            .map(|(real, _)| real.clone())
+                            .unwrap_or_else(|| module.clone())
+                    }
+                };
+                
+                
+                let target = format!("{}.{}", real_module, method);
+                let args_str: Vec<String> = args.iter()
+                    .map(|a| self.emit_expr(a))
+                    .collect();
+                
+                // 方式選択テーブルを参照
+                use crate::bridge::module_table::{get_import_mode, generate_native_code, ImportMode};
+                
+                match get_import_mode(&target) {
+                    ImportMode::Native => {
+                        // Rust ネイティブ実装 - PyO3/Resident 不要
+                        generate_native_code(&target, &args_str)
+                            .unwrap_or_else(|| format!("/* Native not implemented: {} */", target))
+                    }
+                    ImportMode::PyO3 | ImportMode::Resident => {
+                        // 常駐プロセス方式が必要
+                        self.needs_resident = true;
+                        let args_json: Vec<String> = args_str.iter()
+                            .map(|a| format!("serde_json::json!({})", a))
+                            .collect();
+                        format!(
+                            "py_bridge.call_json(\"{}\", &[{}]).unwrap()",
+                            target,
+                            args_json.join(", ")
+                        )
+                    }
                 }
             }
         }

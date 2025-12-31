@@ -1,8 +1,8 @@
 # Tsuchinoko 要件定義書
 
 > **著者**: Tane Channel Technology  
-> **バージョン**: 1.1.0  
-> **最終更新**: 2025-12-30
+> **バージョン**: 1.2.0  
+> **最終更新**: 2025-12-31
 
 ---
 
@@ -96,6 +96,14 @@ flowchart LR
 | F-019 | デフォルト引数 | def func x=10 | 高 | 1.1 | ✅ V1.1.0 |
 | F-020 | docstring | 三重クォート文字列をRustコメント変換 | 中 | 1.1 | ✅ V1.1.0 |
 | F-021 | is/is not | None比較に対応 | 中 | 1.1 | ✅ V1.1.0 |
+| F-022 | @dataclass | デコレータ対応、struct 自動生成 | 高 | 1.2 | ✅ V1.2.0 |
+| F-023 | *args | 可変長引数パラメータ | 高 | 1.2 | ✅ V1.2.0 |
+| F-024 | Star unpacking | head, *tail = values | 高 | 1.2 | ✅ V1.2.0 |
+| F-025 | Argument spread | func(*list) 呼び出し | 高 | 1.2 | ✅ V1.2.0 |
+| F-026 | Type narrowing | if x is None / is not None | 中 | 1.2 | ✅ V1.2.0 |
+| F-027 | list.copy() | .to_vec() 変換 | 中 | 1.2 | ✅ V1.2.0 |
+| F-028 | f-string Vec表示 | {:?} 形式で Vec も表示 | 中 | 1.2 | ✅ V1.2.0 |
+| F-029 | Import ブリッジ | トリプルハイブリッド方式 | 高 | 1.2 | 🚧 実装中 |
 
 ### 3.2 サポート対象外
 
@@ -126,6 +134,65 @@ flowchart LR
 - 型ヒント付きタプルのみ変換対応
 - 異種混合は型ヒントで明示必須
 - 型不明の場合はエラー出力
+
+### 3.4 トリプルハイブリッド方式（V1.2.0）
+
+`import` 文を含む Python コードを Rust で動作させるため、3 つの方式を組み合わせる。
+
+```mermaid
+flowchart LR
+    A[target 呼び出し] --> B{方式選択テーブル}
+    B -->|Native| C[自前実装]
+    B -->|PyO3| D[PyO3 呼び出し]
+    B -->|未登録| E[常駐プロセス]
+```
+
+#### 方式選択の粒度
+
+> [!IMPORTANT]
+> **方式選択は target（関数）単位** で行う。モジュール単位ではない。
+
+| 粒度 | 例 | 採用理由 |
+|------|-----|----------|
+| ~~モジュール単位~~ | `math` 全体 | 粗すぎる |
+| **target 単位（採用）** | `math.sqrt`, `random.random` | 柔軟 |
+
+#### 方式選択の優先順位
+
+| 優先度 | 方式 | 説明 | 適用条件 |
+|--------|------|------|----------|
+| 1 | **自前実装** | Rust ネイティブ | テーブルに `Native` 登録済み |
+| 2 | **PyO3** | PyO3 経由 | テーブルに `PyO3` 登録（検証済み関数のみ） |
+| 3 | **常駐プロセス** | Python ワーカー | **未登録（デフォルト fallback）** |
+
+#### 常駐プロセスの fallback 対象
+
+> [!TIP]
+> 常駐プロセスは「import fallback」だけでなく「未サポート構文の避難所」としても機能。
+
+| fallback 対象 | 例 |
+|--------------|-----|
+| 未知の import | `import obscure_library` |
+| 未サポート構文 | `eval()`, 動的属性アクセス |
+
+#### 静的決定と実行時切替
+
+> **決定は静的（コンパイル時）を基本とし、必要に応じて実行時に切替可能とする。**
+
+| CLI フラグ | 効果 |
+|-----------|------|
+| `--force-worker` | 全て常駐プロセスに逃がす |
+| `--disable-pyo3` | PyO3 を使わず常駐プロセスに fallback |
+
+#### 常駐プロセス方式の詳細
+
+詳細は [`proposed_resident_import_process.md`](proposed_resident_import_process.md) を参照。
+
+- Rust バイナリ起動時に Python ワーカーを常駐
+- stdin/stdout で NDJSON 通信
+- 未知のライブラリも「CPython が動く限り動く」
+
+---
 
 ---
 

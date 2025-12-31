@@ -22,6 +22,7 @@ Tsuchinokoトランスパイラが現在サポートしているPython機能の�
 - **Whileループ**
 - **Break/Continue** 文
 - **条件式** (`x if cond else y`)
+- **アーリーリターン** (V1.2.0 改善)
 
 ## 関数
 
@@ -32,7 +33,7 @@ Tsuchinokoトランスパイラが現在サポートしているPython機能の�
 - **Lambda式** (`lambda x: x + 1`)
 - **高階関数** (関数を引数として渡す)
 - **名前付き引数** (`func(name="value")`)
-- **デフォルト引数** (`def func(x=10)`)
+- **デフォルト引数** (`def func(x=10)`) (V1.2.0)
 
 ## データ構造
 
@@ -44,6 +45,7 @@ Tsuchinokoトランスパイラが現在サポートしているPython機能の�
 - **負のインデックス** (`nums[-1]`)
 - **スライス記法** (`[:3]`, `[-3:]`, `[1:n-1]`)
 - **インデックススワップ** (`a[i], a[j] = a[j], a[i]` → `a.swap()`)
+- **リストのコピー** (`l.copy()` → `l.to_vec()`) (V1.2.0)
 
 ## クラス & オブジェクト
 
@@ -51,12 +53,22 @@ Tsuchinokoトランスパイラが現在サポートしているPython機能の�
 - **インスタンス属性** (`self.attr`)
 - **メソッド定義**
 - **静的メソッド** (`@staticmethod`)
+- **Dataclass** (`@dataclass`) (V1.2.0 部分対応)
+
+## 常駐プロセス方式 (Resident Python Worker) (V1.2.0) 🆕
+
+Tsuchinoko V1.2.0 では、Rust への直接変換が困難なライブラリをサポートするために常駐 Python ワーカーを導入しました。
+
+- **NumPy** (`import numpy as np`)
+- **Pandas** (`import pandas as pd`)
+- **SciPy**
+- その他、Python 環境で利用可能なライブラリ（IPC経由）
 
 ## 組み込み関数
 
 - `len()` - 長さ取得
 - `range()` - 数値範囲反復
-- `print()` - コンソール出力
+- `print()` - コンソール出力 (f-string debug `"{x=}"` / `"{:?}"` 対応)
 - `list()` - リスト変換
 - `min()`, `max()` - 最小/最大値
 - `abs()` - 絶対値
@@ -66,6 +78,7 @@ Tsuchinokoトランスパイラが現在サポートしているPython機能の�
 
 - **文字列リテラル** (シングル/ダブルクォート)
 - **F文字列** (`f"Hello {name}"`)
+  - デバッグフォーマット `"{x=}"` / `"{:?}"` 対応 (V1.2.0)
 - **文字列メソッド**: `.upper()`, `.lower()`, `.strip()`, `.split()`, `.join()` など
 
 ## エラー処理
@@ -80,3 +93,9 @@ Tsuchinokoトランスパイラが現在サポートしているPython機能の�
 - **Callable型** (`Callable[[T], U]`)
 - **関数型推論**
 - **自動型強制** (Auto-Ref, Auto-Deref, Auto-Clone)
+- **Type Narrowing** (`if x is None` / `if x is not None`)
+
+## 実験的機能: PyO3 直接連携
+
+> [!NOTE]
+> PyO3 の直接呼び出しも引き続きサポートされますが、互換性のために **Resident Worker** の使用を推奨します。

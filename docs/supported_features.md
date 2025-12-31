@@ -22,6 +22,7 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **While loops**
 - **Break/Continue** statements
 - **Conditional expressions** (`x if cond else y`)
+- **Early Return** handling (refined in v1.2.0)
 
 ## Functions
 
@@ -32,7 +33,7 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Lambda expressions** (`lambda x: x + 1`)
 - **Higher-order functions** (passing functions as arguments)
 - **Named arguments** (`func(name="value")`)
-- **Default argument values** (`def func(x=10)`)
+- **Default argument values** (`def func(x=10)`) (V1.2.0)
 
 ## Data Structures
 
@@ -44,6 +45,7 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Negative indexing** (`nums[-1]`)
 - **Slice notation** (`[:3]`, `[-3:]`, `[1:n-1]`)
 - **Index swap** (`a[i], a[j] = a[j], a[i]` → `a.swap()`)
+- **List copy** (`l.copy()` → `l.to_vec()`) (V1.2.0)
 
 ## Classes & Objects
 
@@ -51,12 +53,22 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Instance attributes** (`self.attr`)
 - **Method definitions**
 - **Static methods** (`@staticmethod`)
+- **Dataclasses** (`@dataclass`) (V1.2.0 Partial)
+
+## Resident Python Worker (V1.2.0) 🆕
+
+Tsuchinoko V1.2.0 introduces a Resident Python Worker to support libraries that are difficult to transpile directly to Rust.
+
+- **NumPy** (`import numpy as np`)
+- **Pandas** (`import pandas as pd`)
+- **SciPy**
+- Any other library accessible in your Python environment via IPC calls.
 
 ## Built-in Functions
 
 - `len()` - get length
 - `range()` - numeric range iteration
-- `print()` - console output
+- `print()` - console output (supports f-string debug `"{x=}"` / `"{:?}"`)
 - `list()` - convert to list
 - `min()`, `max()` - min/max values
 - `abs()` - absolute value
@@ -66,6 +78,7 @@ This document lists all Python features currently supported by Tsuchinoko transp
 
 - **String literals** (single/double quotes)
 - **F-strings** (`f"Hello {name}"`)
+  - Debug format `"{x=}"` / `"{:?}"` supported (V1.2.0)
 - **String methods**: `.upper()`, `.lower()`, `.strip()`, `.split()`, `.join()`, etc.
 
 ## Error Handling
@@ -80,43 +93,9 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Callable types** (`Callable[[T], U]`)
 - **Function type inference**
 - **Automatic type coercion** (Auto-Ref, Auto-Deref, Auto-Clone)
+- **Type Narrowing** (`if x is None` / `if x is not None`)
 
-## V1.2.0 New Features
-
-- **`@dataclass`** decorator (basic support)
-- **Star unpacking** (`head, *tail = values`)
-- **Star args** (`def func(*args)`)
-- **Argument spread** (`func(*list)`)
-- **Import statements** parsing
-- **Type narrowing** (`if x is None` / `if x is not None`)
-
-## PyO3 Integration (Experimental)
-
-> [!WARNING]
-> PyO3 integration is experimental. Compatibility depends on your environment.
-
-- **`tnk -p project`** generates Cargo project with PyO3 dependency
-- **`--pyo3-version`** option to specify PyO3 version
-- **venv must be activated** before running generated binary
-
-### Supported External Libraries (via PyO3)
-
-| Library | Status | Notes |
-|---------|--------|-------|
-| json | ✅ OK | JSON parsing/serialization |
-| math | ✅ OK | Math functions |
-| re | ✅ OK | Regular expressions |
-| datetime | ✅ OK | Date/time handling |
-| os | ✅ OK | OS information |
-
-### Unsupported External Libraries (via PyO3)
-
-| Library | Status | Reason |
-|---------|--------|--------|
-| ctypes | ❌ NG | Conflicts with PyO3 auto-initialize |
-| numpy | ❌ NG | Depends on ctypes |
-| pandas | ❌ NG | Depends on numpy → ctypes |
+## Experimental: PyO3 Direct Integration
 
 > [!NOTE]
-> Libraries that use Python's `ctypes` module cannot work with PyO3's `auto-initialize` feature.
-> This is a known limitation of embedding Python in Rust binaries.
+> Direct PyO3 calls are still supported but the **Resident Worker** is recommended for compatibility.

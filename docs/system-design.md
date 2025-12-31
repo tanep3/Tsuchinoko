@@ -1,8 +1,8 @@
 # Tsuchinoko システム設計書
 
 > **著者**: Tane Channel Technology  
-> **バージョン**: 1.1.0  
-> **最終更新**: 2025-12-30
+> **バージョン**: 1.2.0  
+> **最終更新**: 2025-12-31
 
 ---
 
@@ -88,6 +88,10 @@ tsuchinoko/
 │   ├── emitter/
 │   │   ├── mod.rs
 │   │   └── rust.rs          # Rust出力
+│   ├── bridge/              # V1.2.0: Import ブリッジ
+│   │   ├── mod.rs           # PythonBridge ランタイム
+│   │   ├── module_table.rs  # 方式選択テーブル
+│   │   └── worker.rs        # 埋め込み Python ワーカー
 │   └── error.rs             # エラー定義
 ├── tests/
 │   ├── lexer_tests.rs
@@ -133,7 +137,46 @@ graph TB
     ERR --> THISERR
 ```
 
+### 3.3 bridge モジュール（V1.2.0）
+
+import 文を含む Python コードを Rust で動作させるためのトリプルハイブリッド方式。
+
+```mermaid
+flowchart TB
+    subgraph Bridge["bridge/ Module"]
+        TABLE[module_table.rs]
+        WORKER[worker.rs]
+        RUNTIME[mod.rs]
+    end
+    
+    subgraph Runtime["実行時"]
+        RUST[Rust Binary]
+        PYTHON[Python Worker]
+    end
+    
+    TABLE --> RUNTIME
+    WORKER --> RUNTIME
+    RUNTIME --> RUST
+    RUST <-->|NDJSON| PYTHON
+```
+
+#### 方式選択（target 単位）
+
+| 方式 | 判定条件 | 生成コード例 |
+|------|----------|--------------|
+| Native | `Native` 登録 | `(x as f64).sqrt()` |
+| PyO3 | `PyO3` 登録（検証済み関数のみ） | `py.call_method0("sqrt")` |
+| Resident | **未登録（fallback）** | `py_bridge.call("math.sqrt", &[x])` |
+
+#### fallback 対象
+
+| 対象 | 例 |
+|------|-----|
+| 未知の import | `import obscure_library` |
+| 未サポート構文 | `eval()`, 動的属性 |
+
 ---
+
 
 ## 4. データ構造
 

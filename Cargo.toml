@@ -1,6 +1,6 @@
 [package]
 name = "tsuchinoko"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 authors = ["Tane Channel Technology"]
 description = "Python to Rust transpiler"
@@ -23,6 +23,8 @@ pest_derive = "2.7"
 clap = { version = "4.4", features = ["derive"] }
 thiserror = "1.0"
 anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [dev-dependencies]
 pretty_assertions = "1.4"

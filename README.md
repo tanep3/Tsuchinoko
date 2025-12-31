@@ -4,8 +4,9 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.1.0-green.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/Version-1.2.0-green.svg)](Cargo.toml)
 [![Coverage](https://img.shields.io/badge/Python_Syntax_Coverage-~60%25-blue.svg)](#feature-documentation)
+[![Changelog](https://img.shields.io/badge/History-Changelog-blue.svg)](CHANGELOG.md)
 
 [🇯🇵 日本語版はこちら](README_jp.md)
 
@@ -32,6 +33,7 @@ Tsuchinoko is **not** a general-purpose Python compiler. It is designed to:
 - **Basic Class Support** - Struct-like classes with `__init__` and methods
 - **List Comprehensions** - `[x*2 for x in nums if x > 0]`
 - **Smart Type Inference** - Auto-Ref, Auto-Deref, minimal `mut`
+- **Resident Python Worker** - Supports `numpy` / `pandas` via persistent IPC worker
 
 ## Benchmarks 🚀
 
@@ -69,6 +71,17 @@ tnk your_file.py --project my_project
 # Check only (no output)
 tnk your_file.py --check
 ```
+
+> [!NOTE]
+> If your code uses `import` statements (Resident Worker), use `--project` to generate a valid Cargo project with dependencies.
+
+> [!IMPORTANT]
+> **venv required**: When using the Resident Worker (NumPy/Pandas etc.), run `tnk` within an activated Python virtual environment, and execute the generated binary in the same venv.
+> ```bash
+> source venv/bin/activate
+> tnk script.py --project my_app
+> cd my_app && cargo run --release
+> ```
 
 ### Input Example (Python)
 

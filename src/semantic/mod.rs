@@ -167,9 +167,21 @@ impl SemanticAnalyzer {
             }
         }
 
-        if !main_body.is_empty() {
+        if main_body.is_empty() {
+            // Check if we have a standalone def main() that should be our entry point
+            if let Some(pos) = other_decls.iter().position(|n| matches!(n, IrNode::FuncDecl { name, .. } if name == "main")) {
+                if let IrNode::FuncDecl { name: _, params, ret, body } = other_decls.remove(pos) {
+                    other_decls.push(IrNode::FuncDecl {
+                        name: "__top_level__".to_string(),
+                        params,
+                        ret,
+                        body,
+                    });
+                }
+            }
+        } else {
             other_decls.push(IrNode::FuncDecl {
-                name: "main".to_string(),
+                name: "__top_level__".to_string(),
                 params: vec![],
                 ret: Type::Unit,
                 body: main_body,
@@ -2077,11 +2089,25 @@ impl SemanticAnalyzer {
 
                     ir_entries.push((ir_key, final_val));
                 }
-                let (final_key_type, final_value_type) = if let Some((k, v)) = entries.first() {
-                    (self.infer_type(k), self.infer_type(v))
-                } else {
-                    (Type::Unknown, Type::Unknown)
-                };
+                let mut final_key_type = Type::Unknown;
+                let mut final_value_type = Type::Unknown;
+
+                if let Some((first_k, first_v)) = entries.first() {
+                    final_key_type = self.infer_type(first_k);
+                    final_value_type = self.infer_type(first_v);
+
+                    for (k, v) in entries.iter().skip(1) {
+                        let kt = self.infer_type(k);
+                        let vt = self.infer_type(v);
+                        
+                        if kt != final_key_type {
+                            final_key_type = Type::Any;
+                        }
+                        if vt != final_value_type {
+                            final_value_type = Type::Any;
+                        }
+                    }
+                }
 
                 Ok(IrExpr::Dict {
                     key_type: final_key_type,
@@ -2311,6 +2337,13 @@ impl SemanticAnalyzer {
                         }
                         (Type::String, "join") => return Type::String,
                         _ => {}
+                    }
+                    
+                    // Check if this is a PyO3 module call (np.array, pd.DataFrame, etc.)
+                    if let Expr::Ident(module_alias) = value.as_ref() {
+                        if self.pyo3_imports.iter().any(|(_, alias)| alias == module_alias) {
+                            return Type::Any;
+                        }
                     }
                 }
                 Type::Unknown

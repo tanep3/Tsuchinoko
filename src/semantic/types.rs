@@ -20,6 +20,7 @@ pub enum Type {
     },
     Unit,           // ()
     Struct(String), // User-defined struct
+    Any,            // Dynamic Type (maps to serde_json::Value)
     Unknown,        // Not yet inferred
 }
 
@@ -83,6 +84,7 @@ impl Type {
             {
                 Type::Struct(name.to_string())
             }
+            "Any" | "any" => Type::Any,
             _ => Type::Unknown,
         }
     }
@@ -152,7 +154,8 @@ impl Type {
             }
             Type::Unit => "()".to_string(),
             Type::Struct(name) => name.clone(),
-            Type::Unknown => "_".to_string(),
+            Type::Any => "serde_json::Value".to_string(),
+            Type::Unknown => "serde_json::Value".to_string(),
         }
     }
 
@@ -160,13 +163,13 @@ impl Type {
     pub fn is_copy(&self) -> bool {
         matches!(
             self,
-            Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Ref(_)
+            Type::Int | Type::Float | Type::Bool | Type::Unit | Type::Ref(_) | Type::Any
         )
     }
 
     /// Check if this type is compatible with another type (considering Unknown as wildcard)
     pub fn is_compatible_with(&self, other: &Type) -> bool {
-        if self == other || *self == Type::Unknown || *other == Type::Unknown {
+        if self == other || *self == Type::Unknown || *other == Type::Unknown || *self == Type::Any || *other == Type::Any {
             return true;
         }
 
@@ -202,6 +205,23 @@ impl Type {
                     .zip(p2.iter())
                     .all(|(x, y)| x.is_compatible_with(y))
                     && r1.is_compatible_with(r2)
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if this type or any of its sub-types is Type::Unknown
+    pub fn contains_unknown(&self) -> bool {
+        match self {
+            Type::Unknown => true,
+            Type::List(inner) => inner.contains_unknown(),
+            Type::Tuple(types) => types.iter().any(|t| t.contains_unknown()),
+            Type::Dict(k, v) => k.contains_unknown() || v.contains_unknown(),
+            Type::Optional(inner) => inner.contains_unknown(),
+            Type::Ref(inner) => inner.contains_unknown(),
+            Type::MutRef(inner) => inner.contains_unknown(),
+            Type::Func { params, ret, .. } => {
+                params.iter().any(|t| t.contains_unknown()) || ret.contains_unknown()
             }
             _ => false,
         }
