@@ -9,6 +9,15 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// serde_json::Value を人間が読みやすい形式で表示するヘルパー
+/// Value::String の場合は引用符なしで中身を表示
+pub fn display_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
 /// 埋め込み Python ワーカーコード
 const WORKER_CODE: &str = include_str!("worker.py");
 

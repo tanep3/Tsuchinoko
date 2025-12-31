@@ -1288,6 +1288,42 @@ use pyo3::types::PyList;
             IrExpr::MutReference { target } => {
                 format!("&mut {}", self.emit_expr_internal(target))
             }
+            IrExpr::Print { args } => {
+                // Generate println! with type-aware formatting
+                // Type::Any uses {} (Display), others use {:?} (Debug)
+                if args.is_empty() {
+                    "println!()".to_string()
+                } else {
+                    let format_specs: Vec<&str> = args.iter()
+                        .map(|(_, ty)| {
+                            // Use {} for Type::Any (serde_json::Value) and Type::String
+                            // to avoid escape characters and quotes
+                            if matches!(ty, Type::Any | Type::String) { "{}" } else { "{:?}" }
+                        })
+                        .collect();
+                    let format_string = format_specs.join(" ");
+                    
+                    let arg_strs: Vec<String> = args.iter()
+                        .map(|(expr, ty)| {
+                            let expr_str = self.emit_expr_internal(expr);
+                            // For string literals, emit directly
+                            if let IrExpr::StringLit(s) = expr {
+                                format!("\"{s}\"")
+                            } else if matches!(ty, Type::Any) {
+                                // For Type::Any (serde_json::Value), use display_value helper
+                                // to handle Value::String without quotes
+                                format!("bridge::display_value(&{})", expr_str.trim_start_matches('&'))
+                            } else if expr_str.starts_with('&') {
+                                expr_str
+                            } else {
+                                format!("&{expr_str}")
+                            }
+                        })
+                        .collect();
+                    
+                    format!("println!(\"{}\", {})", format_string, arg_strs.join(", "))
+                }
+            }
             IrExpr::Unwrap(inner) => {
                 format!("{}.unwrap()", self.emit_expr_internal(inner))
             }

@@ -39,9 +39,9 @@ Thumbs.db
 
 # プロジェクト固有
 old_versions/
+.agent/
 
 # Added by cargo
-
 /target
 
 # Transpiler outputs

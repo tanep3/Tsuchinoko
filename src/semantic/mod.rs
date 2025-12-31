@@ -1663,6 +1663,21 @@ impl SemanticAnalyzer {
                 })
             }
             Expr::Call { func, args, kwargs } => {
+                // Handle print() calls with type information for proper formatting
+                if let Expr::Ident(name) = func.as_ref() {
+                    if name == "print" {
+                        let typed_args: Result<Vec<(IrExpr, Type)>, TsuchinokoError> = args
+                            .iter()
+                            .map(|a| {
+                                let ir_arg = self.analyze_expr(a)?;
+                                let ty = self.infer_type(a);
+                                Ok((ir_arg, ty))
+                            })
+                            .collect();
+                        return Ok(IrExpr::Print { args: typed_args? });
+                    }
+                }
+                
                 // Handle PyO3 module calls: np.array(...) -> np.call_method1("array", (...))?
                 if let Expr::Attribute { value, attr } = func.as_ref() {
                     if let Expr::Ident(module_alias) = value.as_ref() {

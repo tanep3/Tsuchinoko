@@ -13,7 +13,8 @@
 ## Overview
 
 Tsuchinoko is a transpiler that converts type-hinted Python code to Rust.
-Write algorithmic logic in Python's readable syntax and gain Rust's safety and performance.
+Write algorithmic logic in Python's readable syntax and gain Rust's safety and performance.  
+Tsuchinoko (ツチノコ) is a legendary snake-like cryptid from Japanese folklore. Like its namesake, this tool transforms one thing (Python) into something unexpected (Rust!).
 
 > **Coverage**: Supports ~60% of Python syntax features (52 features), covering essential constructs for algorithmic programming: variables, operators, control flow, functions, classes, data structures, and error handling.
 

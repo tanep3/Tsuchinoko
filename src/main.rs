@@ -181,6 +181,15 @@ fn generate_bridge_module() -> String {
     code.push_str("const WORKER_CODE: &str = r#####\"\n");
     code.push_str(worker_py);
     code.push_str("\"#####;\n\n");
+    // Add display_value helper function
+    code.push_str("/// Display serde_json::Value in human-readable format\n");
+    code.push_str("/// For Value::String, return the content without quotes\n");
+    code.push_str("pub fn display_value(value: &serde_json::Value) -> String {\n");
+    code.push_str("    match value {\n");
+    code.push_str("        serde_json::Value::String(s) => s.clone(),\n");
+    code.push_str("        other => other.to_string(),\n");
+    code.push_str("    }\n");
+    code.push_str("}\n\n");
     // Add PythonBridge implementation
     code.push_str(r#"/// Python worker communication manager
 pub struct PythonBridge {

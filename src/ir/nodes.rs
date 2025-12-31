@@ -135,6 +135,10 @@ pub enum IrExpr {
         op: IrUnaryOp,
         operand: Box<IrExpr>,
     },
+    /// Print statement with type information for format selection
+    Print {
+        args: Vec<(IrExpr, Type)>,  // (expression, type) pairs
+    },
     /// Function call
     Call {
         func: Box<IrExpr>,
