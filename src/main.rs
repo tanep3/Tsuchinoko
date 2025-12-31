@@ -205,16 +205,7 @@ impl PythonBridge {
         })
     }
 
-    fn call_raw(&mut self, target: &str, args: &[serde_json::Value]) -> Result<serde_json::Value, String> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        
-        let request = serde_json::json!({
-            "id": id,
-            "op": "call",
-            "target": target,
-            "args": args,
-        });
-
+    fn send_request(&mut self, request: serde_json::Value) -> Result<serde_json::Value, String> {
         let stdin = self.process.stdin.as_mut()
             .ok_or("Failed to get stdin")?;
         writeln!(stdin, "{}", request.to_string())
@@ -237,6 +228,18 @@ impl PythonBridge {
         } else {
             Err(format!("Python error: {}", response["error"]))
         }
+    }
+
+    fn call_raw(&mut self, target: &str, args: &[serde_json::Value]) -> Result<serde_json::Value, String> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        let request = serde_json::json!({
+            "id": id,
+            "op": "call",
+            "target": target,
+            "args": args,
+        });
+
+        self.send_request(request)
     }
 
     pub fn call_i64(&mut self, target: &str, args: &[serde_json::Value]) -> Result<i64, String> {
@@ -272,8 +275,28 @@ impl PythonBridge {
             .collect()
     }
 
-    pub fn call_json(&mut self, target: &str, args: &[serde_json::Value]) -> Result<serde_json::Value, String> {
-        self.call_raw(target, args)
+    pub fn call_json<T: serde::de::DeserializeOwned>(&mut self, target: &str, args: &[serde_json::Value]) -> Result<T, String> {
+        let result = self.call_raw(target, args)?;
+        serde_json::from_value(result).map_err(|e| format!("Type conversion failed: {}", e))
+    }
+
+    pub fn call_json_method<T: serde::de::DeserializeOwned>(
+        &mut self,
+        handle: serde_json::Value,
+        method: &str,
+        args: &[serde_json::Value],
+    ) -> Result<T, String> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        let request = serde_json::json!({
+            "id": id,
+            "op": "method",
+            "handle": handle,
+            "method": method,
+            "args": args,
+        });
+
+        let result = self.send_request(request)?;
+        serde_json::from_value(result).map_err(|e| format!("Method result type conversion failed: {}", e))
     }
 
     pub fn shutdown(&mut self) -> Result<(), String> {

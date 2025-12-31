@@ -158,6 +158,7 @@ impl SemanticAnalyzer {
                 | IrNode::StructDef { .. }
                 | IrNode::TypeAlias { .. }
                 | IrNode::ImplBlock { .. }
+                | IrNode::PyO3Import { .. }
                 | IrNode::Sequence(_) => {
                     other_decls.push(node);
                 }
@@ -546,6 +547,29 @@ impl SemanticAnalyzer {
 
                 let ir_value = self.analyze_expr(value)?;
 
+                // If type hint is concrete (String, Int, etc.) but expression is Type::Any,
+                // wrap with JsonConversion for proper type conversion
+                let expr_ty = self.infer_type(value);
+                let ir_value = if matches!(expr_ty, Type::Any) && !matches!(ty, Type::Any | Type::Unknown) {
+                    let conversion = match &ty {
+                        Type::Float => Some("f64"),
+                        Type::Int => Some("i64"),
+                        Type::String => Some("String"),
+                        Type::Bool => Some("bool"),
+                        _ => None,
+                    };
+                    if let Some(conv) = conversion {
+                        IrExpr::JsonConversion {
+                            target: Box::new(ir_value),
+                            convert_to: conv.to_string(),
+                        }
+                    } else {
+                        ir_value
+                    }
+                } else {
+                    ir_value
+                };
+
                 if is_reassign {
                     Ok(IrNode::Assign {
                         target: target.clone(),
@@ -623,6 +647,29 @@ impl SemanticAnalyzer {
 
                 let ir_value = self.analyze_expr(value)?;
 
+                // If type hint is concrete (String, Int, etc.) but expression is Type::Any,
+                // wrap with JsonConversion for proper type conversion
+                let expr_ty = self.infer_type(value);
+                let ir_value = if matches!(expr_ty, Type::Any) && !matches!(ty, Type::Any | Type::Unknown) {
+                    let conversion = match &ty {
+                        Type::Float => Some("f64"),
+                        Type::Int => Some("i64"),
+                        Type::String => Some("String"),
+                        Type::Bool => Some("bool"),
+                        _ => None,
+                    };
+                    if let Some(conv) = conversion {
+                        IrExpr::JsonConversion {
+                            target: Box::new(ir_value),
+                            convert_to: conv.to_string(),
+                        }
+                    } else {
+                        ir_value
+                    }
+                } else {
+                    ir_value
+                };
+
                 if is_reassign {
                     Ok(IrNode::Assign {
                         target: target.clone(),
@@ -652,17 +699,40 @@ impl SemanticAnalyzer {
                 let ir_index = self.analyze_expr(index)?;
                 let ir_value = self.analyze_expr(value)?;
 
+                // For sequence indexing, handle Ref/MutRef types
+                let mut current_target_ty = target_ty.clone();
+                while let Type::Ref(inner) | Type::MutRef(inner) = current_target_ty {
+                    current_target_ty = *inner;
+                }
+
                 // For Dict types, use insert() method instead of index assignment
-                if matches!(target_ty, Type::Dict(_, _)) {
+                if matches!(current_target_ty, Type::Dict(_, _)) {
                     Ok(IrNode::Expr(IrExpr::MethodCall {
                         target: Box::new(ir_target),
                         method: "insert".to_string(),
                         args: vec![ir_index, ir_value],
                     }))
+                } else if matches!(current_target_ty, Type::Any) {
+                    // For Any type, use __setitem__ method call
+                    Ok(IrNode::Expr(IrExpr::PyO3MethodCall {
+                        target: Box::new(ir_target),
+                        method: "__setitem__".to_string(),
+                        args: vec![ir_index, ir_value],
+                    }))
                 } else {
+                    let final_index = match current_target_ty {
+                        Type::List(_) | Type::Tuple(_) | Type::String => {
+                            IrExpr::Cast {
+                                target: Box::new(ir_index),
+                                ty: "usize".to_string(),
+                            }
+                        }
+                        _ => ir_index,
+                    };
+
                     Ok(IrNode::IndexAssign {
                         target: Box::new(ir_target),
-                        index: Box::new(ir_index),
+                        index: Box::new(final_index),
                         value: Box::new(ir_value),
                     })
                 }
@@ -764,7 +834,10 @@ impl SemanticAnalyzer {
                             
                             let index_expr = IrExpr::Index {
                                 target: Box::new(ir_value.clone()),
-                                index: Box::new(IrExpr::IntLit(i as i64)),
+                                index: Box::new(IrExpr::Cast {
+                                    target: Box::new(IrExpr::IntLit(i as i64)),
+                                    ty: "usize".to_string(),
+                                }),
                             };
                             
                             nodes.push(IrNode::VarDecl {
@@ -786,10 +859,13 @@ impl SemanticAnalyzer {
                             };
                             let index_expr = IrExpr::Index {
                                 target: Box::new(ir_value.clone()),
-                                index: Box::new(IrExpr::BinOp {
-                                    left: Box::new(len_call),
-                                    op: IrBinOp::Sub,
-                                    right: Box::new(IrExpr::IntLit(offset_from_end as i64)),
+                                index: Box::new(IrExpr::Cast {
+                                    target: Box::new(IrExpr::BinOp {
+                                        left: Box::new(len_call),
+                                        op: IrBinOp::Sub,
+                                        right: Box::new(IrExpr::IntLit(offset_from_end as i64)),
+                                    }),
+                                    ty: "usize".to_string(),
                                 }),
                             };
                             
@@ -1273,6 +1349,27 @@ impl SemanticAnalyzer {
                                 func: Box::new(IrExpr::Var("Some".to_string())),
                                 args: vec![ir],
                             }))
+                        } else if matches!(ty, Type::Any) {
+                            // Convert Type::Any (serde_json::Value) to expected return type
+                            if let Some(ret_ty) = &self.current_return_type {
+                                let conversion = match ret_ty {
+                                    Type::Float => Some("f64"),
+                                    Type::Int => Some("i64"),
+                                    Type::String => Some("String"),
+                                    Type::Bool => Some("bool"),
+                                    _ => None,
+                                };
+                                if let Some(conv) = conversion {
+                                    Some(Box::new(IrExpr::JsonConversion {
+                                        target: Box::new(ir),
+                                        convert_to: conv.to_string(),
+                                    }))
+                                } else {
+                                    Some(Box::new(ir))
+                                }
+                            } else {
+                                Some(Box::new(ir))
+                            }
                         } else {
                             Some(Box::new(ir))
                         }
@@ -1907,6 +2004,14 @@ impl SemanticAnalyzer {
                             &format!("{}.{}", target_ty.to_rust_string(), method_name),
                         )?;
 
+                        if matches!(target_ty, Type::Any) {
+                            return Ok(IrExpr::PyO3MethodCall {
+                                target: Box::new(ir_target),
+                                method: method_name.to_string(),
+                                args: ir_args,
+                            });
+                        }
+
                         Ok(IrExpr::MethodCall {
                             target: Box::new(ir_target),
                             method: method_name.to_string(),
@@ -1947,6 +2052,40 @@ impl SemanticAnalyzer {
                 Ok(IrExpr::List {
                     elem_type,
                     elements: ir_elements,
+                })
+            }
+            Expr::Index { target, index } => {
+                let ir_target = self.analyze_expr(target)?;
+                let ir_index = self.analyze_expr(index)?;
+
+                // For sequence indexing, ensure the index is cast to usize
+                let target_ty = self.infer_type(target);
+                if matches!(target_ty, Type::Any) {
+                    return Ok(IrExpr::PyO3MethodCall {
+                        target: Box::new(ir_target),
+                        method: "__getitem__".to_string(),
+                        args: vec![ir_index],
+                    });
+                }
+
+                let mut current_target_ty = target_ty.clone();
+                while let Type::Ref(inner) | Type::MutRef(inner) = current_target_ty {
+                    current_target_ty = *inner;
+                }
+
+                let final_index = match current_target_ty {
+                    Type::List(_) | Type::Tuple(_) | Type::String => {
+                        IrExpr::Cast {
+                            target: Box::new(ir_index),
+                            ty: "usize".to_string(),
+                        }
+                    }
+                    _ => ir_index,
+                };
+
+                Ok(IrExpr::Index {
+                    target: Box::new(ir_target),
+                    index: Box::new(final_index),
                 })
             }
             Expr::ListComp {
@@ -2153,14 +2292,6 @@ impl SemanticAnalyzer {
                 // For now, just return the inner expression - the context handles spread
                 Ok(ir_inner)
             }
-            Expr::Index { target, index } => {
-                let ir_target = self.analyze_expr(target)?;
-                let ir_index = self.analyze_expr(index)?;
-                Ok(IrExpr::Index {
-                    target: Box::new(ir_target),
-                    index: Box::new(ir_index),
-                })
-            }
             Expr::Slice { target, start, end } => {
                 // Python slices: nums[:3], nums[-3:], nums[1:len(nums)-1]
                 // Rust equivalents depend on the slice type
@@ -2251,9 +2382,17 @@ impl SemanticAnalyzer {
                 let target_ty = self.infer_type(target);
                 if let Type::List(inner) = target_ty {
                     *inner
-                } else if let Type::Ref(inner) = target_ty {
+                } else if let Type::Ref(inner) | Type::MutRef(inner) = target_ty {
                     if let Type::List(elem) = *inner {
                         *elem
+                    } else if let Type::Tuple(elems) = *inner {
+                        // For tuple ref, we need the specific element type if index is constant
+                        // But for simplicity, if it's mixed, return Unknown
+                        if elems.windows(2).all(|w| w[0] == w[1]) && !elems.is_empty() {
+                            elems[0].clone()
+                        } else {
+                            Type::Unknown
+                        }
                     } else {
                         Type::Unknown
                     }
@@ -2262,6 +2401,22 @@ impl SemanticAnalyzer {
                 }
             }
             Expr::Call { func, args, .. } => {
+                // Check for PyO3 module calls first: np.*, pd.*, etc.
+                if let Expr::Attribute { value, .. } = func.as_ref() {
+                    if let Expr::Ident(module_alias) = value.as_ref() {
+                        let is_pyo3_module = self.pyo3_imports.iter()
+                            .any(|(_, alias)| alias == module_alias);
+                        if is_pyo3_module {
+                            return Type::Any;
+                        }
+                    }
+                    // Methods on Type::Any return Type::Any
+                    let target_ty = self.infer_type(value);
+                    if matches!(target_ty, Type::Any) {
+                        return Type::Any;
+                    }
+                }
+
                 // Try to resolve return type
                 if let Expr::Ident(name) = func.as_ref() {
                     if name == "tuple" || name == "list" {

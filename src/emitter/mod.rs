@@ -155,29 +155,6 @@ use pyo3::types::PyList;
         )
     }
     
-    /// Generate main with py_bridge initialization (常駐プロセス方式)
-    fn emit_resident_main(&self, user_body: &str) -> String {
-        // Indent user body
-        let indented_body: String = user_body.lines()
-            .map(|line| {
-                if line.trim().is_empty() {
-                    String::new()
-                } else {
-                    format!("    {}", line)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        
-        format!(
-            r#"fn main() {{
-    let mut py_bridge = tsuchinoko::bridge::PythonBridge::new()
-        .expect("Failed to start Python worker");
-    
-{indented_body}
-}}"#
-        )
-    }
     /// Generate PyO3-wrapped main function
     fn emit_pyo3_main(&self, user_body: &str) -> String {
         // Generate import statements for each PyO3 module
@@ -201,41 +178,38 @@ use pyo3::types::PyList;
             })
             .collect::<Vec<_>>()
             .join("\n");
+
+        format!(
+            r#"fn main() {{
+    pyo3::prepare_freethreaded_python();
+    pyo3::Python::with_gil(|py| {{
+{imports_str}
+{indented_body}
+    }});
+}}"#
+        )
+    }
+
+    /// Generate main with py_bridge initialization (常駐プロセス方式)
+    fn emit_resident_main(&self, user_body: &str) -> String {
+        // Indent user body
+        let indented_body: String = user_body.lines()
+            .map(|line| {
+                if line.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("    {}", line)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         
         format!(
-            r#"fn main() -> PyResult<()> {{
-    Python::with_gil(|py| {{
-        // venv support - auto-detect from VIRTUAL_ENV (set by 'source venv/bin/activate')
-        if let Ok(venv) = std::env::var("VIRTUAL_ENV") {{
-            let sys = py.import("sys")?;
-            // Try common Python versions
-            for version in &["python3.11", "python3.12", "python3.10", "python3.9"] {{
-                let site_packages = format!("{{}}/lib/{{}}/site-packages", venv, version);
-                if std::path::Path::new(&site_packages).exists() {{
-                    sys.getattr("path")?.call_method1("insert", (0, site_packages))?;
-                    break;
-                }}
-            }}
-        }} else if let Ok(venv) = std::env::var("TSUCHINOKO_VENV") {{
-            // Fallback to TSUCHINOKO_VENV for non-activated usage
-            let sys = py.import("sys")?;
-            for version in &["python3.11", "python3.12", "python3.10", "python3.9"] {{
-                let site_packages = format!("{{}}/lib/{{}}/site-packages", venv, version);
-                if std::path::Path::new(&site_packages).exists() {{
-                    sys.getattr("path")?.call_method1("insert", (0, site_packages))?;
-                    break;
-                }}
-            }}
-        }}
-
-        // Import modules
-{imports_str}
-
-        // User code
+            r#"fn main() {{
+    let mut py_bridge = tsuchinoko::bridge::PythonBridge::new()
+        .expect("Failed to start Python worker");
+    
 {indented_body}
-
-        Ok(())
-    }})
 }}"#
         )
     }
@@ -1152,6 +1126,16 @@ use pyo3::types::PyList;
                 format!("({} as {})", self.emit_expr(target), ty)
             }
             IrExpr::RawCode(code) => code.clone(),
+            IrExpr::JsonConversion { target, convert_to } => {
+                let target_code = self.emit_expr_internal(target);
+                match convert_to.as_str() {
+                    "f64" => format!("{}.as_f64().unwrap()", target_code),
+                    "i64" => format!("{}.as_i64().unwrap()", target_code),
+                    "String" => format!("{}.as_str().unwrap().to_string()", target_code),
+                    "bool" => format!("{}.as_bool().unwrap()", target_code),
+                    _ => target_code,
+                }
+            }
             IrExpr::Tuple(elements) => {
                 let elems: Vec<_> = elements.iter().map(|e| self.emit_expr(e)).collect();
                 format!("({})", elems.join(", "))
@@ -1177,7 +1161,7 @@ use pyo3::types::PyList;
                     }
                 }
                 format!(
-                    "{}[{} as usize]",
+                    "{}[{}]",
                     self.emit_expr(target),
                     self.emit_expr(index)
                 )
@@ -1253,36 +1237,59 @@ use pyo3::types::PyList;
             } => {
                 if args.is_empty() {
                     if method == "len" {
-                        format!("{}.{}() as i64", self.emit_expr(target), method)
+                        format!("{}.{}() as i64", self.emit_expr_internal(target), method)
                     } else if method == "copy" {
                         // Python list.copy() -> Rust .to_vec()
-                        format!("{}.to_vec()", self.emit_expr(target))
+                        format!("{}.to_vec()", self.emit_expr_internal(target))
                     } else {
-                        format!("{}.{}()", self.emit_expr(target), method)
+                        format!("{}.{}()", self.emit_expr_internal(target), method)
                     }
                 } else {
-                    let args_str: Vec<_> = args.iter().map(|a| self.emit_expr(a)).collect();
+                    let args_str: Vec<_> = args.iter().map(|a| self.emit_expr_internal(a)).collect();
                     format!(
                         "{}.{}({})",
-                        self.emit_expr(target),
+                        self.emit_expr_internal(target),
                         method,
                         args_str.join(", ")
                     )
                 }
             }
+            IrExpr::PyO3MethodCall {
+                target,
+                method,
+                args,
+            } => {
+                self.needs_resident = true;
+                let mut arg_evals = Vec::new();
+                for (i, arg) in args.iter().enumerate() {
+                    arg_evals.push(format!("let _arg_{} = {};", i, self.emit_expr_internal(arg)));
+                }
+                
+                let args_json: Vec<String> = (0..args.len())
+                    .map(|i| format!("serde_json::json!(_arg_{})", i))
+                    .collect();
+
+                format!(
+                    "{{\n{}    py_bridge.call_json_method::<serde_json::Value>({}.clone(), {:?}, &[{}]).unwrap()\n}}",
+                    arg_evals.join("\n    ") + "\n",
+                    self.emit_expr_internal(target),
+                    method,
+                    args_json.join(", ")
+                )
+            }
             IrExpr::FieldAccess { target, field } => {
                 // Strip dunder prefix for Rust struct field (Python private -> Rust private convention)
                 let rust_field = field.trim_start_matches("__");
-                format!("{}.{}", self.emit_expr(target), to_snake_case(rust_field))
+                format!("{}.{}", self.emit_expr_internal(target), to_snake_case(rust_field))
             }
             IrExpr::Reference { target } => {
-                format!("&{}", self.emit_expr(target))
+                format!("&{}", self.emit_expr_internal(target))
             }
             IrExpr::MutReference { target } => {
-                format!("&mut {}", self.emit_expr(target))
+                format!("&mut {}", self.emit_expr_internal(target))
             }
             IrExpr::Unwrap(inner) => {
-                format!("{}.unwrap()", self.emit_expr(inner))
+                format!("{}.unwrap()", self.emit_expr_internal(inner))
             }
             IrExpr::PyO3Call { module, method, args } => {
                 // エイリアス → 実モジュール名に変換（静的マッピング）
@@ -1298,10 +1305,14 @@ use pyo3::types::PyList;
                     }
                 };
                 
-                
                 let target = format!("{}.{}", real_module, method);
-                let args_str: Vec<String> = args.iter()
-                    .map(|a| self.emit_expr(a))
+                let mut arg_evals = Vec::new();
+                for (i, arg) in args.iter().enumerate() {
+                    arg_evals.push(format!("let _arg_{} = {};", i, self.emit_expr_internal(arg)));
+                }
+
+                let args_str: Vec<String> = (0..args.len())
+                    .map(|i| format!("_arg_{}", i))
                     .collect();
                 
                 // 方式選択テーブルを参照
@@ -1310,17 +1321,25 @@ use pyo3::types::PyList;
                 match get_import_mode(&target) {
                     ImportMode::Native => {
                         // Rust ネイティブ実装 - PyO3/Resident 不要
-                        generate_native_code(&target, &args_str)
-                            .unwrap_or_else(|| format!("/* Native not implemented: {} */", target))
+                        // Native の場合は、既に arg_evals があると困るかもしれないが、
+                        // Expression block にすれば OK
+                        let native_code = generate_native_code(&target, &args_str)
+                            .unwrap_or_else(|| format!("/* Native not implemented: {} */", target));
+                        format!(
+                            "{{\n{}    {}\n}}",
+                            arg_evals.join("\n    ") + "\n",
+                            native_code
+                        )
                     }
                     ImportMode::PyO3 | ImportMode::Resident => {
                         // 常駐プロセス方式が必要
                         self.needs_resident = true;
-                        let args_json: Vec<String> = args_str.iter()
-                            .map(|a| format!("serde_json::json!({})", a))
+                        let args_json: Vec<String> = (0..args.len())
+                            .map(|i| format!("serde_json::json!(_arg_{})", i))
                             .collect();
                         format!(
-                            "py_bridge.call_json(\"{}\", &[{}]).unwrap()",
+                            "{{\n{}    py_bridge.call_json::<serde_json::Value>(\"{}\", &[{}]).unwrap()\n}}",
+                            arg_evals.join("\n    ") + "\n",
                             target,
                             args_json.join(", ")
                         )

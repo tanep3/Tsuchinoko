@@ -36,16 +36,7 @@ impl PythonBridge {
     }
 
     /// リクエストを送信してレスポンスを受信
-    fn call_raw(&mut self, target: &str, args: &[serde_json::Value]) -> Result<serde_json::Value, String> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        
-        let request = serde_json::json!({
-            "id": id,
-            "op": "call",
-            "target": target,
-            "args": args,
-        });
-
+    fn send_request(&mut self, request: serde_json::Value) -> Result<serde_json::Value, String> {
         // リクエスト送信
         let stdin = self.process.stdin.as_mut()
             .ok_or("Failed to get stdin")?;
@@ -70,6 +61,19 @@ impl PythonBridge {
         } else {
             Err(format!("Python error: {}", response["error"]))
         }
+    }
+
+    fn call_raw(&mut self, target: &str, args: &[serde_json::Value]) -> Result<serde_json::Value, String> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        
+        let request = serde_json::json!({
+            "id": id,
+            "op": "call",
+            "target": target,
+            "args": args,
+        });
+
+        self.send_request(request)
     }
 
     /// i64 を返す呼び出し
@@ -114,6 +118,26 @@ impl PythonBridge {
     pub fn call_json<T: serde::de::DeserializeOwned>(&mut self, target: &str, args: &[serde_json::Value]) -> Result<T, String> {
         let result = self.call_raw(target, args)?;
         serde_json::from_value(result).map_err(|e| format!("Type conversion failed: {}", e))
+    }
+
+    /// ハンドルに対してメソッドを呼び出し、結果を返す
+    pub fn call_json_method<T: serde::de::DeserializeOwned>(
+        &mut self,
+        handle: serde_json::Value,
+        method: &str,
+        args: &[serde_json::Value],
+    ) -> Result<T, String> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        let request = serde_json::json!({
+            "id": id,
+            "op": "method",
+            "handle": handle,
+            "method": method,
+            "args": args,
+        });
+
+        let result = self.send_request(request)?;
+        serde_json::from_value(result).map_err(|e| format!("Method result type conversion failed: {}", e))
     }
 
     /// ping テスト

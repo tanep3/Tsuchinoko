@@ -190,6 +190,12 @@ pub enum IrExpr {
         method: String,
         args: Vec<IrExpr>,
     },
+    /// Method call via Resident Worker (for Type::Any targets)
+    PyO3MethodCall {
+        target: Box<IrExpr>,
+        method: String,
+        args: Vec<IrExpr>,
+    },
     /// Field access (e.g., obj.field)
     FieldAccess {
         target: Box<IrExpr>,
@@ -229,6 +235,11 @@ pub enum IrExpr {
     },
     /// Raw Rust code (for patterns that don't have IR equivalents)
     RawCode(String),
+    /// Convert serde_json::Value to concrete type (for PyO3 returns)
+    JsonConversion {
+        target: Box<IrExpr>,
+        convert_to: String,  // "f64", "i64", "String", "bool"
+    },
 }
 
 /// IR binary operators

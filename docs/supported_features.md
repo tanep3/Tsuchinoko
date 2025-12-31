@@ -64,6 +64,14 @@ Tsuchinoko V1.2.0 introduces a Resident Python Worker to support libraries that 
 - **SciPy**
 - Any other library accessible in your Python environment via IPC calls.
 
+### Persistent Object Handles 🆕
+
+Tsuchinoko now supports persisting Python objects across bridge calls. This allows for:
+- **Complex object state**: Keep DataFrames, NumPy arrays, or custom class instances in memory.
+- **Method chaining**: Call multiple methods on the same object handle.
+- **Index access**: Direct access to Python object elements via handles (`df["column"]`).
+- **Handle integration**: Seamlessly pass handles back to other Python library functions.
+
 ## Built-in Functions
 
 - `len()` - get length

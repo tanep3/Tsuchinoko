@@ -84,7 +84,9 @@ impl Type {
             {
                 Type::Struct(name.to_string())
             }
-            "Any" | "any" => Type::Any,
+            "Any" | "any" | "object" => Type::Any,
+            // PyO3 module types (np.ndarray, pd.DataFrame, etc.)
+            name if name.contains('.') => Type::Any,
             _ => Type::Unknown,
         }
     }
