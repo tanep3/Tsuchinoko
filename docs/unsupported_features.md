@@ -72,8 +72,6 @@ Even if a library is supported via Resident Worker, some Python syntax cannot be
 
 ## Advanced Features
 
-- **Multiple assignment** (`a, b, c = 1, 2, 3` - partial support only for index swap)
-- **Dictionary comprehensions** (`{k: v for k, v in ...}`)
 - **Set comprehensions** (`{x for x in ...}`)
 - **Global/Nonlocal** statements
 

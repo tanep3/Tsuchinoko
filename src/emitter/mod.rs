@@ -788,9 +788,10 @@ use pyo3::types::PyList;
                     IrBinOp::Shl => "<<",
                     IrBinOp::Shr => ">>",
                     IrBinOp::MatMul => {
-                        // V1.3.0: a @ b -> a.dot(&b) for NumPy arrays
+                        // V1.3.0: a @ b -> py_bridge.call_json("numpy.matmul", &[a, b])
+                        // For NumPy arrays, use the resident worker
                         return format!(
-                            "{}.dot(&{})",
+                            "py_bridge.call_json::<serde_json::Value>(\"numpy.matmul\", &[serde_json::json!({}), serde_json::json!({})]).unwrap()",
                             self.emit_expr(left),
                             self.emit_expr(right)
                         );
