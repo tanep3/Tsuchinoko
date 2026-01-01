@@ -787,6 +787,14 @@ use pyo3::types::PyList;
                     IrBinOp::BitXor => "^",
                     IrBinOp::Shl => "<<",
                     IrBinOp::Shr => ">>",
+                    IrBinOp::MatMul => {
+                        // V1.3.0: a @ b -> a.dot(&b) for NumPy arrays
+                        return format!(
+                            "{}.dot(&{})",
+                            self.emit_expr(left),
+                            self.emit_expr(right)
+                        );
+                    }
                     IrBinOp::Contains => {
                         // x in dict -> dict.contains_key(&x)
                         return format!(
@@ -1135,6 +1143,56 @@ use pyo3::types::PyList;
                     )
                 } else {
                     format!("{iter_chain}.map(|{closure_var}| {elt_str}).collect::<Vec<_>>()")
+                }
+            }
+            // V1.3.0: Dict comprehension {k: v for target in iter if condition}
+            IrExpr::DictComp {
+                key,
+                value,
+                target,
+                iter,
+                condition,
+            } => {
+                let key_str = self.emit_expr_internal(key);
+                let value_str = self.emit_expr_internal(value);
+
+                let target_has_comma = target.contains(',');
+                let target_snake = if target_has_comma {
+                    let parts: Vec<String> =
+                        target.split(',').map(|s| to_snake_case(s.trim())).collect();
+                    format!("({})", parts.join(", "))
+                } else {
+                    to_snake_case(target)
+                };
+
+                let iter_str = self.emit_expr_internal(iter);
+
+                let iter_chain = match iter.as_ref() {
+                    IrExpr::Range { .. } => format!("({iter_str})"),
+                    IrExpr::MethodCall { method, .. } if method == "items" => {
+                        format!("{iter_str}.into_iter()")
+                    }
+                    IrExpr::MethodCall { method, .. }
+                        if method.contains("iter")
+                            || method.contains("filter")
+                            || method.contains("map") =>
+                    {
+                        iter_str
+                    }
+                    _ => format!("{iter_str}.iter().cloned()"),
+                };
+
+                if let Some(cond) = condition {
+                    let cond_str = self.emit_expr_internal(cond);
+                    format!(
+                        "{}.filter(|&{}| {}).map(|{}| ({}, {})).collect::<std::collections::HashMap<_, _>>()",
+                        iter_chain, &target_snake, cond_str, &target_snake, key_str, value_str
+                    )
+                } else {
+                    format!(
+                        "{}.map(|{}| ({}, {})).collect::<std::collections::HashMap<_, _>>()",
+                        iter_chain, &target_snake, key_str, value_str
+                    )
                 }
             }
             IrExpr::Closure {

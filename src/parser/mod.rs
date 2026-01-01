@@ -1745,6 +1745,43 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
             return Ok(Expr::Dict(vec![]));
         }
 
+        // V1.3.0: Check for dict comprehension {k: v for target in iter}
+        if let Some(for_pos) = find_keyword_balanced(inner, "for") {
+            // This is a dict comprehension
+            let kv_part = &inner[..for_pos].trim();
+            let comp_part = &inner[for_pos + 3..]; // skip "for"
+
+            // Parse key: value
+            if let Some(colon_pos) = utils::find_char_balanced(kv_part, ':') {
+                let key = parse_expr(kv_part[..colon_pos].trim(), line_num)?;
+                let value = parse_expr(kv_part[colon_pos + 1..].trim(), line_num)?;
+
+                // Parse "target in iter [if cond]"
+                if let Some(in_pos) = find_keyword_balanced(comp_part, "in") {
+                    let target_str = comp_part[..in_pos].trim().to_string();
+                    let after_in = comp_part[in_pos + 2..].trim(); // skip "in"
+
+                    // Check for " if " condition
+                    let (iter_str, condition) = if let Some(if_pos) = find_keyword_balanced(after_in, "if") {
+                        let iter_part = after_in[..if_pos].trim();
+                        let cond_part = after_in[if_pos + 2..].trim(); // skip "if"
+                        (iter_part, Some(Box::new(parse_expr(cond_part, line_num)?)))
+                    } else {
+                        (after_in, None)
+                    };
+
+                    let iter = parse_expr(iter_str, line_num)?;
+                    return Ok(Expr::DictComp {
+                        key: Box::new(key),
+                        value: Box::new(value),
+                        target: target_str,
+                        iter: Box::new(iter),
+                        condition,
+                    });
+                }
+            }
+        }
+
         let entries = split_by_comma_balanced(inner);
         let mut parsed_entries = Vec::new();
         for entry in entries {
@@ -1977,6 +2014,7 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         ("*", BinOp::Mul),
         ("/", BinOp::Div),
         ("%", BinOp::Mod),
+        ("@", BinOp::MatMul), // V1.3.0: Matrix multiplication
     ] {
         if let Some(pos) = find_operator_balanced_rtl(expr_str, op_str) {
             let left = parse_expr(&expr_str[..pos], line_num)?;

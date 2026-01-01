@@ -177,6 +177,14 @@ pub enum IrExpr {
         iter: Box<IrExpr>,
         condition: Option<Box<IrExpr>>,
     },
+    /// Dict comprehension {k: v for target in iter if condition} (V1.3.0)
+    DictComp {
+        key: Box<IrExpr>,
+        value: Box<IrExpr>,
+        target: String,
+        iter: Box<IrExpr>,
+        condition: Option<Box<IrExpr>>,
+    },
     /// Index access
     Index {
         target: Box<IrExpr>,
@@ -279,6 +287,8 @@ pub enum IrBinOp {
     BitXor,      // ^
     Shl,         // <<
     Shr,         // >>
+    // Matrix multiplication (V1.3.0)
+    MatMul,      // @
 }
 
 /// IR unary operators

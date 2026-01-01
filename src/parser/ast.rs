@@ -38,6 +38,14 @@ pub enum Expr {
         iter: Box<Expr>,
         condition: Option<Box<Expr>>,
     },
+    /// Dict comprehension {key: value for target in iter} or {k: v for k, v in items if cond} (V1.3.0)
+    DictComp {
+        key: Box<Expr>,
+        value: Box<Expr>,
+        target: String,
+        iter: Box<Expr>,
+        condition: Option<Box<Expr>>,
+    },
     /// Generator expression (elt for target in iter if cond) - used in function calls
     GenExpr {
         elt: Box<Expr>,
@@ -109,6 +117,8 @@ pub enum BinOp {
     BitXor, // ^
     Shl,    // <<
     Shr,    // >>
+    // Matrix multiplication (V1.3.0)
+    MatMul, // @
 }
 
 /// Unary operators

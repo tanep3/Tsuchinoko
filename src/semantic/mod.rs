@@ -2419,6 +2419,40 @@ impl SemanticAnalyzer {
                     condition: ir_condition,
                 })
             }
+            // V1.3.0: Dict comprehension {k: v for target in iter if condition}
+            Expr::DictComp {
+                key,
+                value,
+                target,
+                iter,
+                condition,
+            } => {
+                let ir_iter = self.analyze_expr(iter)?;
+                let mut iter_ty = self.infer_type(iter);
+                while let Type::Ref(inner) = iter_ty {
+                    iter_ty = *inner;
+                }
+
+                self.scope.push();
+                self.define_loop_variables(target, &iter_ty, true);
+
+                let ir_key = self.analyze_expr(key)?;
+                let ir_value = self.analyze_expr(value)?;
+                let ir_condition = if let Some(cond) = condition {
+                    Some(Box::new(self.analyze_expr(cond)?))
+                } else {
+                    None
+                };
+                self.scope.pop();
+
+                Ok(IrExpr::DictComp {
+                    key: Box::new(ir_key),
+                    value: Box::new(ir_value),
+                    target: target.clone(),
+                    iter: Box::new(ir_iter),
+                    condition: ir_condition,
+                })
+            }
             Expr::IfExp { test, body, orelse } => {
                 let ir_test = self.analyze_expr(test)?;
                 let ir_body = self.analyze_expr(body)?;
@@ -2751,6 +2785,8 @@ impl SemanticAnalyzer {
                 | AstBinOp::FloorDiv
                 | AstBinOp::Mod
                 | AstBinOp::Pow => self.infer_type(left),
+                // Matrix multiplication returns left side type (V1.3.0)
+                AstBinOp::MatMul => self.infer_type(left),
                 // Bitwise operators return Int (V1.3.0)
                 AstBinOp::BitAnd
                 | AstBinOp::BitOr
@@ -3747,6 +3783,7 @@ impl SemanticAnalyzer {
             AstBinOp::BitXor => IrBinOp::BitXor,
             AstBinOp::Shl => IrBinOp::Shl,
             AstBinOp::Shr => IrBinOp::Shr,
+            AstBinOp::MatMul => IrBinOp::MatMul, // V1.3.0
         }
     }
 }
