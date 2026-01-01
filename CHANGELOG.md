@@ -5,7 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] - 2026-01-01 - Thorough Basic Syntax Support
+
+### Added - Operators
+
+- **`@` Matrix Multiplication**: NumPy matrix multiplication support
+- **`not in` Operator**: Container non-membership check
+- **Bitwise Operators**: Support for `&`, `|`, `^`, `~`, `<<`, `>>`
+- **Bitwise Augmented Assignment**: Support for `&=`, `|=`, `^=`, `<<=`, `>>=`
+- **`**=` Power Assignment**: Power augmented assignment
+
+### Added - Built-in Functions
+
+- **`enumerate`**: Indexed iteration support
+- **`zip`**: Parallel iteration over multiple iterables
+- **`sorted`**: Sorted list generation
+- **`reversed`**: Reverse iteration support
+- **`sum`**: Sum calculation support
+- **`all` / `any`**: All/any element boolean check
+- **`map` / `filter`**: Functional iterator transformation
+- **`assert`**: Assertion statement support
+
+### Added - List Methods
+
+- **`.sort()`**: In-place sorting
+- **`.reverse()`**: In-place reversal
+- **`.index()`**: Element position lookup
+- **`.count()`**: Element count
+
+### Added - Other
+
+- **Dict Comprehension**: Support for `{k: v for k, v in items}`
+- **Enhanced Multi-assignment**: Full support for `a, b, c = 1, 2, 3`
 
 ## [1.2.0] - 2025-12-31
 

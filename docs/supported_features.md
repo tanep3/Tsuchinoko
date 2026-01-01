@@ -8,11 +8,13 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Basic types**: `int`, `float`, `str`, `bool`, `None`
 - **Collection types**: `list[T]`, `dict[K, V]`, `tuple[...]`
 - **Optional types**: `Optional[T]`, `T | None`
-- **Arithmetic operators**: `+`, `-`, `*`, `/`, `//`, `%`, `**`
+- **Arithmetic operators**: `+`, `-`, `*`, `/`, `//`, `%`, `**`, `@` (V1.3.0)
 - **Comparison operators**: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - **Logical operators**: `and`, `or`, `not`
+- **Membership operators**: `in`, `not in` (V1.3.0)
 - **Identity operators**: `is`, `is not` (with `None` comparison)
-- **Augmented assignment**: `+=`, `-=`, `*=`, `/=`, `//=`, `%=`
+- **Bitwise operators**: `&`, `|`, `^`, `~`, `<<`, `>>` (V1.3.0)
+- **Augmented assignment**: `+=`, `-=`, `*=`, `/=`, `//=`, `%=`, `**=`, `&=`, `|=`, `^=`, `<<=`, `>>=` (V1.3.0)
 - **Docstrings**: Triple-quoted strings converted to Rust comments
 
 ## Control Flow
@@ -39,6 +41,7 @@ This document lists all Python features currently supported by Tsuchinoko transp
 
 - **List literals** and operations
 - **List comprehensions** (basic and conditional)
+- **Dict comprehensions** (`{k: v for k, v in items}`) (V1.3.0)
 - **Dictionary literals** and operations
 - **Tuple literals** and unpacking
 - **Struct definitions** (via class syntax)
@@ -46,6 +49,7 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Slice notation** (`[:3]`, `[-3:]`, `[1:n-1]`)
 - **Index swap** (`a[i], a[j] = a[j], a[i]` → `a.swap()`)
 - **List copy** (`l.copy()` → `l.to_vec()`) (V1.2.0)
+- **Multi-assignment** (`a, b, c = 1, 2, 3`) (V1.3.0)
 
 ## Classes & Objects
 
@@ -81,6 +85,14 @@ Tsuchinoko now supports persisting Python objects across bridge calls. This allo
 - `min()`, `max()` - min/max values
 - `abs()` - absolute value
 - `int()`, `float()`, `str()`, `bool()` - type conversions
+- `enumerate()` - indexed iteration (V1.3.0)
+- `zip()` - parallel iteration (V1.3.0)
+- `sorted()` - sorted list generation (V1.3.0)
+- `reversed()` - reverse iteration (V1.3.0)
+- `sum()` - sum calculation (V1.3.0)
+- `all()`, `any()` - boolean check (V1.3.0)
+- `map()`, `filter()` - functional transformation (V1.3.0)
+- `assert` - assertion statement (V1.3.0)
 
 ## String Features
 

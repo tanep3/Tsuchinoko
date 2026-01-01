@@ -131,6 +131,10 @@ fn bubble_sort(lists: &[i64]) -> (Vec<i64>, i64) {
 - [x] 例外処理 (`try-except` → `catch_unwind`)
 - [x] 可変長引数 (`*args` スプレッド演算子経由)
 - [x] 常駐 Python ワーカーによる NumPy/Pandas サポート
+- [x] ビット演算子 (`&`, `|`, `^`, `~`, `<<`, `>>`) (V1.3.0)
+- [x] 組み込み関数 (`enumerate`, `zip`, `sorted`, `sum`, `all`, `any`, `map`, `filter`) (V1.3.0)
+- [x] 辞書内包表記 (`{k: v for k, v in items}`) (V1.3.0)
+- [x] `assert` 文 (V1.3.0)
 - [ ] 完全な `**kwargs` サポート
 - [ ] 完全なクラス継承サポート
 - [ ] より多くの標準ライブラリマッピング
