@@ -765,6 +765,13 @@ impl SemanticAnalyzer {
                     AugAssignOp::Div => IrAugAssignOp::Div,
                     AugAssignOp::FloorDiv => IrAugAssignOp::FloorDiv,
                     AugAssignOp::Mod => IrAugAssignOp::Mod,
+                    // V1.3.0 additions
+                    AugAssignOp::Pow => IrAugAssignOp::Pow,
+                    AugAssignOp::BitAnd => IrAugAssignOp::BitAnd,
+                    AugAssignOp::BitOr => IrAugAssignOp::BitOr,
+                    AugAssignOp::BitXor => IrAugAssignOp::BitXor,
+                    AugAssignOp::Shl => IrAugAssignOp::Shl,
+                    AugAssignOp::Shr => IrAugAssignOp::Shr,
                 };
                 Ok(IrNode::AugAssign {
                     target: target.clone(),
@@ -1648,6 +1655,34 @@ impl SemanticAnalyzer {
                     });
                 }
 
+                // Handle 'not in' operator: x not in y -> !y.contains(&x) or !y.contains_key(&x) (V1.3.0)
+                if let AstBinOp::NotIn = op {
+                    let right_ty = self.infer_type(right);
+                    let ir_left = self.analyze_expr(left)?;
+                    let ir_right = self.analyze_expr(right)?;
+
+                    let method = match right_ty {
+                        Type::List(_) | Type::Tuple(_) | Type::Unknown => "contains",
+                        Type::Dict(_, _) => "contains_key",
+                        Type::String => "contains",
+                        _ => "contains",
+                    };
+
+                    // Generate !y.method(&x)
+                    let contains_call = IrExpr::MethodCall {
+                        target: Box::new(ir_right),
+                        method: method.to_string(),
+                        args: vec![IrExpr::Reference {
+                            target: Box::new(ir_left),
+                        }],
+                    };
+
+                    return Ok(IrExpr::UnaryOp {
+                        op: IrUnaryOp::Not,
+                        operand: Box::new(contains_call),
+                    });
+                }
+
                 // Handle 'is' and 'is not' operators with None
                 if let AstBinOp::Is | AstBinOp::IsNot = op {
                     // Check if right side is None
@@ -2399,6 +2434,7 @@ impl SemanticAnalyzer {
                         AstUnaryOp::Not => IrUnaryOp::Not,
                         AstUnaryOp::Neg => IrUnaryOp::Neg,
                         AstUnaryOp::Pos => unreachable!(),
+                        AstUnaryOp::BitNot => IrUnaryOp::BitNot, // V1.3.0
                     };
                     Ok(IrExpr::UnaryOp {
                         op: ir_op,
@@ -2579,6 +2615,13 @@ impl SemanticAnalyzer {
                 | AstBinOp::FloorDiv
                 | AstBinOp::Mod
                 | AstBinOp::Pow => self.infer_type(left),
+                // Bitwise operators return Int (V1.3.0)
+                AstBinOp::BitAnd
+                | AstBinOp::BitOr
+                | AstBinOp::BitXor
+                | AstBinOp::Shl
+                | AstBinOp::Shr => Type::Int,
+                // Comparison and logical operators return Bool
                 AstBinOp::Eq
                 | AstBinOp::NotEq
                 | AstBinOp::Lt
@@ -2588,12 +2631,14 @@ impl SemanticAnalyzer {
                 | AstBinOp::And
                 | AstBinOp::Or
                 | AstBinOp::In
+                | AstBinOp::NotIn  // V1.3.0
                 | AstBinOp::Is
                 | AstBinOp::IsNot => Type::Bool,
             },
             Expr::UnaryOp { op, operand } => match op {
                 AstUnaryOp::Neg | AstUnaryOp::Pos => self.infer_type(operand),
                 AstUnaryOp::Not => Type::Bool,
+                AstUnaryOp::BitNot => Type::Int, // V1.3.0
             },
             Expr::IfExp { body, orelse, .. } => {
                 let t_body = self.infer_type(body);
@@ -3243,8 +3288,15 @@ impl SemanticAnalyzer {
             AstBinOp::And => IrBinOp::And,
             AstBinOp::Or => IrBinOp::Or,
             AstBinOp::In => IrBinOp::Contains,
+            AstBinOp::NotIn => IrBinOp::NotContains, // V1.3.0
             AstBinOp::Is => IrBinOp::Is,
             AstBinOp::IsNot => IrBinOp::IsNot,
+            // Bitwise operators (V1.3.0)
+            AstBinOp::BitAnd => IrBinOp::BitAnd,
+            AstBinOp::BitOr => IrBinOp::BitOr,
+            AstBinOp::BitXor => IrBinOp::BitXor,
+            AstBinOp::Shl => IrBinOp::Shl,
+            AstBinOp::Shr => IrBinOp::Shr,
         }
     }
 }

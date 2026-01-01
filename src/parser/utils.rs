@@ -272,6 +272,27 @@ pub fn find_operator_balanced(s: &str, op: &str) -> Option<usize> {
                                 continue;
                             }
                         }
+                        // V1.3.0: Avoid matching < inside << and > inside >>
+                        if op == "<" {
+                            // Check for << (double <)
+                            let next_idx = i + op_chars.len();
+                            if next_idx < chars.len() && chars[next_idx] == '<' {
+                                continue;
+                            }
+                            if i > 0 && chars[i - 1] == '<' {
+                                continue;
+                            }
+                        }
+                        if op == ">" {
+                            // Check for >> (double >)
+                            let next_idx = i + op_chars.len();
+                            if next_idx < chars.len() && chars[next_idx] == '>' {
+                                continue;
+                            }
+                            if i > 0 && chars[i - 1] == '>' {
+                                continue;
+                            }
+                        }
 
                         return Some(i);
                     }
@@ -334,6 +355,27 @@ pub fn find_operator_balanced_rtl(s: &str, op: &str) -> Option<usize> {
                                 continue;
                             }
                             if i > 0 && chars[i - 1] == '/' {
+                                continue;
+                            }
+                        }
+                        // V1.3.0: Avoid matching < inside << and > inside >>
+                        if op == "<" {
+                            // Check for << (double <)
+                            let next_idx = i + op_chars.len();
+                            if next_idx < chars.len() && chars[next_idx] == '<' {
+                                continue;
+                            }
+                            if i > 0 && chars[i - 1] == '<' {
+                                continue;
+                            }
+                        }
+                        if op == ">" {
+                            // Check for >> (double >)
+                            let next_idx = i + op_chars.len();
+                            if next_idx < chars.len() && chars[next_idx] == '>' {
+                                continue;
+                            }
+                            if i > 0 && chars[i - 1] == '>' {
                                 continue;
                             }
                         }

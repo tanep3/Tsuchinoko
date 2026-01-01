@@ -264,9 +264,16 @@ pub enum IrBinOp {
     GtEq,
     And,
     Or,
-    Contains, // x in dict -> dict.contains_key(&x)
-    Is,       // x is None -> x.is_none()
-    IsNot,    // x is not None -> x.is_some()
+    Contains,    // x in dict -> dict.contains_key(&x)
+    NotContains, // x not in dict -> !dict.contains_key(&x) (V1.3.0)
+    Is,          // x is None -> x.is_none()
+    IsNot,       // x is not None -> x.is_some()
+    // Bitwise operators (V1.3.0)
+    BitAnd,      // &
+    BitOr,       // |
+    BitXor,      // ^
+    Shl,         // <<
+    Shr,         // >>
 }
 
 /// IR unary operators
@@ -274,7 +281,8 @@ pub enum IrBinOp {
 pub enum IrUnaryOp {
     Neg,
     Not,
-    Deref, // *expr
+    Deref,  // *expr
+    BitNot, // ~ (V1.3.0)
 }
 
 /// IR augmented assignment operators
@@ -286,6 +294,13 @@ pub enum IrAugAssignOp {
     Div,      // /=
     FloorDiv, // //=
     Mod,      // %=
+    // V1.3.0 additions
+    Pow,      // **=
+    BitAnd,   // &=
+    BitOr,    // |=
+    BitXor,   // ^=
+    Shl,      // <<=
+    Shr,      // >>=
 }
 
 #[cfg(test)]

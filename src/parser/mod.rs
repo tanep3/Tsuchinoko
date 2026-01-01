@@ -1149,15 +1149,21 @@ fn parse_line(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoErr
         return Ok(None);
     }
 
-    // Try to parse as augmented assignment (+=, -=, *=, /=, //=, %=)
-    // Must check before regular assignment
+    // Try to parse as augmented assignment (+=, -=, *=, /=, //=, %=, **=, &=, |=, ^=, <<=, >>=)
+    // Must check before regular assignment. Check longer patterns first.
     for (op_str, aug_op) in [
+        ("<<=", AugAssignOp::Shl),      // V1.3.0
+        (">>=", AugAssignOp::Shr),      // V1.3.0
         ("//=", AugAssignOp::FloorDiv), // Check //= before /=
+        ("**=", AugAssignOp::Pow),      // V1.3.0 - Check **= before *=
         ("+=", AugAssignOp::Add),
         ("-=", AugAssignOp::Sub),
         ("*=", AugAssignOp::Mul),
         ("/=", AugAssignOp::Div),
         ("%=", AugAssignOp::Mod),
+        ("&=", AugAssignOp::BitAnd),    // V1.3.0
+        ("|=", AugAssignOp::BitOr),     // V1.3.0
+        ("^=", AugAssignOp::BitXor),    // V1.3.0
     ] {
         if let Some(op_pos) = line.find(op_str) {
             let target = line[..op_pos].trim();
@@ -1604,6 +1610,16 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         });
     }
 
+    // Try to parse as unary bitwise NOT operator (~) - V1.3.0
+    if let Some(stripped) = expr_str.strip_prefix('~') {
+        let operand_str = stripped.trim();
+        let operand = parse_expr(operand_str, line_num)?;
+        return Ok(Expr::UnaryOp {
+            op: UnaryOp::BitNot,
+            operand: Box::new(operand),
+        });
+    }
+
     // Try to parse as lambda expression: lambda params: body
     if expr_str.starts_with("lambda") {
         // Find the colon that separates params from body
@@ -1821,6 +1837,17 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         }
     }
 
+    // "not in" operator (must check before "in") - V1.3.0
+    if let Some(pos) = find_operator_balanced(expr_str, " not in ") {
+        let left = parse_expr(&expr_str[..pos], line_num)?;
+        let right = parse_expr(&expr_str[pos + 8..], line_num)?;
+        return Ok(Expr::BinOp {
+            left: Box::new(left),
+            op: BinOp::NotIn,
+            right: Box::new(right),
+        });
+    }
+
     // "in" operator (keyword, needs spaces)
     if let Some(pos) = find_operator_balanced(expr_str, " in ") {
         let left = parse_expr(&expr_str[..pos], line_num)?;
@@ -1852,6 +1879,67 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
             op: BinOp::Is,
             right: Box::new(right),
         });
+    }
+
+    // Bitwise OR operator (V1.3.0) - lowest bitwise precedence
+    if let Some(pos) = find_operator_balanced_rtl(expr_str, "|") {
+        // Make sure it's not || (which doesn't exist in Python, but just in case)
+        let next_char = expr_str.chars().nth(pos + 1);
+        if next_char != Some('|') && next_char != Some('=') {
+            let left = parse_expr(&expr_str[..pos], line_num)?;
+            let right = parse_expr(&expr_str[pos + 1..], line_num)?;
+            return Ok(Expr::BinOp {
+                left: Box::new(left),
+                op: BinOp::BitOr,
+                right: Box::new(right),
+            });
+        }
+    }
+
+    // Bitwise XOR operator (V1.3.0)
+    if let Some(pos) = find_operator_balanced_rtl(expr_str, "^") {
+        let next_char = expr_str.chars().nth(pos + 1);
+        if next_char != Some('=') {
+            let left = parse_expr(&expr_str[..pos], line_num)?;
+            let right = parse_expr(&expr_str[pos + 1..], line_num)?;
+            return Ok(Expr::BinOp {
+                left: Box::new(left),
+                op: BinOp::BitXor,
+                right: Box::new(right),
+            });
+        }
+    }
+
+    // Bitwise AND operator (V1.3.0)
+    if let Some(pos) = find_operator_balanced_rtl(expr_str, "&") {
+        // Make sure it's not && (which doesn't exist in Python, but just in case)
+        let next_char = expr_str.chars().nth(pos + 1);
+        if next_char != Some('&') && next_char != Some('=') {
+            let left = parse_expr(&expr_str[..pos], line_num)?;
+            let right = parse_expr(&expr_str[pos + 1..], line_num)?;
+            return Ok(Expr::BinOp {
+                left: Box::new(left),
+                op: BinOp::BitAnd,
+                right: Box::new(right),
+            });
+        }
+    }
+
+    // Shift operators (V1.3.0) - check longer patterns first
+    for (op_str, op) in [("<<", BinOp::Shl), (">>", BinOp::Shr)] {
+        if let Some(pos) = find_operator_balanced_rtl(expr_str, op_str) {
+            // Make sure it's not <<= or >>=
+            let next_char = expr_str.chars().nth(pos + 2);
+            if next_char != Some('=') {
+                let left = parse_expr(&expr_str[..pos], line_num)?;
+                let right = parse_expr(&expr_str[pos + op_str.len()..], line_num)?;
+                return Ok(Expr::BinOp {
+                    left: Box::new(left),
+                    op,
+                    right: Box::new(right),
+                });
+            }
+        }
     }
 
     // Additive operators (left to right, find rightmost)

@@ -99,9 +99,16 @@ pub enum BinOp {
     GtEq,
     And,
     Or,
-    In,    // x in dict
-    Is,    // x is None
-    IsNot, // x is not None
+    In,     // x in dict
+    NotIn,  // x not in dict  (V1.3.0)
+    Is,     // x is None
+    IsNot,  // x is not None
+    // Bitwise operators (V1.3.0)
+    BitAnd, // &
+    BitOr,  // |
+    BitXor, // ^
+    Shl,    // <<
+    Shr,    // >>
 }
 
 /// Unary operators
@@ -110,6 +117,7 @@ pub enum UnaryOp {
     Neg,
     Pos,
     Not,
+    BitNot, // ~ (V1.3.0)
 }
 
 /// Augmented assignment operators
@@ -121,6 +129,13 @@ pub enum AugAssignOp {
     Div,      // /=
     FloorDiv, // //=
     Mod,      // %=
+    // V1.3.0 additions
+    Pow,      // **=
+    BitAnd,   // &=
+    BitOr,    // |=
+    BitXor,   // ^=
+    Shl,      // <<=
+    Shr,      // >>=
 }
 
 /// Statement types

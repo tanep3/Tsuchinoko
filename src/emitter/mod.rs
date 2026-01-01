@@ -293,6 +293,17 @@ use pyo3::types::PyList;
                 )
             }
             IrNode::AugAssign { target, op, value } => {
+                // V1.3.0: Handle **= specially as Rust doesn't have it
+                if matches!(op, IrAugAssignOp::Pow) {
+                    return format!(
+                        "{}{} = ({} as i64).pow(({}) as u32);",
+                        indent,
+                        target,
+                        target,
+                        self.emit_expr(value)
+                    );
+                }
+
                 let op_str = match op {
                     IrAugAssignOp::Add => "+=",
                     IrAugAssignOp::Sub => "-=",
@@ -300,6 +311,13 @@ use pyo3::types::PyList;
                     IrAugAssignOp::Div => "/=",
                     IrAugAssignOp::FloorDiv => "/=", // Rust doesn't have //=, use /= for i64
                     IrAugAssignOp::Mod => "%=",
+                    // V1.3.0 additions
+                    IrAugAssignOp::Pow => unreachable!(), // Handled above
+                    IrAugAssignOp::BitAnd => "&=",
+                    IrAugAssignOp::BitOr => "|=",
+                    IrAugAssignOp::BitXor => "^=",
+                    IrAugAssignOp::Shl => "<<=",
+                    IrAugAssignOp::Shr => ">>=",
                 };
                 format!("{}{} {} {};", indent, target, op_str, self.emit_expr(value))
             }
@@ -746,10 +764,24 @@ use pyo3::types::PyList;
                     IrBinOp::Or => "||",
                     IrBinOp::FloorDiv => "/",
                     IrBinOp::Pow => unreachable!(),
+                    // Bitwise operators (V1.3.0)
+                    IrBinOp::BitAnd => "&",
+                    IrBinOp::BitOr => "|",
+                    IrBinOp::BitXor => "^",
+                    IrBinOp::Shl => "<<",
+                    IrBinOp::Shr => ">>",
                     IrBinOp::Contains => {
                         // x in dict -> dict.contains_key(&x)
                         return format!(
                             "{}.contains_key(&{})",
+                            self.emit_expr(right),
+                            self.emit_expr(left)
+                        );
+                    }
+                    IrBinOp::NotContains => {
+                        // x not in dict -> !dict.contains_key(&x) (V1.3.0)
+                        return format!(
+                            "!{}.contains_key(&{})",
                             self.emit_expr(right),
                             self.emit_expr(left)
                         );
@@ -787,6 +819,7 @@ use pyo3::types::PyList;
                     IrUnaryOp::Neg => "-",
                     IrUnaryOp::Not => "!",
                     IrUnaryOp::Deref => "*",
+                    IrUnaryOp::BitNot => "!", // V1.3.0 - Rust uses ! for bitwise NOT too
                 };
                 format!("({}{})", op_str, self.emit_expr(operand))
             }
