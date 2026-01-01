@@ -1195,6 +1195,22 @@ fn parse_line(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoErr
         return Ok(Some(Stmt::Continue));
     }
 
+    // V1.3.0: Try to parse as assert statement
+    if line.starts_with("assert ") {
+        let rest = line.strip_prefix("assert ").unwrap().trim();
+        // Check for message: assert condition, "message"
+        if let Some(comma_pos) = utils::find_char_balanced(rest, ',') {
+            let test_str = rest[..comma_pos].trim();
+            let msg_str = rest[comma_pos + 1..].trim();
+            let test = parse_expr(test_str, line_num)?;
+            let msg = parse_expr(msg_str, line_num)?;
+            return Ok(Some(Stmt::Assert { test, msg: Some(msg) }));
+        } else {
+            let test = parse_expr(rest, line_num)?;
+            return Ok(Some(Stmt::Assert { test, msg: None }));
+        }
+    }
+
     // Try to parse as return statement
     if line.starts_with("return") {
         return Ok(Some(parse_return(line, line_num)?));

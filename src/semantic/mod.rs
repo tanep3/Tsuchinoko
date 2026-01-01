@@ -1560,6 +1560,18 @@ impl SemanticAnalyzer {
             }
             Stmt::Break => Ok(IrNode::Break),
             Stmt::Continue => Ok(IrNode::Continue),
+            // V1.3.0: Assert statement
+            Stmt::Assert { test, msg } => {
+                let ir_test = self.analyze_expr(test)?;
+                let ir_msg = match msg {
+                    Some(m) => Some(Box::new(self.analyze_expr(m)?)),
+                    None => None,
+                };
+                Ok(IrNode::Assert {
+                    test: Box::new(ir_test),
+                    msg: ir_msg,
+                })
+            }
             Stmt::Import {
                 module,
                 alias,

@@ -224,6 +224,11 @@ pub enum Stmt {
     Break,
     /// Continue statement
     Continue,
+    /// Assert statement (V1.3.0)
+    Assert {
+        test: Expr,
+        msg: Option<Expr>,
+    },
 }
 
 /// Function parameter with optional default value

@@ -705,6 +705,14 @@ use pyo3::types::PyList;
             IrNode::Continue => {
                 format!("{indent}continue;")
             }
+            // V1.3.0: Assert statement
+            IrNode::Assert { test, msg } => {
+                let test_str = self.emit_expr(test);
+                match msg {
+                    Some(m) => format!("{indent}assert!({}, {});", test_str, self.emit_expr(m)),
+                    None => format!("{indent}assert!({});", test_str),
+                }
+            }
             IrNode::Sequence(nodes) => {
                 // Emit all nodes in sequence (e.g., StructDef + ImplBlock)
                 nodes

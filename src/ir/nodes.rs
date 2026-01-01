@@ -103,6 +103,11 @@ pub enum IrNode {
     Break,
     /// Continue statement
     Continue,
+    /// Assert statement (V1.3.0)
+    Assert {
+        test: Box<IrExpr>,
+        msg: Option<Box<IrExpr>>,
+    },
     /// Sequence of nodes (for returning multiple top-level items like StructDef + ImplBlock)
     Sequence(Vec<IrNode>),
     /// PyO3 import (for numpy, pandas, etc.)
