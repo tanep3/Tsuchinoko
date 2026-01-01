@@ -1617,13 +1617,17 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
     }
 
     // Try to parse as unary "not" operator
+    // BUT skip if this is "x not in y" pattern (checked later as binary op)
     if let Some(stripped) = expr_str.strip_prefix("not ") {
-        let operand_str = stripped.trim();
-        let operand = parse_expr(operand_str, line_num)?;
-        return Ok(Expr::UnaryOp {
-            op: UnaryOp::Not,
-            operand: Box::new(operand),
-        });
+        // Check if this is "not in" pattern - if so, don't treat as unary not
+        if !stripped.trim_start().starts_with("in ") && !stripped.contains(" not in ") {
+            let operand_str = stripped.trim();
+            let operand = parse_expr(operand_str, line_num)?;
+            return Ok(Expr::UnaryOp {
+                op: UnaryOp::Not,
+                operand: Box::new(operand),
+            });
+        }
     }
 
     // Try to parse as unary bitwise NOT operator (~) - V1.3.0
@@ -1870,27 +1874,7 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         }
     }
 
-    // Comparison operators (check longer ones first)
-    for (op_str, op) in [
-        ("==", BinOp::Eq),
-        ("!=", BinOp::NotEq),
-        (">=", BinOp::GtEq),
-        ("<=", BinOp::LtEq),
-        (">", BinOp::Gt),
-        ("<", BinOp::Lt),
-    ] {
-        if let Some(pos) = find_operator_balanced(expr_str, op_str) {
-            let left = parse_expr(&expr_str[..pos], line_num)?;
-            let right = parse_expr(&expr_str[pos + op_str.len()..], line_num)?;
-            return Ok(Expr::BinOp {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
-            });
-        }
-    }
-
-    // "not in" operator (must check before "in") - V1.3.0
+    // V1.3.0: "not in" operator (must check before "in" and comparison operators)
     if let Some(pos) = find_operator_balanced(expr_str, " not in ") {
         let left = parse_expr(&expr_str[..pos], line_num)?;
         let right = parse_expr(&expr_str[pos + 8..], line_num)?;
@@ -1911,6 +1895,27 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
             right: Box::new(right),
         });
     }
+
+    // Comparison operators (check longer ones first)
+    for (op_str, op) in [
+        ("==", BinOp::Eq),
+        ("!=", BinOp::NotEq),
+        (">=", BinOp::GtEq),
+        ("<=", BinOp::LtEq),
+        (">", BinOp::Gt),
+        ("<", BinOp::Lt),
+    ] {
+        if let Some(pos) = find_operator_balanced(expr_str, op_str) {
+            let left = parse_expr(&expr_str[..pos], line_num)?;
+            let right = parse_expr(&expr_str[pos + op_str.len()..], line_num)?;
+            return Ok(Expr::BinOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            });
+        }
+    }
+
 
     // "is not" operator (must check before "is")
     if let Some(pos) = find_operator_balanced(expr_str, " is not ") {

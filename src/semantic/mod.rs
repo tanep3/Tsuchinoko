@@ -1620,7 +1620,11 @@ impl SemanticAnalyzer {
             Expr::BinOp { left, op, right } => {
                 // Handle 'in' operator: x in y -> y.contains(&x) or y.contains_key(&x)
                 if let AstBinOp::In = op {
-                    let right_ty = self.infer_type(right);
+                    let mut right_ty = self.infer_type(right);
+                    // Unwrap Ref to get inner type for dict vs list detection
+                    while let Type::Ref(inner) = right_ty {
+                        right_ty = *inner;
+                    }
                     let ir_left = self.analyze_expr(left)?;
                     let ir_right = self.analyze_expr(right)?;
 
@@ -1649,20 +1653,31 @@ impl SemanticAnalyzer {
                     // Wait, `weekends.contains_key(&i)` was in output.
                     // How did `&i` get there?
                     // Maybe `IrExpr::Ref` exists? I should check.
-                    // Assuming for now generic MethodCall.
+                    // Generate y.method(&x) or y.method(x) depending on left type
+                    let left_ty = self.infer_type(left);
+                    let arg = if matches!(left_ty, Type::Ref(_) | Type::String) {
+                        // Already a reference type, don't add another &
+                        ir_left
+                    } else {
+                        IrExpr::Reference {
+                            target: Box::new(ir_left),
+                        }
+                    };
 
                     return Ok(IrExpr::MethodCall {
                         target: Box::new(ir_right),
                         method: method.to_string(),
-                        args: vec![IrExpr::Reference {
-                            target: Box::new(ir_left),
-                        }],
+                        args: vec![arg],
                     });
                 }
 
                 // Handle 'not in' operator: x not in y -> !y.contains(&x) or !y.contains_key(&x) (V1.3.0)
                 if let AstBinOp::NotIn = op {
-                    let right_ty = self.infer_type(right);
+                    let mut right_ty = self.infer_type(right);
+                    // Unwrap Ref to get inner type for dict vs list detection
+                    while let Type::Ref(inner) = right_ty {
+                        right_ty = *inner;
+                    }
                     let ir_left = self.analyze_expr(left)?;
                     let ir_right = self.analyze_expr(right)?;
 
@@ -1673,13 +1688,20 @@ impl SemanticAnalyzer {
                         _ => "contains",
                     };
 
-                    // Generate !y.method(&x)
+                    // Generate !y.method(&x) or !y.method(x) depending on left type
+                    let left_ty = self.infer_type(left);
+                    let arg = if matches!(left_ty, Type::Ref(_) | Type::String) {
+                        // Already a reference type, don't add another &
+                        ir_left
+                    } else {
+                        IrExpr::Reference {
+                            target: Box::new(ir_left),
+                        }
+                    };
                     let contains_call = IrExpr::MethodCall {
                         target: Box::new(ir_right),
                         method: method.to_string(),
-                        args: vec![IrExpr::Reference {
-                            target: Box::new(ir_left),
-                        }],
+                        args: vec![arg],
                     };
 
                     return Ok(IrExpr::UnaryOp {

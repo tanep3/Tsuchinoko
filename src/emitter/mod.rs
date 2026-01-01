@@ -797,17 +797,18 @@ use pyo3::types::PyList;
                         );
                     }
                     IrBinOp::Contains => {
-                        // x in dict -> dict.contains_key(&x)
+                        // x in collection -> collection.contains(&x)
+                        // For dicts, use contains_key - handle via ContainsKey variant
                         return format!(
-                            "{}.contains_key(&{})",
+                            "{}.contains(&{})",
                             self.emit_expr(right),
                             self.emit_expr(left)
                         );
                     }
                     IrBinOp::NotContains => {
-                        // x not in dict -> !dict.contains_key(&x) (V1.3.0)
+                        // x not in collection -> !collection.contains(&x) (V1.3.0)
                         return format!(
-                            "!{}.contains_key(&{})",
+                            "!{}.contains(&{})",
                             self.emit_expr(right),
                             self.emit_expr(left)
                         );
