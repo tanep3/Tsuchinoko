@@ -506,10 +506,19 @@ use pyo3::types::PyList;
                 let body_str = self.emit_nodes(body);
                 self.indent -= 1;
 
+                // V1.3.0: Handle tuple unpacking for enumerate/zip
+                let var_str = if var.contains(',') {
+                    // Tuple unpacking: i, item -> (i, item)
+                    let parts: Vec<String> = var.split(',').map(|s| to_snake_case(s.trim())).collect();
+                    format!("({})", parts.join(", "))
+                } else {
+                    to_snake_case(var)
+                };
+
                 format!(
                     "{}for {} in {} {{\n{}\n{}}}",
                     indent,
-                    to_snake_case(var),
+                    var_str,
                     self.emit_expr(iter),
                     body_str,
                     indent

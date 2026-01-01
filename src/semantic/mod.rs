@@ -1280,41 +1280,34 @@ impl SemanticAnalyzer {
                 })
             }
             Stmt::For { target, iter, body } => {
-                let mut ir_iter = self.analyze_expr(iter)?;
-                let mut iter_type = self.infer_type(iter);
-
-                // If iterating over a Reference to a List, iterate over cloned elements to yield T instead of &T
-                if let Type::Ref(inner) = &iter_type {
-                    if let Type::List(_) = **inner {
-                        ir_iter = IrExpr::MethodCall {
-                            target: Box::new(ir_iter),
-                            method: "iter".to_string(),
-                            args: vec![],
-                        };
-                        ir_iter = IrExpr::MethodCall {
-                            target: Box::new(ir_iter),
-                            method: "cloned".to_string(),
-                            args: vec![],
-                        };
-                        iter_type = *inner.clone(); // Now it behaves like the inner list
-                    }
-                }
-
-                let elem_type = if let Type::List(elem) = iter_type {
-                    *elem
-                } else {
-                    Type::Int // Default fallback
-                };
+                // V1.3.0: Handle enumerate(iterable) and zip(a, b)
+                let (actual_target, ir_iter, elem_type) = self.analyze_for_iter(target, iter)?;
 
                 self.scope.push();
-                self.scope.define(target, elem_type.clone(), false);
+                
+                // Define loop variables based on element type
+                if actual_target.contains(',') {
+                    // Tuple unpacking: i, item OR x, y, z
+                    let targets: Vec<_> = actual_target.split(',').map(|s| s.trim()).collect();
+                    if let Type::Tuple(types) = &elem_type {
+                        for (t, ty) in targets.iter().zip(types.iter()) {
+                            self.scope.define(t, ty.clone(), false);
+                        }
+                    } else {
+                        for t in &targets {
+                            self.scope.define(t, Type::Unknown, false);
+                        }
+                    }
+                } else {
+                    self.scope.define(&actual_target, elem_type.clone(), false);
+                }
 
                 // Use analyze_stmts to properly detect mutable variables in loop body
                 let ir_body = self.analyze_stmts(body)?;
                 self.scope.pop();
 
                 Ok(IrNode::For {
-                    var: target.clone(),
+                    var: actual_target,
                     var_type: elem_type,
                     iter: Box::new(ir_iter),
                     body: ir_body,
@@ -1740,6 +1733,29 @@ impl SemanticAnalyzer {
                             })
                             .collect();
                         return Ok(IrExpr::Print { args: typed_args? });
+                    }
+
+                    // V1.3.0: sorted(iterable) -> { let mut v = iterable.to_vec(); v.sort(); v }
+                    if name == "sorted" && !args.is_empty() && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        return Ok(IrExpr::RawCode(format!(
+                            "{{ let mut v = {}.to_vec(); v.sort(); v }}",
+                            self.emit_simple_ir_expr(&ir_arg)
+                        )));
+                    }
+
+                    // V1.3.0: sum(iterable) -> iterable.iter().sum()
+                    if name == "sum" && !args.is_empty() && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        return Ok(IrExpr::MethodCall {
+                            target: Box::new(IrExpr::MethodCall {
+                                target: Box::new(ir_arg),
+                                method: "iter".to_string(),
+                                args: vec![],
+                            }),
+                            method: "sum".to_string(),
+                            args: vec![],
+                        });
                     }
                 }
 
@@ -2892,6 +2908,202 @@ impl SemanticAnalyzer {
         }
     }
 
+    /// Analyze for loop iterator, handling enumerate() and zip() (V1.3.0)
+    /// Returns: (actual_target, ir_iter, elem_type)
+    fn analyze_for_iter(
+        &mut self,
+        target: &str,
+        iter: &Expr,
+    ) -> Result<(String, IrExpr, Type), TsuchinokoError> {
+        // Check for enumerate(iterable) or zip(a, b, ...)
+        if let Expr::Call { func, args, kwargs } = iter {
+            if let Expr::Ident(func_name) = func.as_ref() {
+                // enumerate(iterable) -> iterable.iter().enumerate()
+                if func_name == "enumerate" && !args.is_empty() && kwargs.is_empty() {
+                    let iterable = &args[0];
+                    let iterable_ty = self.infer_type(iterable);
+                    let ir_iterable = self.analyze_expr(iterable)?;
+
+                    // Get the element type from the iterable
+                    let inner_elem_type = match &iterable_ty {
+                        Type::List(elem) => elem.as_ref().clone(),
+                        Type::Ref(inner) => {
+                            if let Type::List(elem) = inner.as_ref() {
+                                elem.as_ref().clone()
+                            } else {
+                                Type::Unknown
+                            }
+                        }
+                        _ => Type::Unknown,
+                    };
+
+                    // Build: iterable.iter().enumerate().map(|(i, x)| (i as i64, x.clone()))
+                    let iter_call = IrExpr::MethodCall {
+                        target: Box::new(ir_iterable),
+                        method: "iter".to_string(),
+                        args: vec![],
+                    };
+                    let enumerate_call = IrExpr::MethodCall {
+                        target: Box::new(iter_call),
+                        method: "enumerate".to_string(),
+                        args: vec![],
+                    };
+                    // Add .map() to convert (usize, &T) -> (i64, T)
+                    let mapped_call = IrExpr::MethodCall {
+                        target: Box::new(enumerate_call),
+                        method: "map".to_string(),
+                        args: vec![IrExpr::RawCode("|(i, x)| (i as i64, x.clone())".to_string())],
+                    };
+
+                    // Element type is (i64, T)
+                    let elem_type = Type::Tuple(vec![Type::Int, inner_elem_type]);
+
+                    return Ok((target.to_string(), mapped_call, elem_type));
+                }
+
+                // V1.3.0: reversed(iterable) -> iterable.iter().rev().cloned()
+                if func_name == "reversed" && !args.is_empty() && kwargs.is_empty() {
+                    let iterable = &args[0];
+                    let iterable_ty = self.infer_type(iterable);
+                    let ir_iterable = self.analyze_expr(iterable)?;
+
+                    let inner_elem_type = match &iterable_ty {
+                        Type::List(elem) => elem.as_ref().clone(),
+                        Type::Ref(inner) => {
+                            if let Type::List(elem) = inner.as_ref() {
+                                elem.as_ref().clone()
+                            } else {
+                                Type::Unknown
+                            }
+                        }
+                        _ => Type::Unknown,
+                    };
+
+                    // Build: iterable.iter().rev().cloned()
+                    let iter_call = IrExpr::MethodCall {
+                        target: Box::new(ir_iterable),
+                        method: "iter".to_string(),
+                        args: vec![],
+                    };
+                    let rev_call = IrExpr::MethodCall {
+                        target: Box::new(iter_call),
+                        method: "rev".to_string(),
+                        args: vec![],
+                    };
+                    let cloned_call = IrExpr::MethodCall {
+                        target: Box::new(rev_call),
+                        method: "cloned".to_string(),
+                        args: vec![],
+                    };
+
+                    return Ok((target.to_string(), cloned_call, inner_elem_type));
+                }
+
+                // zip(a, b) -> a.iter().zip(b.iter()).map(|(x, y)| (x.clone(), y.clone()))
+                if func_name == "zip" && args.len() >= 2 && kwargs.is_empty() {
+                    let first_iterable = &args[0];
+                    let ir_first = self.analyze_expr(first_iterable)?;
+                    let first_ty = self.infer_type(first_iterable);
+
+                    // Start with first.iter()
+                    let mut ir_iter = IrExpr::MethodCall {
+                        target: Box::new(ir_first),
+                        method: "iter".to_string(),
+                        args: vec![],
+                    };
+
+                    // Collect element types for tuple
+                    let mut elem_types = vec![self.get_elem_type(&first_ty)];
+                    let num_args = args.len();
+
+                    // Chain .zip() for each additional iterable
+                    for arg in args.iter().skip(1) {
+                        let ir_arg = self.analyze_expr(arg)?;
+                        let arg_ty = self.infer_type(arg);
+                        elem_types.push(self.get_elem_type(&arg_ty));
+
+                        // .zip(arg.iter())
+                        let arg_iter = IrExpr::MethodCall {
+                            target: Box::new(ir_arg),
+                            method: "iter".to_string(),
+                            args: vec![],
+                        };
+                        ir_iter = IrExpr::MethodCall {
+                            target: Box::new(ir_iter),
+                            method: "zip".to_string(),
+                            args: vec![arg_iter],
+                        };
+                    }
+
+                    // Add .map() to clone references
+                    // For 2 args: .map(|(x, y)| (x.clone(), y.clone()))
+                    // For 3 args: .map(|((x, y), z)| (x.clone(), y.clone(), z.clone()))
+                    let map_closure = if num_args == 2 {
+                        "|(x, y)| (*x, y.clone())".to_string()
+                    } else if num_args == 3 {
+                        "|((x, y), z)| (*x, y.clone(), z.clone())".to_string()
+                    } else {
+                        // Fallback for more args - just pass through
+                        "|(x, y)| (*x, y.clone())".to_string()
+                    };
+
+                    ir_iter = IrExpr::MethodCall {
+                        target: Box::new(ir_iter),
+                        method: "map".to_string(),
+                        args: vec![IrExpr::RawCode(map_closure)],
+                    };
+
+                    let elem_type = Type::Tuple(elem_types);
+                    return Ok((target.to_string(), ir_iter, elem_type));
+                }
+            }
+        }
+
+        // Default case: standard iteration
+        let mut ir_iter = self.analyze_expr(iter)?;
+        let mut iter_type = self.infer_type(iter);
+
+        // If iterating over a Reference to a List, iterate over cloned elements
+        if let Type::Ref(inner) = &iter_type {
+            if let Type::List(_) = **inner {
+                ir_iter = IrExpr::MethodCall {
+                    target: Box::new(ir_iter),
+                    method: "iter".to_string(),
+                    args: vec![],
+                };
+                ir_iter = IrExpr::MethodCall {
+                    target: Box::new(ir_iter),
+                    method: "cloned".to_string(),
+                    args: vec![],
+                };
+                iter_type = *inner.clone();
+            }
+        }
+
+        let elem_type = if let Type::List(elem) = iter_type {
+            *elem
+        } else {
+            Type::Int // Default fallback for range()
+        };
+
+        Ok((target.to_string(), ir_iter, elem_type))
+    }
+
+    /// Helper to get element type from a list/ref type
+    fn get_elem_type(&self, ty: &Type) -> Type {
+        match ty {
+            Type::List(elem) => elem.as_ref().clone(),
+            Type::Ref(inner) => {
+                if let Type::List(elem) = inner.as_ref() {
+                    elem.as_ref().clone()
+                } else {
+                    Type::Unknown
+                }
+            }
+            _ => Type::Unknown,
+        }
+    }
+
     /// Define loop variables in scope based on iterator type
     /// Used by ListComp, GenExpr, and For loops
     fn define_loop_variables(&mut self, target: &str, iter_ty: &Type, wrap_in_ref: bool) {
@@ -3060,7 +3272,104 @@ impl SemanticAnalyzer {
                     }))
                 }
             }
+            // V1.3.0: list.index(x) -> list.iter().position(|e| *e == x).unwrap() as i64
+            "index" if args.len() == 1 => {
+                match _target_ty {
+                    Type::List(_) | Type::Ref(_) => {
+                        let search_val = self.analyze_expr(&args[0])?;
+                        // list.iter().position(|e| *e == val).unwrap() as i64
+                        let iter_call = IrExpr::MethodCall {
+                            target: Box::new(target_ir.clone()),
+                            method: "iter".to_string(),
+                            args: vec![],
+                        };
+                        let position_call = IrExpr::MethodCall {
+                            target: Box::new(iter_call),
+                            method: "position".to_string(),
+                            args: vec![IrExpr::RawCode(format!(
+                                "|e| *e == {}",
+                                self.emit_simple_expr(&search_val)
+                            ))],
+                        };
+                        let unwrap_call = IrExpr::MethodCall {
+                            target: Box::new(position_call),
+                            method: "unwrap".to_string(),
+                            args: vec![],
+                        };
+                        // Cast to i64
+                        Ok(Some(IrExpr::RawCode(format!(
+                            "{} as i64",
+                            self.emit_simple_ir_expr(&unwrap_call)
+                        ))))
+                    }
+                    _ => Ok(None),
+                }
+            }
+            // V1.3.0: list.count(x) -> list.iter().filter(|e| **e == x).count() as i64
+            "count" if args.len() == 1 => {
+                match _target_ty {
+                    Type::List(_) | Type::Ref(_) => {
+                        let search_val = self.analyze_expr(&args[0])?;
+                        // list.iter().filter(|e| **e == val).count() as i64
+                        let iter_call = IrExpr::MethodCall {
+                            target: Box::new(target_ir.clone()),
+                            method: "iter".to_string(),
+                            args: vec![],
+                        };
+                        let filter_call = IrExpr::MethodCall {
+                            target: Box::new(iter_call),
+                            method: "filter".to_string(),
+                            args: vec![IrExpr::RawCode(format!(
+                                "|e| **e == {}",
+                                self.emit_simple_expr(&search_val)
+                            ))],
+                        };
+                        let count_call = IrExpr::MethodCall {
+                            target: Box::new(filter_call),
+                            method: "count".to_string(),
+                            args: vec![],
+                        };
+                        // Cast to i64
+                        Ok(Some(IrExpr::RawCode(format!(
+                            "{} as i64",
+                            self.emit_simple_ir_expr(&count_call)
+                        ))))
+                    }
+                    _ => Ok(None),
+                }
+            }
             _ => Ok(None), // Not a special method, use default handling
+        }
+    }
+
+    /// Simple IR expression to string conversion for use in closures
+    fn emit_simple_expr(&self, expr: &IrExpr) -> String {
+        match expr {
+            IrExpr::Var(name) => name.clone(),
+            IrExpr::IntLit(n) => format!("{n}i64"),
+            IrExpr::FloatLit(f) => format!("{f}"),
+            IrExpr::StringLit(s) => format!("\"{s}\""),
+            IrExpr::BoolLit(b) => b.to_string(),
+            _ => "x".to_string(),
+        }
+    }
+
+    /// Simple IR expression to string conversion
+    fn emit_simple_ir_expr(&self, expr: &IrExpr) -> String {
+        match expr {
+            IrExpr::Var(name) => name.clone(),
+            IrExpr::IntLit(n) => format!("{n}i64"),
+            IrExpr::MethodCall { target, method, args } => {
+                let target_str = self.emit_simple_ir_expr(target);
+                if args.is_empty() {
+                    format!("{target_str}.{method}()")
+                } else {
+                    let args_str: Vec<String> = args.iter().map(|a| self.emit_simple_ir_expr(a)).collect();
+                    format!("{target_str}.{method}({})", args_str.join(", "))
+                }
+            }
+            IrExpr::RawCode(code) => code.clone(),
+            _ => "expr".to_string(),
         }
     }
 
