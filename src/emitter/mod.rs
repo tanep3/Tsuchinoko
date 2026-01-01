@@ -1003,10 +1003,20 @@ use pyo3::types::PyList;
                 }
             }
             IrExpr::List {
-                elem_type: _,
+                elem_type,
                 elements,
             } => {
-                let elems: Vec<_> = elements.iter().map(|e| self.emit_expr(e)).collect();
+                let elems: Vec<_> = elements.iter().map(|e| {
+                    let mut s = self.emit_expr(e);
+                    // If element type is String and value is a string literal, add .to_string()
+                    if matches!(elem_type, Type::String) 
+                        && s.starts_with('"') 
+                        && !s.contains(".to_string()")
+                    {
+                        s = format!("{s}.to_string()");
+                    }
+                    s
+                }).collect();
                 format!("vec![{}]", elems.join(", "))
             }
             IrExpr::Dict {

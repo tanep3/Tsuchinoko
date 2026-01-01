@@ -313,6 +313,16 @@ impl SemanticAnalyzer {
                     }
                 }
             }
+            // V1.3.0: Check for TupleAssign (x, y = y, x + y)
+            Stmt::TupleAssign { targets, .. } => {
+                for target in targets {
+                    // Only mark as mutable if this variable was already declared
+                    // (if it's in seen_vars, it means it was declared earlier)
+                    if seen_vars.contains(target) {
+                        reassigned_vars.insert(target.clone());
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -1769,27 +1779,48 @@ impl SemanticAnalyzer {
                         return Ok(IrExpr::Print { args: typed_args? });
                     }
 
-                    // V1.3.0: sorted(iterable) -> { let mut v = iterable.to_vec(); v.sort(); v }
-                    if name == "sorted" && !args.is_empty() && kwargs.is_empty() {
+                    // V1.3.0: sorted(iterable) or sorted(iterable, reverse=True)
+                    if name == "sorted" && !args.is_empty() {
                         let ir_arg = self.analyze_expr(&args[0])?;
-                        return Ok(IrExpr::RawCode(format!(
-                            "{{ let mut v = {}.to_vec(); v.sort(); v }}",
-                            self.emit_simple_ir_expr(&ir_arg)
-                        )));
+                        
+                        // Check for reverse argument
+                        let reverse = kwargs.iter()
+                            .find(|(k, _)| k == "reverse")
+                            .map(|(_, v)| matches!(v, Expr::BoolLiteral(true)))
+                            .unwrap_or(false);
+                        
+                        if reverse {
+                            return Ok(IrExpr::RawCode(format!(
+                                "{{ let mut v = {}.to_vec(); v.sort_by(|a, b| b.cmp(a)); v }}",
+                                self.emit_simple_ir_expr(&ir_arg)
+                            )));
+                        } else {
+                            return Ok(IrExpr::RawCode(format!(
+                                "{{ let mut v = {}.to_vec(); v.sort(); v }}",
+                                self.emit_simple_ir_expr(&ir_arg)
+                            )));
+                        }
                     }
 
-                    // V1.3.0: sum(iterable) -> iterable.iter().sum()
-                    if name == "sum" && !args.is_empty() && kwargs.is_empty() {
+                    // V1.3.0: sum(iterable) or sum(iterable, start)
+                    if name == "sum" && !args.is_empty() {
                         let ir_arg = self.analyze_expr(&args[0])?;
-                        return Ok(IrExpr::MethodCall {
-                            target: Box::new(IrExpr::MethodCall {
-                                target: Box::new(ir_arg),
-                                method: "iter".to_string(),
-                                args: vec![],
-                            }),
-                            method: "sum".to_string(),
-                            args: vec![],
-                        });
+                        
+                        // Check for start argument (second positional argument)
+                        if args.len() > 1 {
+                            let ir_start = self.analyze_expr(&args[1])?;
+                            return Ok(IrExpr::RawCode(format!(
+                                "{}.iter().sum::<i64>() + {}",
+                                self.emit_simple_ir_expr(&ir_arg),
+                                self.emit_simple_ir_expr(&ir_start)
+                            )));
+                        } else {
+                            // Use RawCode with type annotation to avoid type inference issues
+                            return Ok(IrExpr::RawCode(format!(
+                                "{}.iter().sum::<i64>()",
+                                self.emit_simple_ir_expr(&ir_arg)
+                            )));
+                        }
                     }
 
                     // V1.3.0: all(iterable) -> iterable.iter().all(|x| *x)
@@ -3096,11 +3127,30 @@ impl SemanticAnalyzer {
         // Check for enumerate(iterable) or zip(a, b, ...)
         if let Expr::Call { func, args, kwargs } = iter {
             if let Expr::Ident(func_name) = func.as_ref() {
-                // enumerate(iterable) -> iterable.iter().enumerate()
-                if func_name == "enumerate" && !args.is_empty() && kwargs.is_empty() {
+                // enumerate(iterable) or enumerate(iterable, start=N) -> iterable.iter().enumerate()
+                if func_name == "enumerate" && !args.is_empty() {
                     let iterable = &args[0];
                     let iterable_ty = self.infer_type(iterable);
                     let ir_iterable = self.analyze_expr(iterable)?;
+
+                    // Check for start argument (as positional arg[1] or kwargs["start"])
+                    let start_value: Option<i64> = if args.len() > 1 {
+                        // enumerate(iterable, 1) - positional start
+                        if let Expr::IntLiteral(n) = &args[1] {
+                            Some(*n)
+                        } else {
+                            None
+                        }
+                    } else if let Some((_, start_expr)) = kwargs.iter().find(|(k, _)| k == "start") {
+                        // enumerate(iterable, start=1) - keyword start
+                        if let Expr::IntLiteral(n) = start_expr {
+                            Some(*n)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
 
                     // Get the element type from the iterable
                     let inner_elem_type = match &iterable_ty {
@@ -3115,7 +3165,7 @@ impl SemanticAnalyzer {
                         _ => Type::Unknown,
                     };
 
-                    // Build: iterable.iter().enumerate().map(|(i, x)| (i as i64, x.clone()))
+                    // Build: iterable.iter().enumerate().map(|(i, x)| (i as i64 + start, x.clone()))
                     let iter_call = IrExpr::MethodCall {
                         target: Box::new(ir_iterable),
                         method: "iter".to_string(),
@@ -3126,11 +3176,17 @@ impl SemanticAnalyzer {
                         method: "enumerate".to_string(),
                         args: vec![],
                     };
-                    // Add .map() to convert (usize, &T) -> (i64, T)
+                    
+                    // Add .map() to convert (usize, &T) -> (i64, T) with optional start offset
+                    let map_closure = if let Some(start) = start_value {
+                        format!("|(i, x)| (i as i64 + {}, x.clone())", start)
+                    } else {
+                        "|(i, x)| (i as i64, x.clone())".to_string()
+                    };
                     let mapped_call = IrExpr::MethodCall {
                         target: Box::new(enumerate_call),
                         method: "map".to_string(),
-                        args: vec![IrExpr::RawCode("|(i, x)| (i as i64, x.clone())".to_string())],
+                        args: vec![IrExpr::RawCode(map_closure)],
                     };
 
                     // Element type is (i64, T)
@@ -3140,20 +3196,33 @@ impl SemanticAnalyzer {
                 }
 
                 // V1.3.0: reversed(iterable) -> iterable.iter().rev().cloned()
+                // For strings: s.chars().rev()
                 if func_name == "reversed" && !args.is_empty() && kwargs.is_empty() {
                     let iterable = &args[0];
-                    let iterable_ty = self.infer_type(iterable);
+                    let mut iterable_ty = self.infer_type(iterable);
+                    // Unwrap Ref
+                    while let Type::Ref(inner) = iterable_ty {
+                        iterable_ty = *inner;
+                    }
                     let ir_iterable = self.analyze_expr(iterable)?;
+
+                    // Handle string separately - use .chars().rev()
+                    if matches!(iterable_ty, Type::String) {
+                        let chars_call = IrExpr::MethodCall {
+                            target: Box::new(ir_iterable),
+                            method: "chars".to_string(),
+                            args: vec![],
+                        };
+                        let rev_call = IrExpr::MethodCall {
+                            target: Box::new(chars_call),
+                            method: "rev".to_string(),
+                            args: vec![],
+                        };
+                        return Ok((target.to_string(), rev_call, Type::Unknown));
+                    }
 
                     let inner_elem_type = match &iterable_ty {
                         Type::List(elem) => elem.as_ref().clone(),
-                        Type::Ref(inner) => {
-                            if let Type::List(elem) = inner.as_ref() {
-                                elem.as_ref().clone()
-                            } else {
-                                Type::Unknown
-                            }
-                        }
                         _ => Type::Unknown,
                     };
 
@@ -3217,12 +3286,12 @@ impl SemanticAnalyzer {
                     // For 2 args: .map(|(x, y)| (x.clone(), y.clone()))
                     // For 3 args: .map(|((x, y), z)| (x.clone(), y.clone(), z.clone()))
                     let map_closure = if num_args == 2 {
-                        "|(x, y)| (*x, y.clone())".to_string()
+                        "|(x, y)| (x.clone(), y.clone())".to_string()
                     } else if num_args == 3 {
-                        "|((x, y), z)| (*x, y.clone(), z.clone())".to_string()
+                        "|((x, y), z)| (x.clone(), y.clone(), z.clone())".to_string()
                     } else {
                         // Fallback for more args - just pass through
-                        "|(x, y)| (*x, y.clone())".to_string()
+                        "|(x, y)| (x.clone(), y.clone())".to_string()
                     };
 
                     ir_iter = IrExpr::MethodCall {
@@ -3474,9 +3543,9 @@ impl SemanticAnalyzer {
                             method: "unwrap".to_string(),
                             args: vec![],
                         };
-                        // Cast to i64
+                        // Cast to i64 (wrap in parens for correct precedence)
                         Ok(Some(IrExpr::RawCode(format!(
-                            "{} as i64",
+                            "({} as i64)",
                             self.emit_simple_ir_expr(&unwrap_call)
                         ))))
                     }
@@ -3507,9 +3576,9 @@ impl SemanticAnalyzer {
                             method: "count".to_string(),
                             args: vec![],
                         };
-                        // Cast to i64
+                        // Cast to i64 (wrap in parens for correct precedence)
                         Ok(Some(IrExpr::RawCode(format!(
-                            "{} as i64",
+                            "({} as i64)",
                             self.emit_simple_ir_expr(&count_call)
                         ))))
                     }

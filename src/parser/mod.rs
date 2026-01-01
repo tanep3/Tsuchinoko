@@ -1861,6 +1861,18 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         }
     }
 
+    // IMPORTANT: Tuple (comma-separated) must be checked BEFORE any binary ops
+    // because in Python, comma has the lowest precedence
+    // e.g., "y, x + y" must parse as "(y, x + y)" not "(y, x) + y"
+    let parts = split_by_comma_balanced(expr_str);
+    if parts.len() > 1 {
+        let elements: Result<Vec<_>, _> = parts
+            .iter()
+            .map(|s| parse_expr(s.trim(), line_num))
+            .collect();
+        return Ok(Expr::Tuple(elements?));
+    }
+
     // Try to parse as binary operation (lowest precedence first)
     for (op_str, op) in [(" or ", BinOp::Or), (" and ", BinOp::And)] {
         if let Some(pos) = find_operator_balanced(expr_str, op_str) {
@@ -2193,15 +2205,6 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         }
     }
 
-    // Try to parse as tuple (comma-separated values without brackets)
-    let parts = split_by_comma_balanced(expr_str);
-    if parts.len() > 1 {
-        let elements: Result<Vec<_>, _> = parts
-            .iter()
-            .map(|s| parse_expr(s.trim(), line_num))
-            .collect();
-        return Ok(Expr::Tuple(elements?));
-    }
 
     // Assume it's an identifier
     if expr_str.chars().all(|c| c.is_alphanumeric() || c == '_') {
