@@ -1757,6 +1757,114 @@ impl SemanticAnalyzer {
                             args: vec![],
                         });
                     }
+
+                    // V1.3.0: all(iterable) -> iterable.iter().all(|x| *x)
+                    if name == "all" && !args.is_empty() && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        let iter_call = IrExpr::MethodCall {
+                            target: Box::new(ir_arg),
+                            method: "iter".to_string(),
+                            args: vec![],
+                        };
+                        return Ok(IrExpr::MethodCall {
+                            target: Box::new(iter_call),
+                            method: "all".to_string(),
+                            args: vec![IrExpr::RawCode("|x| *x".to_string())],
+                        });
+                    }
+
+                    // V1.3.0: any(iterable) -> iterable.iter().any(|x| *x)
+                    if name == "any" && !args.is_empty() && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        let iter_call = IrExpr::MethodCall {
+                            target: Box::new(ir_arg),
+                            method: "iter".to_string(),
+                            args: vec![],
+                        };
+                        return Ok(IrExpr::MethodCall {
+                            target: Box::new(iter_call),
+                            method: "any".to_string(),
+                            args: vec![IrExpr::RawCode("|x| *x".to_string())],
+                        });
+                    }
+
+                    // V1.3.0: list(something) - if something is map/filter, we need special handling
+                    if name == "list" && args.len() == 1 && kwargs.is_empty() {
+                        // Check if inner is map() or filter()
+                        if let Expr::Call { func: inner_func, args: inner_args, kwargs: inner_kwargs } = &args[0] {
+                            if let Expr::Ident(inner_name) = inner_func.as_ref() {
+                                // list(map(f, iter)) -> iter.iter().map(f).cloned().collect()
+                                if inner_name == "map" && inner_args.len() == 2 && inner_kwargs.is_empty() {
+                                    let lambda = &inner_args[0];
+                                    let iterable = &inner_args[1];
+                                    let ir_iter = self.analyze_expr(iterable)?;
+                                    let ir_lambda = self.analyze_expr(lambda)?;
+
+                                    let iter_call = IrExpr::MethodCall {
+                                        target: Box::new(ir_iter),
+                                        method: "iter".to_string(),
+                                        args: vec![],
+                                    };
+                                    let map_call = IrExpr::MethodCall {
+                                        target: Box::new(iter_call),
+                                        method: "map".to_string(),
+                                        args: vec![ir_lambda],
+                                    };
+                                    return Ok(IrExpr::MethodCall {
+                                        target: Box::new(map_call),
+                                        method: "collect".to_string(),
+                                        args: vec![],
+                                    });
+                                }
+
+                                // list(filter(f, iter)) -> iter.iter().cloned().filter(|x| cond).collect()
+                                if inner_name == "filter" && inner_args.len() == 2 && inner_kwargs.is_empty() {
+                                    let lambda = &inner_args[0];
+                                    let iterable = &inner_args[1];
+                                    let ir_iter = self.analyze_expr(iterable)?;
+
+                                    // For filter, |&x| pattern dereferences the reference
+                                    let filter_closure = if let Expr::Lambda { params, body } = lambda {
+                                        if params.len() == 1 {
+                                            let param = &params[0];
+                                            let body_ir = self.analyze_expr(body)?;
+                                            IrExpr::RawCode(format!(
+                                                "|&{}| {}",
+                                                param,
+                                                self.emit_simple_ir_expr(&body_ir)
+                                            ))
+                                        } else {
+                                            self.analyze_expr(lambda)?
+                                        }
+                                    } else {
+                                        self.analyze_expr(lambda)?
+                                    };
+
+                                    let iter_call = IrExpr::MethodCall {
+                                        target: Box::new(ir_iter),
+                                        method: "iter".to_string(),
+                                        args: vec![],
+                                    };
+                                    // cloned() before filter to get owned values
+                                    let cloned_call = IrExpr::MethodCall {
+                                        target: Box::new(iter_call),
+                                        method: "cloned".to_string(),
+                                        args: vec![],
+                                    };
+                                    let filter_call = IrExpr::MethodCall {
+                                        target: Box::new(cloned_call),
+                                        method: "filter".to_string(),
+                                        args: vec![filter_closure],
+                                    };
+                                    return Ok(IrExpr::MethodCall {
+                                        target: Box::new(filter_call),
+                                        method: "collect".to_string(),
+                                        args: vec![],
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Handle PyO3 module calls: np.array(...) -> np.call_method1("array", (...))?
@@ -3359,6 +3467,8 @@ impl SemanticAnalyzer {
         match expr {
             IrExpr::Var(name) => name.clone(),
             IrExpr::IntLit(n) => format!("{n}i64"),
+            IrExpr::FloatLit(f) => format!("{f}"),
+            IrExpr::BoolLit(b) => b.to_string(),
             IrExpr::MethodCall { target, method, args } => {
                 let target_str = self.emit_simple_ir_expr(target);
                 if args.is_empty() {
@@ -3367,6 +3477,25 @@ impl SemanticAnalyzer {
                     let args_str: Vec<String> = args.iter().map(|a| self.emit_simple_ir_expr(a)).collect();
                     format!("{target_str}.{method}({})", args_str.join(", "))
                 }
+            }
+            IrExpr::BinOp { op, left, right } => {
+                let op_str = match op {
+                    IrBinOp::Add => "+",
+                    IrBinOp::Sub => "-",
+                    IrBinOp::Mul => "*",
+                    IrBinOp::Div => "/",
+                    IrBinOp::Mod => "%",
+                    IrBinOp::Eq => "==",
+                    IrBinOp::NotEq => "!=",
+                    IrBinOp::Lt => "<",
+                    IrBinOp::LtEq => "<=",
+                    IrBinOp::Gt => ">",
+                    IrBinOp::GtEq => ">=",
+                    IrBinOp::And => "&&",
+                    IrBinOp::Or => "||",
+                    _ => "??",
+                };
+                format!("{} {} {}", self.emit_simple_ir_expr(left), op_str, self.emit_simple_ir_expr(right))
             }
             IrExpr::RawCode(code) => code.clone(),
             _ => "expr".to_string(),
