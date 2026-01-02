@@ -920,25 +920,10 @@ use pyo3::types::PyList;
                     if let Some(name) = func_name_opt {
                         // V1.3.1: int/float/str are now handled by semantic analyzer
                         // and converted to IrExpr::Cast or IrExpr::MethodCall
+                        // V1.3.1: Struct constructors are now handled by semantic analyzer
+                        // and converted to IrExpr::StructConstruct
 
-                        // Check if this is a struct constructor
-                        let _defs = self.struct_defs.clone(); // Clone expensive map? Or name lookups?
-                                                              // Better: Get field names and clone result
-                                                              // self.struct_defs is HashMap<String, Vec<String>>.
-                                                              // Clone Vec<String> is fine for struct def.
-                        if let Some(field_names) = self.struct_defs.get(&name).cloned() {
-                            // Emit as struct literal: Point { x: 0, y: 0 }
-                            let args_str: Vec<_> = args
-                                .iter()
-                                .map(|a| self.emit_expr_no_outer_parens(a))
-                                .collect();
-                            let field_inits: Vec<String> = field_names
-                                .iter()
-                                .zip(args_str.iter())
-                                .map(|(name, value)| format!("{}: {}", to_snake_case(name), value))
-                                .collect();
-                            format!("{} {{ {} }}", name, field_inits.join(", "))
-                        } else {
+                        {
                             let mut args_str: Vec<_> = args
                                 .iter()
                                 .map(|a| self.emit_expr_no_outer_parens(a))
@@ -1501,6 +1486,16 @@ use pyo3::types::PyList;
 
                     format!("println!(\"{}\", {})", format_string, arg_strs.join(", "))
                 }
+            }
+            // V1.3.1: StructConstruct - semantic now provides field information
+            IrExpr::StructConstruct { name, fields } => {
+                let field_inits: Vec<String> = fields
+                    .iter()
+                    .map(|(field_name, value)| {
+                        format!("{}: {}", to_snake_case(field_name), self.emit_expr_no_outer_parens(value))
+                    })
+                    .collect();
+                format!("{} {{ {} }}", name, field_inits.join(", "))
             }
             IrExpr::Unwrap(inner) => {
                 format!("{}.unwrap()", self.emit_expr_internal(inner))

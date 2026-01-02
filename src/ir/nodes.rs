@@ -257,6 +257,12 @@ pub enum IrExpr {
         target: Box<IrExpr>,
         convert_to: String, // "f64", "i64", "String", "bool"
     },
+    /// V1.3.1: Struct construction (moved from emitter responsibility)
+    /// Point(1, 2) -> Point { x: 1, y: 2 }
+    StructConstruct {
+        name: String,
+        fields: Vec<(String, IrExpr)>, // (field_name, value)
+    },
 }
 
 /// IR binary operators

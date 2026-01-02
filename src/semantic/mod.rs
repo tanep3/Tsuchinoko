@@ -2364,14 +2364,24 @@ impl SemanticAnalyzer {
 
                         // Check if this is a struct constructor call
                         if let Some(field_types) = self.struct_field_types.get(name).cloned() {
-                            // Struct constructor - use field types for Auto-Box
+                            // V1.3.1: Generate IrExpr::StructConstruct instead of IrExpr::Call
+                            // This moves the struct construction responsibility from emitter to semantic
                             let expected_types: Vec<Type> =
                                 field_types.iter().map(|(_, ty)| ty.clone()).collect();
+                            let field_names: Vec<String> =
+                                field_types.iter().map(|(name, _)| name.clone()).collect();
                             let ir_args =
                                 self.analyze_call_args(&resolved_args, &expected_types, name)?;
-                            return Ok(IrExpr::Call {
-                                func: Box::new(IrExpr::Var(name.clone())),
-                                args: ir_args,
+
+                            // Build field list with names and values
+                            let fields: Vec<(String, IrExpr)> = field_names
+                                .into_iter()
+                                .zip(ir_args.into_iter())
+                                .collect();
+
+                            return Ok(IrExpr::StructConstruct {
+                                name: name.clone(),
+                                fields,
                             });
                         }
 
