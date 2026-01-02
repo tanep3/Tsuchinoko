@@ -3391,14 +3391,11 @@ impl SemanticAnalyzer {
                         } else {
                             None
                         }
-                    } else if let Some((_, start_expr)) = kwargs.iter().find(|(k, _)| k == "start")
+                    } else if let Some((_, Expr::IntLiteral(n))) =
+                        kwargs.iter().find(|(k, _)| k == "start")
                     {
                         // enumerate(iterable, start=1) - keyword start
-                        if let Expr::IntLiteral(n) = start_expr {
-                            Some(*n)
-                        } else {
-                            None
-                        }
+                        Some(*n)
                     } else {
                         None
                     };
@@ -3853,6 +3850,7 @@ impl SemanticAnalyzer {
     }
 
     /// Simple IR expression to string conversion
+    #[allow(clippy::only_used_in_recursion)]
     fn emit_simple_ir_expr(&self, expr: &IrExpr) -> String {
         match expr {
             IrExpr::Var(name) => name.clone(),
