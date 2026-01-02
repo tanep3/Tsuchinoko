@@ -3968,6 +3968,22 @@ impl SemanticAnalyzer {
         args: &[Expr],
     ) -> Result<Option<IrExpr>, TsuchinokoError> {
         match (name, args.len()) {
+            // V1.3.1: int(x) -> x as i64 (handled here to avoid emitter responsibility)
+            ("int", 1) => {
+                let arg = self.analyze_expr(&args[0])?;
+                Ok(Some(IrExpr::Cast {
+                    target: Box::new(arg),
+                    ty: "i64".to_string(),
+                }))
+            }
+            // V1.3.1: float(x) -> x as f64 (handled here to avoid emitter responsibility)
+            ("float", 1) => {
+                let arg = self.analyze_expr(&args[0])?;
+                Ok(Some(IrExpr::Cast {
+                    target: Box::new(arg),
+                    ty: "f64".to_string(),
+                }))
+            }
             ("range", 1) => {
                 let start = IrExpr::IntLit(0);
                 let end = self.analyze_expr(&args[0])?;

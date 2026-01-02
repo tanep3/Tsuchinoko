@@ -918,19 +918,8 @@ use pyo3::types::PyList;
                     };
 
                     if let Some(name) = func_name_opt {
-                        // Handle native type casts: int(x), float(x), str(x)
-                        if name == "int" && args.len() == 1 {
-                            let arg_str = self.emit_expr_no_outer_parens(&args[0]);
-                            return format!("({arg_str} as i64)");
-                        }
-                        if name == "float" && args.len() == 1 {
-                            let arg_str = self.emit_expr_no_outer_parens(&args[0]);
-                            return format!("({arg_str} as f64)");
-                        }
-                        if name == "str" && args.len() == 1 {
-                            let arg_str = self.emit_expr_no_outer_parens(&args[0]);
-                            return format!("{arg_str}.to_string()");
-                        }
+                        // V1.3.1: int/float/str are now handled by semantic analyzer
+                        // and converted to IrExpr::Cast or IrExpr::MethodCall
 
                         // Check if this is a struct constructor
                         let _defs = self.struct_defs.clone(); // Clone expensive map? Or name lookups?
