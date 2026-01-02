@@ -4,6 +4,7 @@
 //! stdin/stdout で NDJSON 通信を行う。
 
 pub mod module_table;
+pub mod strategies;
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
