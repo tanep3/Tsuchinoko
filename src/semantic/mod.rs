@@ -321,6 +321,8 @@ impl SemanticAnalyzer {
                     if seen_vars.contains(target) {
                         reassigned_vars.insert(target.clone());
                     }
+                    // Always add to seen_vars for future reference
+                    seen_vars.insert(target.clone());
                 }
             }
             _ => {}
@@ -598,6 +600,21 @@ impl SemanticAnalyzer {
                     } else {
                         ir_value
                     };
+                
+                // V1.3.0: If type hint is List with known element type, update IrExpr::List's elem_type
+                // This ensures emitter can correctly add .to_string() for String elements in tuples
+                let ir_value = if let Type::List(elem_ty) = &ty {
+                    if let IrExpr::List { elem_type: _, elements } = ir_value {
+                        IrExpr::List {
+                            elem_type: *elem_ty.clone(),
+                            elements,
+                        }
+                    } else {
+                        ir_value
+                    }
+                } else {
+                    ir_value
+                };
 
                 if is_reassign {
                     Ok(IrNode::Assign {
@@ -610,6 +627,70 @@ impl SemanticAnalyzer {
                         ty,
                         mutable: should_be_mutable,
                         init: Some(Box::new(ir_value)),
+                    })
+                }
+            }
+            // V1.3.0: Handle TupleAssign with mutability info
+            Stmt::TupleAssign { targets, value, starred_index } => {
+                // Delegate star unpacking to regular analyze_stmt
+                if starred_index.is_some() {
+                    return self.analyze_stmt(stmt);
+                }
+                
+                let ir_value = self.analyze_expr(value)?;
+                let is_decl = self.scope.lookup(&targets[0]).is_none();
+                
+                // Check if value is a List - need special handling
+                let result_type = self.infer_type(value);
+                let is_list = matches!(&result_type, Type::List(_)) || 
+                    matches!(&result_type, Type::Ref(inner) if matches!(inner.as_ref(), Type::List(_)));
+                
+                if is_decl {
+                    let elem_types = if let Type::Tuple(types) = &result_type {
+                        if types.len() == targets.len() {
+                            types.clone()
+                        } else {
+                            vec![Type::Unknown; targets.len()]
+                        }
+                    } else if let Type::List(elem) = &result_type {
+                        vec![*elem.clone(); targets.len()]
+                    } else {
+                        vec![Type::Unknown; targets.len()]
+                    };
+                    
+                    let mut decl_targets = Vec::new();
+                    for (i, target) in targets.iter().enumerate() {
+                        let ty = elem_types.get(i).unwrap_or(&Type::Unknown).clone();
+                        // Check if this target will be reassigned later
+                        let is_mutable = reassigned_vars.contains(target);
+                        self.scope.define(target, ty.clone(), is_mutable);
+                        decl_targets.push((target.clone(), ty, is_mutable));
+                    }
+                    
+                    // If value is a List, convert to tuple of indexed accesses
+                    let final_value = if is_list {
+                        let indices: Vec<IrExpr> = (0..targets.len()).map(|i| {
+                            IrExpr::Index {
+                                target: Box::new(ir_value.clone()),
+                                index: Box::new(IrExpr::Cast {
+                                    target: Box::new(IrExpr::IntLit(i as i64)),
+                                    ty: "usize".to_string(),
+                                }),
+                            }
+                        }).collect();
+                        IrExpr::Tuple(indices)
+                    } else {
+                        ir_value
+                    };
+                    
+                    Ok(IrNode::MultiVarDecl {
+                        targets: decl_targets,
+                        value: Box::new(final_value),
+                    })
+                } else {
+                    Ok(IrNode::MultiAssign {
+                        targets: targets.clone(),
+                        value: Box::new(ir_value),
                     })
                 }
             }
@@ -768,6 +849,19 @@ impl SemanticAnalyzer {
             Stmt::AugAssign { target, op, value } => {
                 // Convert augmented assignment (x += 1) to IR
                 let ir_value = self.analyze_expr(value)?;
+                
+                // V1.3.0: Special case for String += char (from reversed(str))
+                // In Rust, String += char is not allowed, use push() instead
+                let target_ty = self.scope.lookup(target).map(|info| info.ty.clone()).unwrap_or(Type::Unknown);
+                if matches!(op, AugAssignOp::Add) && matches!(target_ty, Type::String) {
+                    // Convert to: target.push(value)
+                    return Ok(IrNode::Expr(IrExpr::MethodCall {
+                        target: Box::new(IrExpr::Var(target.clone())),
+                        method: "push".to_string(),
+                        args: vec![ir_value],
+                    }));
+                }
+                
                 let ir_op = match op {
                     AugAssignOp::Add => IrAugAssignOp::Add,
                     AugAssignOp::Sub => IrAugAssignOp::Sub,
@@ -1779,9 +1873,14 @@ impl SemanticAnalyzer {
                         return Ok(IrExpr::Print { args: typed_args? });
                     }
 
-                    // V1.3.0: sorted(iterable) or sorted(iterable, reverse=True)
+                    // V1.3.0: sorted(iterable) or sorted(iterable, reverse=True) or sorted(iterable, key=lambda)
                     if name == "sorted" && !args.is_empty() {
                         let ir_arg = self.analyze_expr(&args[0])?;
+                        
+                        // Check for key argument
+                        let key_lambda = kwargs.iter()
+                            .find(|(k, _)| k == "key")
+                            .map(|(_, v)| v);
                         
                         // Check for reverse argument
                         let reverse = kwargs.iter()
@@ -1789,7 +1888,26 @@ impl SemanticAnalyzer {
                             .map(|(_, v)| matches!(v, Expr::BoolLiteral(true)))
                             .unwrap_or(false);
                         
-                        if reverse {
+                        if let Some(Expr::Lambda { params, body }) = key_lambda {
+                            // sorted(iterable, key=lambda x: expr) -> sort_by_key
+                            let param = params.first().cloned().unwrap_or_else(|| "x".to_string());
+                            let ir_body = self.analyze_expr(body)?;
+                            let body_str = self.emit_simple_ir_expr(&ir_body);
+                            
+                            if reverse {
+                                return Ok(IrExpr::RawCode(format!(
+                                    "{{ let mut v = {}.to_vec(); v.sort_by(|a, b| {{ let {} = b; {} }}.cmp(&{{ let {} = a; {} }})); v }}",
+                                    self.emit_simple_ir_expr(&ir_arg),
+                                    param, body_str, param, body_str
+                                )));
+                            } else {
+                                return Ok(IrExpr::RawCode(format!(
+                                    "{{ let mut v = {}.to_vec(); v.sort_by_key(|{}| {}); v }}",
+                                    self.emit_simple_ir_expr(&ir_arg),
+                                    param, body_str
+                                )));
+                            }
+                        } else if reverse {
                             return Ok(IrExpr::RawCode(format!(
                                 "{{ let mut v = {}.to_vec(); v.sort_by(|a, b| b.cmp(a)); v }}",
                                 self.emit_simple_ir_expr(&ir_arg)
@@ -1806,19 +1924,36 @@ impl SemanticAnalyzer {
                     if name == "sum" && !args.is_empty() {
                         let ir_arg = self.analyze_expr(&args[0])?;
                         
+                        // Determine element type for sum type annotation
+                        let arg_ty = self.infer_type(&args[0]);
+                        let elem_ty = match &arg_ty {
+                            Type::List(inner) => *inner.clone(),
+                            Type::Ref(inner) => {
+                                if let Type::List(elem) = inner.as_ref() {
+                                    *elem.clone()
+                                } else {
+                                    Type::Int
+                                }
+                            }
+                            _ => Type::Int,
+                        };
+                        let sum_type = if matches!(elem_ty, Type::Float) { "f64" } else { "i64" };
+                        
                         // Check for start argument (second positional argument)
                         if args.len() > 1 {
                             let ir_start = self.analyze_expr(&args[1])?;
                             return Ok(IrExpr::RawCode(format!(
-                                "{}.iter().sum::<i64>() + {}",
+                                "{}.iter().sum::<{}>() + {}",
                                 self.emit_simple_ir_expr(&ir_arg),
+                                sum_type,
                                 self.emit_simple_ir_expr(&ir_start)
                             )));
                         } else {
                             // Use RawCode with type annotation to avoid type inference issues
                             return Ok(IrExpr::RawCode(format!(
-                                "{}.iter().sum::<i64>()",
-                                self.emit_simple_ir_expr(&ir_arg)
+                                "{}.iter().sum::<{}>()",
+                                self.emit_simple_ir_expr(&ir_arg),
+                                sum_type
                             )));
                         }
                     }
@@ -2480,14 +2615,87 @@ impl SemanticAnalyzer {
                 iter,
                 condition,
             } => {
-                let ir_iter = self.analyze_expr(iter)?;
-                let mut iter_ty = self.infer_type(iter);
-                while let Type::Ref(inner) = iter_ty {
-                    iter_ty = *inner;
+                // V1.3.0: Handle zip/enumerate in dict comprehension
+                // Check if iter is a Call to zip/enumerate
+                let (ir_iter, iter_ty) = if let Expr::Call { func, args, kwargs } = iter.as_ref() {
+                    if let Expr::Ident(func_name) = func.as_ref() {
+                        if func_name == "zip" && args.len() >= 2 && kwargs.is_empty() {
+                            // zip(a, b) -> a.iter().zip(b.iter()).map(|(x, y)| (x.clone(), y.clone()))
+                            let ir_first = self.analyze_expr(&args[0])?;
+                            let ir_second = self.analyze_expr(&args[1])?;
+                            
+                            let iter_call = IrExpr::MethodCall {
+                                target: Box::new(ir_first),
+                                method: "iter".to_string(),
+                                args: vec![],
+                            };
+                            let zip_call = IrExpr::MethodCall {
+                                target: Box::new(iter_call),
+                                method: "zip".to_string(),
+                                args: vec![IrExpr::MethodCall {
+                                    target: Box::new(ir_second),
+                                    method: "iter".to_string(),
+                                    args: vec![],
+                                }],
+                            };
+                            let mapped = IrExpr::MethodCall {
+                                target: Box::new(zip_call),
+                                method: "map".to_string(),
+                                args: vec![IrExpr::RawCode("|(x, y)| (x.clone(), y.clone())".to_string())],
+                            };
+                            
+                            // Infer element types
+                            let first_ty = self.infer_type(&args[0]);
+                            let second_ty = self.infer_type(&args[1]);
+                            let elem1 = match first_ty { Type::List(e) => *e, _ => Type::Unknown };
+                            let elem2 = match second_ty { Type::List(e) => *e, _ => Type::Unknown };
+                            (mapped, Type::Tuple(vec![elem1, elem2]))
+                        } else if func_name == "enumerate" && !args.is_empty() && kwargs.is_empty() {
+                            // enumerate(items) -> items.iter().enumerate().map(|(i, x)| (i as i64, x.clone()))
+                            let ir_items = self.analyze_expr(&args[0])?;
+                            let iter_call = IrExpr::MethodCall {
+                                target: Box::new(ir_items),
+                                method: "iter".to_string(),
+                                args: vec![],
+                            };
+                            let enum_call = IrExpr::MethodCall {
+                                target: Box::new(iter_call),
+                                method: "enumerate".to_string(),
+                                args: vec![],
+                            };
+                            let mapped = IrExpr::MethodCall {
+                                target: Box::new(enum_call),
+                                method: "map".to_string(),
+                                args: vec![IrExpr::RawCode("|(i, x)| (i as i64, x.clone())".to_string())],
+                            };
+                            
+                            let items_ty = self.infer_type(&args[0]);
+                            let elem = match items_ty { Type::List(e) => *e, _ => Type::Unknown };
+                            (mapped, Type::Tuple(vec![Type::Int, elem]))
+                        } else {
+                            // Default case
+                            let ir = self.analyze_expr(iter)?;
+                            let ty = self.infer_type(iter);
+                            (ir, ty)
+                        }
+                    } else {
+                        let ir = self.analyze_expr(iter)?;
+                        let ty = self.infer_type(iter);
+                        (ir, ty)
+                    }
+                } else {
+                    let ir = self.analyze_expr(iter)?;
+                    let ty = self.infer_type(iter);
+                    (ir, ty)
+                };
+
+                let mut unwrapped_ty = iter_ty;
+                while let Type::Ref(inner) = unwrapped_ty {
+                    unwrapped_ty = *inner;
                 }
 
                 self.scope.push();
-                self.define_loop_variables(target, &iter_ty, true);
+                self.define_loop_variables(target, &unwrapped_ty, true);
 
                 let ir_key = self.analyze_expr(key)?;
                 let ir_value = self.analyze_expr(value)?;

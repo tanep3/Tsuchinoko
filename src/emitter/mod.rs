@@ -248,6 +248,9 @@ use pyo3::types::PyList;
                             } else {
                                 self.emit_expr_no_outer_parens(expr)
                             }
+                        } else if matches!(expr.as_ref(), IrExpr::Tuple(_)) {
+                            // Keep parentheses for tuple literals
+                            self.emit_expr(expr)
                         } else {
                             self.emit_expr_no_outer_parens(expr)
                         };
@@ -1014,6 +1017,27 @@ use pyo3::types::PyList;
                         && !s.contains(".to_string()")
                     {
                         s = format!("{s}.to_string()");
+                    }
+                    // If element type is Tuple with String, convert string literals inside
+                    if let Type::Tuple(inner_types) = elem_type {
+                        if inner_types.iter().any(|t| matches!(t, Type::String)) {
+                            // Replace string literals inside tuple with .to_string() version
+                            // e.g., ("a", 1i64) -> ("a".to_string(), 1i64)
+                            if s.starts_with('(') && s.ends_with(')') {
+                                let inner = &s[1..s.len()-1];
+                                let parts: Vec<&str> = inner.split(", ").collect();
+                                let converted: Vec<String> = parts.iter().enumerate().map(|(i, part)| {
+                                    if i < inner_types.len() && matches!(inner_types[i], Type::String)
+                                        && part.starts_with('"') && !part.contains(".to_string()")
+                                    {
+                                        format!("{}.to_string()", part)
+                                    } else {
+                                        part.to_string()
+                                    }
+                                }).collect();
+                                s = format!("({})", converted.join(", "));
+                            }
+                        }
                     }
                     s
                 }).collect();
