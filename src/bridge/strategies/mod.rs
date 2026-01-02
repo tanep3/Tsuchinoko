@@ -1,12 +1,14 @@
 //! Import Strategy Trait Definition
 //!
 //! ImportStrategy トレイトは、Pythonモジュールのimport方式を抽象化する。
-//! 各実装（Native, Resident）がこのトレイトを実装する。
+//! 各実装（Native, PyO3, Resident）がこのトレイトを実装する。
 
 pub mod native;
+pub mod pyo3;
 pub mod resident;
 
 pub use native::NativeStrategy;
+pub use pyo3::PyO3Strategy;
 pub use resident::ResidentStrategy;
 
 /// インポート方式を表すトレイト

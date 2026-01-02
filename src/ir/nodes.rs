@@ -1,327 +1,127 @@
-//! IR node definitions
+//! IR Node (Statement) Definitions
+//!
+//! 中間表現でのステートメントを定義する。
+//! 変数宣言、代入、制御構造、関数定義などを含む。
 
 use crate::semantic::Type;
+use super::exprs::IrExpr;
+use super::ops::IrAugAssignOp;
 
-/// IR node types
+/// IR ノード型 (ステートメント)
 #[derive(Debug, Clone)]
 pub enum IrNode {
-    /// Variable declaration
+    // --- 変数 ---
+    /// 変数宣言
     VarDecl {
         name: String,
         ty: Type,
         mutable: bool,
         init: Option<Box<IrExpr>>,
     },
-    /// Assignment
+    /// 代入
     Assign { target: String, value: Box<IrExpr> },
-    /// Index assignment (arr[i] = val)
+    /// インデックス代入 (arr[i] = val)
     IndexAssign {
         target: Box<IrExpr>,
         index: Box<IrExpr>,
         value: Box<IrExpr>,
     },
-    /// Augmented assignment (x += 1, etc.)
+    /// 累算代入 (x += 1, etc.)
     AugAssign {
         target: String,
         op: IrAugAssignOp,
         value: Box<IrExpr>,
     },
-    /// Multiple assignment (a, b = val) - used for tuple unpacking
-    MultiAssign {
-        targets: Vec<String>,
-        value: Box<IrExpr>,
-    },
-    /// Multiple variable declaration (let (a, b) = val)
+    /// 複数代入 (a, b = val) - タプルアンパック用
+    MultiAssign { targets: Vec<String>, value: Box<IrExpr> },
+    /// 複数変数宣言 (let (a, b) = val)
     MultiVarDecl {
         targets: Vec<(String, Type, bool)>, // (name, type, mutable)
         value: Box<IrExpr>,
     },
-    /// Function declaration
+    /// フィールド代入 (self.field = value)
+    FieldAssign {
+        target: Box<IrExpr>,
+        field: String,
+        value: Box<IrExpr>,
+    },
+
+    // --- 関数・メソッド ---
+    /// 関数宣言
     FuncDecl {
         name: String,
         params: Vec<(String, Type)>,
         ret: Type,
         body: Vec<IrNode>,
     },
-    /// If statement
+    /// メソッド宣言 (implブロック内)
+    MethodDecl {
+        name: String,
+        params: Vec<(String, Type)>, // &selfを除く
+        ret: Type,
+        body: Vec<IrNode>,
+        takes_self: bool,     // インスタンスメソッド
+        takes_mut_self: bool, // selfを変更する場合
+    },
+
+    // --- 制御構造 ---
+    /// if文
     If {
         cond: Box<IrExpr>,
         then_block: Vec<IrNode>,
         else_block: Option<Vec<IrNode>>,
     },
-    /// For loop
+    /// forループ
     For {
         var: String,
         var_type: Type,
         iter: Box<IrExpr>,
         body: Vec<IrNode>,
     },
-    /// While loop
-    While {
-        cond: Box<IrExpr>,
-        body: Vec<IrNode>,
-    },
-    /// Return
+    /// whileループ
+    While { cond: Box<IrExpr>, body: Vec<IrNode> },
+    /// return文
     Return(Option<Box<IrExpr>>),
-    /// Expression statement
-    Expr(IrExpr),
-    /// Field assignment (self.field = value)
-    FieldAssign {
-        target: Box<IrExpr>, // Usually IrExpr::Var("self")
-        field: String,
-        value: Box<IrExpr>,
-    },
-    /// Struct definition (from @dataclass)
-    StructDef {
-        name: String,
-        fields: Vec<(String, Type)>,
-    },
-    /// Impl block for methods
+    /// break文
+    Break,
+    /// continue文
+    Continue,
+
+    // --- 構造体・型 ---
+    /// struct定義 (@dataclass由来)
+    StructDef { name: String, fields: Vec<(String, Type)> },
+    /// implブロック
     ImplBlock {
         struct_name: String,
-        methods: Vec<IrNode>, // Contains MethodDecl nodes
+        methods: Vec<IrNode>,
     },
-    /// Method declaration inside impl block
-    MethodDecl {
-        name: String,
-        params: Vec<(String, Type)>, // Excludes &self
-        ret: Type,
-        body: Vec<IrNode>,
-        takes_self: bool,     // true for instance methods, false for static
-        takes_mut_self: bool, // true if method modifies self (field assignment)
-    },
-    /// Try-except block (maps to match Result)
+    /// 型エイリアス (type Alias = T)
+    TypeAlias { name: String, ty: Type },
+
+    // --- 例外・アサート ---
+    /// try-exceptブロック (match Resultへ変換)
     TryBlock {
         try_body: Vec<IrNode>,
         except_body: Vec<IrNode>,
     },
-    /// Type alias (type Alias = T)
-    TypeAlias { name: String, ty: Type },
-    /// Panic (from raise)
-    Panic(String),
-    /// Break statement
-    Break,
-    /// Continue statement
-    Continue,
-    /// Assert statement (V1.3.0)
+    /// アサート文 (V1.3.0)
     Assert {
         test: Box<IrExpr>,
         msg: Option<Box<IrExpr>>,
     },
-    /// Sequence of nodes (for returning multiple top-level items like StructDef + ImplBlock)
+    /// パニック (raise由来)
+    Panic(String),
+
+    // --- その他 ---
+    /// 式文
+    Expr(IrExpr),
+    /// シーケンス (複数トップレベル項目)
     Sequence(Vec<IrNode>),
-    /// PyO3 import (for numpy, pandas, etc.)
+    /// PyO3 import (numpy, pandas等)
     PyO3Import {
         module: String,
         alias: Option<String>,
     },
-}
-
-/// IR expression types
-#[derive(Debug, Clone)]
-pub enum IrExpr {
-    /// Literal values
-    IntLit(i64),
-    FloatLit(f64),
-    StringLit(String),
-    BoolLit(bool),
-    /// None literal (Rust None)
-    NoneLit,
-    /// Variable reference
-    Var(String),
-    /// Binary operation
-    BinOp {
-        left: Box<IrExpr>,
-        op: IrBinOp,
-        right: Box<IrExpr>,
-    },
-    /// Unary operation
-    UnaryOp {
-        op: IrUnaryOp,
-        operand: Box<IrExpr>,
-    },
-    /// Print statement with type information for format selection
-    Print {
-        args: Vec<(IrExpr, Type)>, // (expression, type) pairs
-    },
-    /// Function call
-    Call {
-        func: Box<IrExpr>,
-        args: Vec<IrExpr>,
-    },
-    /// PyO3 module method call (np.array(...), pd.DataFrame(...))
-    PyO3Call {
-        module: String, // e.g., "np", "pd"
-        method: String, // e.g., "array", "mean"
-        args: Vec<IrExpr>,
-    },
-    /// Unwrap Option<T> to T (generates .unwrap())
-    Unwrap(Box<IrExpr>),
-    /// Closure (lambda / nested function)
-    Closure {
-        params: Vec<String>,
-        body: Vec<IrNode>,
-        ret_type: Type,
-    },
-    /// List/Vec literal
-    List {
-        elem_type: Type,
-        elements: Vec<IrExpr>,
-    },
-    /// Tuple literal
-    Tuple(Vec<IrExpr>),
-    /// List comprehension [elt for target in iter if condition]
-    ListComp {
-        elt: Box<IrExpr>,
-        target: String,
-        iter: Box<IrExpr>,
-        condition: Option<Box<IrExpr>>,
-    },
-    /// Dict comprehension {k: v for target in iter if condition} (V1.3.0)
-    DictComp {
-        key: Box<IrExpr>,
-        value: Box<IrExpr>,
-        target: String,
-        iter: Box<IrExpr>,
-        condition: Option<Box<IrExpr>>,
-    },
-    /// Index access
-    Index {
-        target: Box<IrExpr>,
-        index: Box<IrExpr>,
-    },
-    /// Slice access (target[start..end])
-    Slice {
-        target: Box<IrExpr>,
-        start: Option<Box<IrExpr>>,
-        end: Option<Box<IrExpr>>,
-    },
-    /// Range (for loops)
-    Range {
-        start: Box<IrExpr>,
-        end: Box<IrExpr>,
-    },
-    /// Method call (e.g., arr.len())
-    MethodCall {
-        target: Box<IrExpr>,
-        method: String,
-        args: Vec<IrExpr>,
-    },
-    /// Method call via Resident Worker (for Type::Any targets)
-    PyO3MethodCall {
-        target: Box<IrExpr>,
-        method: String,
-        args: Vec<IrExpr>,
-    },
-    /// Field access (e.g., obj.field)
-    FieldAccess {
-        target: Box<IrExpr>,
-        field: String,
-    },
-    /// Reference (&expr)
-    Reference {
-        target: Box<IrExpr>,
-    },
-    /// Mutable Reference (&mut expr)
-    MutReference {
-        target: Box<IrExpr>,
-    },
-    /// Dict/HashMap literal
-    Dict {
-        key_type: Type,
-        value_type: Type,
-        entries: Vec<(IrExpr, IrExpr)>,
-    },
-    /// f-string (format! macro)
-    FString {
-        parts: Vec<String>,
-        values: Vec<IrExpr>,
-    },
-    /// Conditional Expression (if test { body } else { orelse })
-    IfExp {
-        test: Box<IrExpr>,
-        body: Box<IrExpr>,
-        orelse: Box<IrExpr>,
-    },
-    /// Box::new helper
-    BoxNew(Box<IrExpr>),
-    /// Explicit cast (expr as type)
-    Cast {
-        target: Box<IrExpr>,
-        ty: String,
-    },
-    /// Raw Rust code (for patterns that don't have IR equivalents)
-    RawCode(String),
-    /// Convert serde_json::Value to concrete type (for PyO3 returns)
-    JsonConversion {
-        target: Box<IrExpr>,
-        convert_to: String, // "f64", "i64", "String", "bool"
-    },
-    /// V1.3.1: Struct construction (moved from emitter responsibility)
-    /// Point(1, 2) -> Point { x: 1, y: 2 }
-    StructConstruct {
-        name: String,
-        fields: Vec<(String, IrExpr)>, // (field_name, value)
-    },
-}
-
-/// IR binary operators
-#[derive(Debug, Clone, PartialEq)]
-pub enum IrBinOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    FloorDiv,
-    Mod,
-    Pow,
-    Eq,
-    NotEq,
-    Lt,
-    Gt,
-    LtEq,
-    GtEq,
-    And,
-    Or,
-    Contains,    // x in dict -> dict.contains_key(&x)
-    NotContains, // x not in dict -> !dict.contains_key(&x) (V1.3.0)
-    Is,          // x is None -> x.is_none()
-    IsNot,       // x is not None -> x.is_some()
-    // Bitwise operators (V1.3.0)
-    BitAnd, // &
-    BitOr,  // |
-    BitXor, // ^
-    Shl,    // <<
-    Shr,    // >>
-    // Matrix multiplication (V1.3.0)
-    MatMul, // @
-}
-
-/// IR unary operators
-#[derive(Debug, Clone)]
-pub enum IrUnaryOp {
-    Neg,
-    Not,
-    Deref,  // *expr
-    BitNot, // ~ (V1.3.0)
-}
-
-/// IR augmented assignment operators
-#[derive(Debug, Clone, PartialEq)]
-pub enum IrAugAssignOp {
-    Add,      // +=
-    Sub,      // -=
-    Mul,      // *=
-    Div,      // /=
-    FloorDiv, // //=
-    Mod,      // %=
-    // V1.3.0 additions
-    Pow,    // **=
-    BitAnd, // &=
-    BitOr,  // |=
-    BitXor, // ^=
-    Shl,    // <<=
-    Shr,    // >>=
 }
 
 #[cfg(test)]
@@ -336,7 +136,6 @@ mod tests {
             mutable: false,
             init: Some(Box::new(IrExpr::IntLit(42))),
         };
-        // Just test that we can create it
         if let IrNode::VarDecl { name, .. } = node {
             assert_eq!(name, "x");
         }
