@@ -2,6 +2,38 @@
 
 本プロジェクトの主要な変更点をここに記録します。
 
+## [1.3.1] - 2026-01-02 コードベースリファクタリング
+
+### 変更 - アーキテクチャ
+
+- **semantic モジュール分割**:
+  - `type_infer.rs`: 型推論ロジック (TypeInferenceトレイト)
+  - `operators.rs`: 演算子変換ロジック
+  - `coercion.rs`: 型変換・強制判定
+  - `builtins.rs`: 組み込み関数テーブル駆動管理
+
+- **IR モジュール分割**:
+  - `ops.rs`: 演算子定義 (IrBinOp, IrUnaryOp, IrAugAssignOp)
+  - `exprs.rs`: 式定義 (IrExpr)
+  - `nodes.rs`: ステートメント定義 (IrNode)
+
+- **bridge/strategies 追加**:
+  - ImportStrategy トレイト: インポート方式の抽象化
+  - NativeStrategy: Rustネイティブ実装 (math系)
+  - PyO3Strategy: 将来のPyO3直接呼び出し用 (空箱)
+  - ResidentStrategy: 常駐プロセスフォールバック
+
+### 変更 - 責務分離
+
+- `IrExpr::Cast`: int/float型キャストをsemantic側で生成
+- `IrExpr::StructConstruct`: struct構築をsemantic側で判定
+- emitter側の重複コード26行削減
+
+### テスト
+
+- ユニットテスト: 91件 (+19)
+- リグレッションテスト: 51件全パス維持
+
 ## [1.3.0] - 2026-01-01 基本構文徹底サポート
 
 ### 追加 - 演算子
