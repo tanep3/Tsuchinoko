@@ -1,10 +1,26 @@
 //! Semantic analysis module
+//!
+//! 意味解析を行うモジュール。AST から IR への変換を担当する。
+//!
+//! ## サブモジュール
+//! - `types` - 型定義
+//! - `scope` - スコープ管理
+//! - `type_infer` - 型推論
+//! - `operators` - 演算子変換
+//! - `coercion` - 型変換・強制
+//! - `builtins` - 組み込み関数
 
 mod scope;
 mod types;
+pub mod type_infer;
+pub mod operators;
+pub mod coercion;
+pub mod builtins;
 
 pub use scope::*;
 pub use types::*;
+pub use type_infer::TypeInference;
+pub use operators::convert_binop;
 
 use crate::error::TsuchinokoError;
 use crate::ir::{IrAugAssignOp, IrBinOp, IrExpr, IrNode, IrUnaryOp};

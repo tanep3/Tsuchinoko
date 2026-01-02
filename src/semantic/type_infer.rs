@@ -1,0 +1,472 @@
+//! Type inference module
+//!
+//! 型推論に関するロジックを提供する。
+//! - `infer_type`: 式から型を推論
+//! - `type_from_hint`: 型ヒントから型を生成
+//! - `resolve_type`: 型エイリアスの解決
+//! - `expr_to_type`: 式を型として解釈
+
+use crate::parser::{BinOp as AstBinOp, Expr, TypeHint, UnaryOp as AstUnaryOp};
+
+use super::{ScopeStack, Type};
+
+/// 型推論を行うトレイト
+///
+/// SemanticAnalyzerに実装される型推論機能を定義。
+/// 他のモジュールからも利用可能にするためトレイトとして分離。
+pub trait TypeInference {
+    /// スコープへのアクセスを提供
+    fn scope(&self) -> &ScopeStack;
+
+    /// PyO3インポート情報へのアクセス
+    fn pyo3_imports(&self) -> &[(String, String)];
+
+    /// 型ヒントから Type を生成する
+    ///
+    /// # Arguments
+    /// * `hint` - パーサーが生成した TypeHint
+    ///
+    /// # Returns
+    /// 対応する Type
+    fn type_from_hint(&self, hint: &TypeHint) -> Type {
+        let params: Vec<Type> = hint.params.iter().map(|h| self.type_from_hint(h)).collect();
+        Type::from_python_hint(&hint.name, &params)
+    }
+
+    /// 式の型を推論する
+    ///
+    /// # Arguments
+    /// * `expr` - 型を推論する対象の式
+    ///
+    /// # Returns
+    /// 推論された型。推論できない場合は Type::Unknown
+    fn infer_type(&self, expr: &Expr) -> Type {
+        match expr {
+            Expr::IntLiteral(_) => Type::Int,
+            Expr::FloatLiteral(_) => Type::Float,
+            Expr::StringLiteral(_) => Type::String,
+            Expr::BoolLiteral(_) => Type::Bool,
+
+            Expr::List(elements) => {
+                if let Some(first) = elements.first() {
+                    Type::List(Box::new(self.infer_type(first)))
+                } else {
+                    Type::List(Box::new(Type::Unknown))
+                }
+            }
+
+            Expr::ListComp { elt, .. } | Expr::GenExpr { elt, .. } => {
+                Type::List(Box::new(self.infer_type(elt)))
+            }
+
+            Expr::Ident(name) => {
+                if let Some(info) = self.scope().lookup(name) {
+                    info.ty.clone()
+                } else {
+                    Type::Unknown
+                }
+            }
+
+            Expr::Index { target, .. } => self.infer_index_type(target),
+
+            Expr::Call { func, args, .. } => self.infer_call_type(func, args),
+
+            Expr::BinOp { left, op, right: _ } => self.infer_binop_type(left, op),
+
+            Expr::UnaryOp { op, operand } => match op {
+                AstUnaryOp::Neg | AstUnaryOp::Pos => self.infer_type(operand),
+                AstUnaryOp::Not => Type::Bool,
+                AstUnaryOp::BitNot => Type::Int,
+            },
+
+            Expr::IfExp { body, orelse, .. } => {
+                let t_body = self.infer_type(body);
+                let t_orelse = self.infer_type(orelse);
+                if t_body == t_orelse {
+                    t_body
+                } else if t_body == Type::Unknown {
+                    t_orelse
+                } else if t_orelse == Type::Unknown {
+                    t_body
+                } else {
+                    Type::Unknown
+                }
+            }
+
+            Expr::Attribute { value, attr } => self.infer_attribute_type(value, attr),
+
+            _ => Type::Unknown,
+        }
+    }
+
+    /// インデックスアクセスの型を推論
+    fn infer_index_type(&self, target: &Expr) -> Type {
+        let target_ty = self.infer_type(target);
+        match target_ty {
+            Type::List(inner) => *inner,
+            Type::Ref(inner) | Type::MutRef(inner) => match *inner {
+                Type::List(elem) => *elem,
+                Type::Tuple(elems) => {
+                    // タプルの全要素が同じ型の場合はその型を返す
+                    if elems.windows(2).all(|w| w[0] == w[1]) && !elems.is_empty() {
+                        elems[0].clone()
+                    } else {
+                        Type::Unknown
+                    }
+                }
+                _ => Type::Unknown,
+            },
+            _ => Type::Unknown,
+        }
+    }
+
+    /// 関数呼び出しの戻り値型を推論
+    fn infer_call_type(&self, func: &Expr, args: &[Expr]) -> Type {
+        // PyO3モジュール呼び出しを先にチェック
+        if let Expr::Attribute { value, .. } = func {
+            if let Expr::Ident(module_alias) = value.as_ref() {
+                let is_pyo3 = self
+                    .pyo3_imports()
+                    .iter()
+                    .any(|(_, alias)| alias == module_alias);
+                if is_pyo3 {
+                    return Type::Any;
+                }
+            }
+            // Type::Any のメソッド呼び出しは Type::Any を返す
+            if matches!(self.infer_type(value), Type::Any) {
+                return Type::Any;
+            }
+        }
+
+        // 関数名ベースの推論
+        if let Expr::Ident(name) = func {
+            match name.as_str() {
+                "tuple" | "list" => return Type::List(Box::new(Type::Unknown)),
+                "dict" if !args.is_empty() => {
+                    let arg_ty = self.infer_type(&args[0]);
+                    if let Type::Dict(k, v) = arg_ty {
+                        return Type::Dict(k, v);
+                    }
+                    return Type::Dict(Box::new(Type::Unknown), Box::new(Type::Unknown));
+                }
+                _ => {
+                    if let Some(info) = self.scope().lookup(name) {
+                        if let Type::Func { ret, .. } = &info.ty {
+                            return *ret.clone();
+                        }
+                    }
+                }
+            }
+        }
+
+        // メソッド呼び出しの型推論
+        if let Expr::Attribute { value, attr } = func {
+            return self.infer_method_return_type(value, attr);
+        }
+
+        Type::Unknown
+    }
+
+    /// メソッド呼び出しの戻り値型を推論
+    fn infer_method_return_type(&self, target: &Expr, method: &str) -> Type {
+        let mut target_ty = self.infer_type(target);
+
+        // Ref をアンラップ
+        while let Type::Ref(inner) = target_ty {
+            target_ty = *inner;
+        }
+
+        match (&target_ty, method) {
+            (Type::Dict(k, v), "items") => {
+                Type::List(Box::new(Type::Tuple(vec![*k.clone(), *v.clone()])))
+            }
+            (Type::Dict(k, _), "keys") => Type::List(k.clone()),
+            (Type::Dict(_, v), "values") => Type::List(v.clone()),
+            (Type::List(inner), "iter") => Type::List(Box::new(Type::Ref(inner.clone()))),
+            (Type::Dict(k, v), "iter") => Type::List(Box::new(Type::Tuple(vec![
+                Type::Ref(k.clone()),
+                Type::Ref(v.clone()),
+            ]))),
+            (Type::String, "join") => Type::String,
+            _ => {
+                // PyO3モジュール呼び出しをチェック
+                if let Expr::Ident(module_alias) = target {
+                    if self
+                        .pyo3_imports()
+                        .iter()
+                        .any(|(_, alias)| alias == module_alias)
+                    {
+                        return Type::Any;
+                    }
+                }
+                Type::Unknown
+            }
+        }
+    }
+
+    /// 二項演算の結果型を推論
+    fn infer_binop_type(&self, left: &Expr, op: &AstBinOp) -> Type {
+        match op {
+            AstBinOp::Add
+            | AstBinOp::Sub
+            | AstBinOp::Mul
+            | AstBinOp::Div
+            | AstBinOp::FloorDiv
+            | AstBinOp::Mod
+            | AstBinOp::Pow
+            | AstBinOp::MatMul => self.infer_type(left),
+
+            AstBinOp::BitAnd
+            | AstBinOp::BitOr
+            | AstBinOp::BitXor
+            | AstBinOp::Shl
+            | AstBinOp::Shr => Type::Int,
+
+            AstBinOp::Eq
+            | AstBinOp::NotEq
+            | AstBinOp::Lt
+            | AstBinOp::Gt
+            | AstBinOp::LtEq
+            | AstBinOp::GtEq
+            | AstBinOp::And
+            | AstBinOp::Or
+            | AstBinOp::In
+            | AstBinOp::NotIn
+            | AstBinOp::Is
+            | AstBinOp::IsNot => Type::Bool,
+        }
+    }
+
+    /// 属性アクセスの型を推論
+    fn infer_attribute_type(&self, value: &Expr, attr: &str) -> Type {
+        if let Expr::Ident(target_name) = value {
+            if target_name == "self" {
+                // dunderプレフィックスを除去
+                let rust_field = if attr.starts_with("__") && !attr.ends_with("__") {
+                    attr.trim_start_matches("__")
+                } else {
+                    attr
+                };
+                if let Some(info) = self.scope().lookup(&format!("self.{rust_field}")) {
+                    return info.ty.clone();
+                }
+            }
+        }
+        Type::Unknown
+    }
+
+    /// 型エイリアスを解決する
+    ///
+    /// Struct型の場合、スコープから実際の型を検索して解決する。
+    fn resolve_type(&self, ty: &Type) -> Type {
+        match ty {
+            Type::Struct(name) => {
+                if let Some(info) = self.scope().lookup(name) {
+                    // 無限再帰を防止
+                    if let Type::Struct(resolved_name) = &info.ty {
+                        if resolved_name == name {
+                            return ty.clone();
+                        }
+                    }
+                    return self.resolve_type(&info.ty);
+                }
+                ty.clone()
+            }
+            Type::Ref(inner) => self.resolve_type(inner),
+            _ => ty.clone(),
+        }
+    }
+
+    /// 式を型として解釈する（型エイリアス用）
+    ///
+    /// `ConditionFunction = Callable[[int], bool]` のような
+    /// 型エイリアス定義で使用する。
+    fn expr_to_type(&self, expr: &Expr) -> Option<Type> {
+        match expr {
+            Expr::Ident(name) => Some(self.type_from_hint(&TypeHint {
+                name: name.clone(),
+                params: vec![],
+            })),
+            Expr::Index { target, index } => {
+                if let Expr::Ident(name) = target.as_ref() {
+                    match name.as_str() {
+                        "Callable" => self.parse_callable_type(index),
+                        "Dict" | "dict" => self.parse_dict_type(index),
+                        "List" | "list" => {
+                            let inner = self.expr_to_type(index)?;
+                            Some(Type::List(Box::new(inner)))
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Callable型をパース
+    fn parse_callable_type(&self, index: &Expr) -> Option<Type> {
+        if let Expr::Tuple(elements) = index {
+            if elements.len() >= 2 {
+                let param_list_expr = &elements[0];
+                let ret_expr = &elements[1];
+
+                let mut param_types = Vec::new();
+                if let Expr::List(p_elems) = param_list_expr {
+                    for p in p_elems {
+                        param_types.push(self.expr_to_type(p)?);
+                    }
+                } else if let Some(t) = self.expr_to_type(param_list_expr) {
+                    param_types.push(t);
+                }
+
+                let ret_type = self.expr_to_type(ret_expr).unwrap_or(Type::Unknown);
+
+                return Some(Type::Func {
+                    params: param_types,
+                    ret: Box::new(ret_type),
+                    is_boxed: true,
+                });
+            }
+        }
+        None
+    }
+
+    /// Dict型をパース
+    fn parse_dict_type(&self, index: &Expr) -> Option<Type> {
+        if let Expr::Tuple(elements) = index {
+            if elements.len() >= 2 {
+                let key_ty = self.expr_to_type(&elements[0]).unwrap_or(Type::Unknown);
+                let val_ty = self.expr_to_type(&elements[1]).unwrap_or(Type::Unknown);
+                return Some(Type::Dict(Box::new(key_ty), Box::new(val_ty)));
+            }
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // テスト用のモック構造体
+    struct MockAnalyzer {
+        scope: ScopeStack,
+        pyo3_imports: Vec<(String, String)>,
+    }
+
+    impl MockAnalyzer {
+        fn new() -> Self {
+            Self {
+                scope: ScopeStack::new(),
+                pyo3_imports: Vec::new(),
+            }
+        }
+    }
+
+    impl TypeInference for MockAnalyzer {
+        fn scope(&self) -> &ScopeStack {
+            &self.scope
+        }
+
+        fn pyo3_imports(&self) -> &[(String, String)] {
+            &self.pyo3_imports
+        }
+    }
+
+    #[test]
+    fn test_infer_int_literal() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::IntLiteral(42);
+        assert_eq!(analyzer.infer_type(&expr), Type::Int);
+    }
+
+    #[test]
+    fn test_infer_float_literal() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::FloatLiteral(3.14);
+        assert_eq!(analyzer.infer_type(&expr), Type::Float);
+    }
+
+    #[test]
+    fn test_infer_string_literal() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::StringLiteral("hello".to_string());
+        assert_eq!(analyzer.infer_type(&expr), Type::String);
+    }
+
+    #[test]
+    fn test_infer_bool_literal() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::BoolLiteral(true);
+        assert_eq!(analyzer.infer_type(&expr), Type::Bool);
+    }
+
+    #[test]
+    fn test_infer_list() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::List(vec![Expr::IntLiteral(1), Expr::IntLiteral(2)]);
+        assert_eq!(analyzer.infer_type(&expr), Type::List(Box::new(Type::Int)));
+    }
+
+    #[test]
+    fn test_infer_empty_list() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::List(vec![]);
+        assert_eq!(
+            analyzer.infer_type(&expr),
+            Type::List(Box::new(Type::Unknown))
+        );
+    }
+
+    #[test]
+    fn test_type_from_hint_int() {
+        let analyzer = MockAnalyzer::new();
+        let hint = TypeHint {
+            name: "int".to_string(),
+            params: vec![],
+        };
+        assert_eq!(analyzer.type_from_hint(&hint), Type::Int);
+    }
+
+    #[test]
+    fn test_type_from_hint_list_int() {
+        let analyzer = MockAnalyzer::new();
+        let hint = TypeHint {
+            name: "list".to_string(),
+            params: vec![TypeHint {
+                name: "int".to_string(),
+                params: vec![],
+            }],
+        };
+        assert_eq!(
+            analyzer.type_from_hint(&hint),
+            Type::List(Box::new(Type::Int))
+        );
+    }
+
+    #[test]
+    fn test_infer_binop_comparison() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::IntLiteral(1)),
+            op: AstBinOp::Lt,
+            right: Box::new(Expr::IntLiteral(2)),
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Bool);
+    }
+
+    #[test]
+    fn test_infer_binop_arithmetic() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::IntLiteral(1)),
+            op: AstBinOp::Add,
+            right: Box::new(Expr::IntLiteral(2)),
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Int);
+    }
+}

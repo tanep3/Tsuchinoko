@@ -301,7 +301,7 @@ pub enum IrUnaryOp {
 }
 
 /// IR augmented assignment operators
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum IrAugAssignOp {
     Add,      // +=
     Sub,      // -=
