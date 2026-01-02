@@ -1161,9 +1161,9 @@ fn parse_line(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoErr
         ("*=", AugAssignOp::Mul),
         ("/=", AugAssignOp::Div),
         ("%=", AugAssignOp::Mod),
-        ("&=", AugAssignOp::BitAnd),    // V1.3.0
-        ("|=", AugAssignOp::BitOr),     // V1.3.0
-        ("^=", AugAssignOp::BitXor),    // V1.3.0
+        ("&=", AugAssignOp::BitAnd), // V1.3.0
+        ("|=", AugAssignOp::BitOr),  // V1.3.0
+        ("^=", AugAssignOp::BitXor), // V1.3.0
     ] {
         if let Some(op_pos) = line.find(op_str) {
             let target = line[..op_pos].trim();
@@ -1204,7 +1204,10 @@ fn parse_line(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoErr
             let msg_str = rest[comma_pos + 1..].trim();
             let test = parse_expr(test_str, line_num)?;
             let msg = parse_expr(msg_str, line_num)?;
-            return Ok(Some(Stmt::Assert { test, msg: Some(msg) }));
+            return Ok(Some(Stmt::Assert {
+                test,
+                msg: Some(msg),
+            }));
         } else {
             let test = parse_expr(rest, line_num)?;
             return Ok(Some(Stmt::Assert { test, msg: None }));
@@ -1766,13 +1769,14 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
                     let after_in = comp_part[in_pos + 2..].trim(); // skip "in"
 
                     // Check for " if " condition
-                    let (iter_str, condition) = if let Some(if_pos) = find_keyword_balanced(after_in, "if") {
-                        let iter_part = after_in[..if_pos].trim();
-                        let cond_part = after_in[if_pos + 2..].trim(); // skip "if"
-                        (iter_part, Some(Box::new(parse_expr(cond_part, line_num)?)))
-                    } else {
-                        (after_in, None)
-                    };
+                    let (iter_str, condition) =
+                        if let Some(if_pos) = find_keyword_balanced(after_in, "if") {
+                            let iter_part = after_in[..if_pos].trim();
+                            let cond_part = after_in[if_pos + 2..].trim(); // skip "if"
+                            (iter_part, Some(Box::new(parse_expr(cond_part, line_num)?)))
+                        } else {
+                            (after_in, None)
+                        };
 
                     let iter = parse_expr(iter_str, line_num)?;
                     return Ok(Expr::DictComp {
@@ -1927,7 +1931,6 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
             });
         }
     }
-
 
     // "is not" operator (must check before "is")
     if let Some(pos) = find_operator_balanced(expr_str, " is not ") {
@@ -2204,7 +2207,6 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
             });
         }
     }
-
 
     // Assume it's an identifier
     if expr_str.chars().all(|c| c.is_alphanumeric() || c == '_') {

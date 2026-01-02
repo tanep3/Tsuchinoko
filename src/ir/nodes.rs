@@ -282,13 +282,13 @@ pub enum IrBinOp {
     Is,          // x is None -> x.is_none()
     IsNot,       // x is not None -> x.is_some()
     // Bitwise operators (V1.3.0)
-    BitAnd,      // &
-    BitOr,       // |
-    BitXor,      // ^
-    Shl,         // <<
-    Shr,         // >>
+    BitAnd, // &
+    BitOr,  // |
+    BitXor, // ^
+    Shl,    // <<
+    Shr,    // >>
     // Matrix multiplication (V1.3.0)
-    MatMul,      // @
+    MatMul, // @
 }
 
 /// IR unary operators
@@ -310,12 +310,12 @@ pub enum IrAugAssignOp {
     FloorDiv, // //=
     Mod,      // %=
     // V1.3.0 additions
-    Pow,      // **=
-    BitAnd,   // &=
-    BitOr,    // |=
-    BitXor,   // ^=
-    Shl,      // <<=
-    Shr,      // >>=
+    Pow,    // **=
+    BitAnd, // &=
+    BitOr,  // |=
+    BitXor, // ^=
+    Shl,    // <<=
+    Shr,    // >>=
 }
 
 #[cfg(test)]

@@ -512,7 +512,8 @@ use pyo3::types::PyList;
                 // V1.3.0: Handle tuple unpacking for enumerate/zip
                 let var_str = if var.contains(',') {
                     // Tuple unpacking: i, item -> (i, item)
-                    let parts: Vec<String> = var.split(',').map(|s| to_snake_case(s.trim())).collect();
+                    let parts: Vec<String> =
+                        var.split(',').map(|s| to_snake_case(s.trim())).collect();
                     format!("({})", parts.join(", "))
                 } else {
                     to_snake_case(var)
@@ -713,7 +714,7 @@ use pyo3::types::PyList;
                 let test_str = self.emit_expr(test);
                 match msg {
                     Some(m) => format!("{indent}assert!({}, {});", test_str, self.emit_expr(m)),
-                    None => format!("{indent}assert!({});", test_str),
+                    None => format!("{indent}assert!({test_str});"),
                 }
             }
             IrNode::Sequence(nodes) => {
@@ -1009,38 +1010,47 @@ use pyo3::types::PyList;
                 elem_type,
                 elements,
             } => {
-                let elems: Vec<_> = elements.iter().map(|e| {
-                    let mut s = self.emit_expr(e);
-                    // If element type is String and value is a string literal, add .to_string()
-                    if matches!(elem_type, Type::String) 
-                        && s.starts_with('"') 
-                        && !s.contains(".to_string()")
-                    {
-                        s = format!("{s}.to_string()");
-                    }
-                    // If element type is Tuple with String, convert string literals inside
-                    if let Type::Tuple(inner_types) = elem_type {
-                        if inner_types.iter().any(|t| matches!(t, Type::String)) {
-                            // Replace string literals inside tuple with .to_string() version
-                            // e.g., ("a", 1i64) -> ("a".to_string(), 1i64)
-                            if s.starts_with('(') && s.ends_with(')') {
-                                let inner = &s[1..s.len()-1];
-                                let parts: Vec<&str> = inner.split(", ").collect();
-                                let converted: Vec<String> = parts.iter().enumerate().map(|(i, part)| {
-                                    if i < inner_types.len() && matches!(inner_types[i], Type::String)
-                                        && part.starts_with('"') && !part.contains(".to_string()")
-                                    {
-                                        format!("{}.to_string()", part)
-                                    } else {
-                                        part.to_string()
-                                    }
-                                }).collect();
-                                s = format!("({})", converted.join(", "));
+                let elems: Vec<_> = elements
+                    .iter()
+                    .map(|e| {
+                        let mut s = self.emit_expr(e);
+                        // If element type is String and value is a string literal, add .to_string()
+                        if matches!(elem_type, Type::String)
+                            && s.starts_with('"')
+                            && !s.contains(".to_string()")
+                        {
+                            s = format!("{s}.to_string()");
+                        }
+                        // If element type is Tuple with String, convert string literals inside
+                        if let Type::Tuple(inner_types) = elem_type {
+                            if inner_types.iter().any(|t| matches!(t, Type::String)) {
+                                // Replace string literals inside tuple with .to_string() version
+                                // e.g., ("a", 1i64) -> ("a".to_string(), 1i64)
+                                if s.starts_with('(') && s.ends_with(')') {
+                                    let inner = &s[1..s.len() - 1];
+                                    let parts: Vec<&str> = inner.split(", ").collect();
+                                    let converted: Vec<String> = parts
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, part)| {
+                                            if i < inner_types.len()
+                                                && matches!(inner_types[i], Type::String)
+                                                && part.starts_with('"')
+                                                && !part.contains(".to_string()")
+                                            {
+                                                format!("{part}.to_string()")
+                                            } else {
+                                                part.to_string()
+                                            }
+                                        })
+                                        .collect();
+                                    s = format!("({})", converted.join(", "));
+                                }
                             }
                         }
-                    }
-                    s
-                }).collect();
+                        s
+                    })
+                    .collect();
                 format!("vec![{}]", elems.join(", "))
             }
             IrExpr::Dict {

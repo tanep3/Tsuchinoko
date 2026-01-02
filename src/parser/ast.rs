@@ -107,10 +107,10 @@ pub enum BinOp {
     GtEq,
     And,
     Or,
-    In,     // x in dict
-    NotIn,  // x not in dict  (V1.3.0)
-    Is,     // x is None
-    IsNot,  // x is not None
+    In,    // x in dict
+    NotIn, // x not in dict  (V1.3.0)
+    Is,    // x is None
+    IsNot, // x is not None
     // Bitwise operators (V1.3.0)
     BitAnd, // &
     BitOr,  // |
@@ -140,12 +140,12 @@ pub enum AugAssignOp {
     FloorDiv, // //=
     Mod,      // %=
     // V1.3.0 additions
-    Pow,      // **=
-    BitAnd,   // &=
-    BitOr,    // |=
-    BitXor,   // ^=
-    Shl,      // <<=
-    Shr,      // >>=
+    Pow,    // **=
+    BitAnd, // &=
+    BitOr,  // |=
+    BitXor, // ^=
+    Shl,    // <<=
+    Shr,    // >>=
 }
 
 /// Statement types
@@ -235,10 +235,7 @@ pub enum Stmt {
     /// Continue statement
     Continue,
     /// Assert statement (V1.3.0)
-    Assert {
-        test: Expr,
-        msg: Option<Expr>,
-    },
+    Assert { test: Expr, msg: Option<Expr> },
 }
 
 /// Function parameter with optional default value
