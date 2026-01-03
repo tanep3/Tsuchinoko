@@ -11,6 +11,11 @@
   - `operators.rs`: 演算子変換ロジック
   - `coercion.rs`: 型変換・強制判定
   - `builtins.rs`: 組み込み関数テーブル駆動管理
+  - `analyze_statements.rs`: 文解析 (for, while, if, class等)
+  - `analyze_expressions.rs`: 式解析 (binop, unary, list, dict等)
+  - `analyze_calls.rs`: 関数/メソッド呼び出し解析
+  - `analyze_types.rs`: 型ヒント・型解決
+
 
 - **IR モジュール分割**:
   - `ops.rs`: 演算子定義 (IrBinOp, IrUnaryOp, IrAugAssignOp)
@@ -29,10 +34,12 @@
 - `IrExpr::StructConstruct`: struct構築をsemantic側で判定
 - emitter側の重複コード26行削減
 
-### テスト
+### テスト - カバレッジ大幅向上
 
-- ユニットテスト: 91件 (+19)
-- リグレッションテスト: 51件全パス維持
+- **semantic モジュール**: 21% → **62%** (+41%向上)
+- **全体カバレッジ**: 55% → **66.58%** (+11.6%向上)
+- **テスト数**: 465件 → **854件** (+389件追加)
+- emitter: **82%** / parser: **80%** 維持
 
 ## [1.3.0] - 2026-01-01 基本構文徹底サポート
 

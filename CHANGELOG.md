@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `operators.rs`: Operator conversion logic
   - `coercion.rs`: Type coercion and conversion utilities
   - `builtins.rs`: Built-in function table-driven management
+  - `analyze_statements.rs`: Statement analysis (for, while, if, class, etc.)
+  - `analyze_expressions.rs`: Expression analysis (binop, unary, list, dict, etc.)
+  - `analyze_calls.rs`: Function/method call analysis
+  - `analyze_types.rs`: Type hint and type resolution
 
 - **IR Module Split**:
   - `ops.rs`: Operator definitions (IrBinOp, IrUnaryOp, IrAugAssignOp)
@@ -32,10 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `IrExpr::StructConstruct`: Struct construction now determined by semantic analyzer
 - Removed 26 lines of duplicate code from emitter
 
-### Tests
+### Tests - Major Coverage Improvement
 
-- Unit tests: 91 (+19 new)
-- Regression tests: All 51 examples passing
+- **semantic module**: 21% → **62%** (+41% improvement)
+- **Overall coverage**: 55% → **66.58%** (+11.6% improvement)
+- **Test count**: 465 → **854** (+389 new tests)
+- emitter: **82%** / parser: **80%** maintained
+
 
 ## [1.3.0] - 2026-01-01 - Thorough Basic Syntax Support
 
