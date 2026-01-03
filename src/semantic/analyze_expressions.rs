@@ -654,7 +654,7 @@ impl SemanticAnalyzer {
 
                             // Build field list with names and values
                             let fields: Vec<(String, IrExpr)> =
-                                field_names.into_iter().zip(ir_args.into_iter()).collect();
+                                field_names.into_iter().zip(ir_args).collect();
 
                             return Ok(IrExpr::StructConstruct {
                                 name: name.clone(),

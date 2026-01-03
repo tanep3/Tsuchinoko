@@ -1086,9 +1086,6 @@ for i in range(10):
 
     // --- analyze: 複雑なケース ---
     #[test]
-    #[test]
-    #[test]
-    #[test]
     fn test_analyze_return() {
         let code = r#"
 def foo() -> int:
@@ -1147,7 +1144,7 @@ arr.append(4)
 "#;
         let program = parse(code).unwrap();
         let ir = analyze(&program).unwrap();
-        assert!(ir.len() >= 1);
+        assert!(!ir.is_empty());
     }
 
     // --- type_from_hint テスト ---
@@ -1188,7 +1185,6 @@ arr.append(4)
     }
 
     // --- analyze_stmts テスト ---
-    #[test]
     // --- SemanticAnalyzer::new テスト ---
     #[test]
     fn test_semantic_analyzer_new() {
@@ -1391,8 +1387,6 @@ arr.append(4)
         assert_eq!(ty, Type::Int);
     }
 
-    #[test]
-    #[test]
     // --- convert_binop 追加テスト ---
     #[test]
     fn test_convert_binop_mod() {
@@ -1402,14 +1396,12 @@ arr.append(4)
     }
 
     #[test]
-    #[test]
     fn test_convert_binop_lteq() {
         let analyzer = SemanticAnalyzer::new();
         let op = analyzer.convert_binop(&crate::parser::BinOp::LtEq);
         assert_eq!(op, IrBinOp::LtEq);
     }
 
-    #[test]
     #[test]
     fn test_convert_binop_noteq() {
         let analyzer = SemanticAnalyzer::new();
@@ -1490,7 +1482,6 @@ def test():
 
     // --- ClassDef variants ---
     #[test]
-    #[test]
     fn test_analyze_class_with_method() {
         let code = r#"
 class Counter:
@@ -1530,10 +1521,7 @@ def greet(name: str = "World") -> str:
     }
 
     // --- If statement variants ---
-    #[test]
-    #[test]
     // --- While loop ---
-    #[test]
     // --- Return variants ---
     #[test]
     fn test_analyze_return_none() {
@@ -1627,9 +1615,6 @@ def empty():
     }
 
     // --- AugAssign variants ---
-    #[test]
-    #[test]
-    #[test]
     // --- TupleAssign ---
     #[test]
     fn test_analyze_tuple_assign() {
@@ -1643,7 +1628,6 @@ def test():
     }
 
     // --- IndexAssign ---
-    #[test]
     // --- ListComp ---
     #[test]
     fn test_analyze_listcomp() {
@@ -1681,7 +1665,6 @@ def test():
     }
 
     // --- Slice ---
-    #[test]
     // --- FieldAssign ---
     #[test]
     fn test_analyze_field_assign() {
@@ -1698,7 +1681,6 @@ class Point:
     }
 
     // --- Method call ---
-    #[test]
     #[test]
     fn test_analyze_list_pop() {
         let code = r#"
@@ -2120,7 +2102,6 @@ def test():
     }
 
     // --- operators テスト ---
-    #[test]
     #[test]
     fn test_convert_binop_pow() {
         let analyzer = SemanticAnalyzer::new();
@@ -2562,7 +2543,6 @@ def test():
     }
 
     // --- slice with step ---
-    #[test]
     // --- floor div ---
     #[test]
     fn test_analyze_floor_div() {
@@ -2671,7 +2651,6 @@ def test():
     }
 
     // --- set (limited support) ---
-    #[test]
     // --- ord/chr ---
     #[test]
     fn test_analyze_ord_call() {
@@ -2952,11 +2931,6 @@ def test():
 
     // --- Types網羅 ---
     #[test]
-    #[test]
-    #[test]
-    #[test]
-    #[test]
-    #[test]
     fn test_type_is_compatible_same() {
         assert!(Type::Int.is_compatible_with(&Type::Int));
         assert!(Type::Float.is_compatible_with(&Type::Float));
@@ -3014,8 +2988,6 @@ def test():
     }
 
     // --- Operators網羅 ---
-    #[test]
-    #[test]
     #[test]
     fn test_convert_binop_is() {
         let analyzer = SemanticAnalyzer::new();
@@ -3266,9 +3238,7 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    #[test]
     // --- multiple assignments ---
-    #[test]
     // --- function calls with expressions ---
     #[test]
     fn test_analyze_call_with_expr_args() {
@@ -3458,8 +3428,6 @@ def test():
     }
 
     // --- more infer_type tests ---
-    #[test]
-    #[test]
     // --- closure/lambda tests ---
     #[test]
     fn test_analyze_lambda_complex() {
@@ -3550,7 +3518,6 @@ def documented():
     }
 
     // --- multi-line string ---
-    #[test]
     // --- escape sequences ---
     #[test]
     fn test_analyze_escape_sequences() {
@@ -3727,7 +3694,6 @@ def test():
     }
 
     // --- unary neg ---
-    #[test]
     // --- empty list ---
     #[test]
     fn test_analyze_empty_list() {
@@ -3988,7 +3954,6 @@ def test():
     }
 
     // --- complex return expressions ---
-    #[test]
     #[test]
     fn test_analyze_return_call_result() {
         let code = r#"
@@ -4284,7 +4249,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    #[test]
     // --- more analyze_statements coverage ---
     #[test]
     fn test_analyze_simple_assign() {
@@ -4405,7 +4369,6 @@ def test():
     }
 
     // --- more class patterns ---
-    #[test]
     #[test]
     fn test_analyze_class_one_field() {
         let code = r#"
@@ -4546,8 +4509,6 @@ def test():
     }
 
     // --- more type hints ---
-    #[test]
-    #[test]
     // --- scope tests ---
     #[test]
     fn test_scope_shadowing() {
@@ -4848,7 +4809,6 @@ def noop():
     }
 
     // --- pass in class ---
-    #[test]
     // --- pass in if ---
     #[test]
     fn test_analyze_pass_if() {
@@ -5935,9 +5895,7 @@ def reverse_list(arr: list[int]) -> list[int]:
     // === テストバッチ71-100: type_infer.rs未カバー分岐直接攻略 ===
 
     // --- infer_type ListComp branch ---
-    #[test]
     // --- infer_type GenExpr branch ---
-    #[test]
     // --- infer_type IfExp branch ---
     #[test]
     fn test_infer_ifexp_same_types() {
@@ -6023,10 +5981,7 @@ def reverse_list(arr: list[int]) -> list[int]:
     }
 
     // --- infer_type Index branch ---
-    #[test]
     // --- infer_type Call branch ---
-    #[test]
-    #[test]
     // --- infer_type Attribute branch ---
     #[test]
     fn test_infer_attribute_dict_items() {

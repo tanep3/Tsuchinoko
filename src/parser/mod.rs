@@ -3071,7 +3071,7 @@ def greet(name: str = "World"):
     }
 
     #[test]
-    fn test_parse_type_hint_Optional() {
+    fn test_parse_type_hint_optional() {
         let hint = parse_type_hint("Optional[str]").unwrap();
         assert_eq!(hint.name, "Optional");
     }
