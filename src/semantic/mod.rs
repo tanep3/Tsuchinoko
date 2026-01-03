@@ -16,21 +16,21 @@
 //! - `analyze_calls` - 関数呼び出し処理
 //! - `analyze_types` - 型推論実装 (infer_type)
 
-mod scope;
-mod analyze_statements;
-mod analyze_expressions;
 mod analyze_calls;
+mod analyze_expressions;
+mod analyze_statements;
 mod analyze_types;
-mod types;
-pub mod type_infer;
-pub mod operators;
-pub mod coercion;
 pub mod builtins;
+pub mod coercion;
+pub mod operators;
+mod scope;
+pub mod type_infer;
+mod types;
 
-pub use scope::*;
-pub use types::*;
-pub use type_infer::TypeInference;
 pub use operators::convert_binop;
+pub use scope::*;
+pub use type_infer::TypeInference;
+pub use types::*;
 
 use crate::error::TsuchinokoError;
 use crate::ir::{IrAugAssignOp, IrBinOp, IrExpr, IrNode, IrUnaryOp};
@@ -1086,11 +1086,8 @@ for i in range(10):
 
     // --- analyze: 複雑なケース ---
     #[test]
-
     #[test]
-
     #[test]
-
     #[test]
     fn test_analyze_return() {
         let code = r#"
@@ -1192,7 +1189,6 @@ arr.append(4)
 
     // --- analyze_stmts テスト ---
     #[test]
-
     // --- SemanticAnalyzer::new テスト ---
     #[test]
     fn test_semantic_analyzer_new() {
@@ -1335,9 +1331,10 @@ arr.append(4)
     #[test]
     fn test_analyze_expr_dict() {
         let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::Dict(vec![
-            (Expr::StringLiteral("a".to_string()), Expr::IntLiteral(1)),
-        ]);
+        let expr = Expr::Dict(vec![(
+            Expr::StringLiteral("a".to_string()),
+            Expr::IntLiteral(1),
+        )]);
         let ir = analyzer.analyze_expr(&expr).unwrap();
         assert!(matches!(ir, IrExpr::Dict { .. }));
     }
@@ -1395,9 +1392,7 @@ arr.append(4)
     }
 
     #[test]
-
     #[test]
-
     // --- convert_binop 追加テスト ---
     #[test]
     fn test_convert_binop_mod() {
@@ -1407,7 +1402,6 @@ arr.append(4)
     }
 
     #[test]
-
     #[test]
     fn test_convert_binop_lteq() {
         let analyzer = SemanticAnalyzer::new();
@@ -1416,7 +1410,6 @@ arr.append(4)
     }
 
     #[test]
-
     #[test]
     fn test_convert_binop_noteq() {
         let analyzer = SemanticAnalyzer::new();
@@ -1453,8 +1446,14 @@ arr.append(4)
         let hint = crate::parser::TypeHint {
             name: "dict".to_string(),
             params: vec![
-                crate::parser::TypeHint { name: "str".to_string(), params: vec![] },
-                crate::parser::TypeHint { name: "int".to_string(), params: vec![] },
+                crate::parser::TypeHint {
+                    name: "str".to_string(),
+                    params: vec![],
+                },
+                crate::parser::TypeHint {
+                    name: "int".to_string(),
+                    params: vec![],
+                },
             ],
         };
         let ty = analyzer.type_from_hint(&hint);
@@ -1491,7 +1490,6 @@ def test():
 
     // --- ClassDef variants ---
     #[test]
-
     #[test]
     fn test_analyze_class_with_method() {
         let code = r#"
@@ -1533,12 +1531,9 @@ def greet(name: str = "World") -> str:
 
     // --- If statement variants ---
     #[test]
-
     #[test]
-
     // --- While loop ---
     #[test]
-
     // --- Return variants ---
     #[test]
     fn test_analyze_return_none() {
@@ -1633,11 +1628,8 @@ def empty():
 
     // --- AugAssign variants ---
     #[test]
-
     #[test]
-
     #[test]
-
     // --- TupleAssign ---
     #[test]
     fn test_analyze_tuple_assign() {
@@ -1652,7 +1644,6 @@ def test():
 
     // --- IndexAssign ---
     #[test]
-
     // --- ListComp ---
     #[test]
     fn test_analyze_listcomp() {
@@ -1677,7 +1668,7 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    // --- Lambda ---  
+    // --- Lambda ---
     #[test]
     fn test_analyze_lambda() {
         let code = r#"
@@ -1691,7 +1682,6 @@ def test():
 
     // --- Slice ---
     #[test]
-
     // --- FieldAssign ---
     #[test]
     fn test_analyze_field_assign() {
@@ -1709,7 +1699,6 @@ class Point:
 
     // --- Method call ---
     #[test]
-
     #[test]
     fn test_analyze_list_pop() {
         let code = r#"
@@ -2132,7 +2121,6 @@ def test():
 
     // --- operators テスト ---
     #[test]
-
     #[test]
     fn test_convert_binop_pow() {
         let analyzer = SemanticAnalyzer::new();
@@ -2181,7 +2169,10 @@ def test():
         let analyzer = SemanticAnalyzer::new();
         let hint = crate::parser::TypeHint {
             name: "Optional".to_string(),
-            params: vec![crate::parser::TypeHint { name: "int".to_string(), params: vec![] }],
+            params: vec![crate::parser::TypeHint {
+                name: "int".to_string(),
+                params: vec![],
+            }],
         };
         let ty = analyzer.type_from_hint(&hint);
         assert!(matches!(ty, Type::Optional(_)));
@@ -2193,8 +2184,14 @@ def test():
         let hint = crate::parser::TypeHint {
             name: "tuple".to_string(),
             params: vec![
-                crate::parser::TypeHint { name: "int".to_string(), params: vec![] },
-                crate::parser::TypeHint { name: "str".to_string(), params: vec![] },
+                crate::parser::TypeHint {
+                    name: "int".to_string(),
+                    params: vec![],
+                },
+                crate::parser::TypeHint {
+                    name: "str".to_string(),
+                    params: vec![],
+                },
             ],
         };
         let ty = analyzer.type_from_hint(&hint);
@@ -2566,7 +2563,6 @@ def test():
 
     // --- slice with step ---
     #[test]
-
     // --- floor div ---
     #[test]
     fn test_analyze_floor_div() {
@@ -2676,7 +2672,6 @@ def test():
 
     // --- set (limited support) ---
     #[test]
-
     // --- ord/chr ---
     #[test]
     fn test_analyze_ord_call() {
@@ -2957,15 +2952,10 @@ def test():
 
     // --- Types網羅 ---
     #[test]
-
     #[test]
-
     #[test]
-
     #[test]
-
     #[test]
-
     #[test]
     fn test_type_is_compatible_same() {
         assert!(Type::Int.is_compatible_with(&Type::Int));
@@ -3025,9 +3015,7 @@ def test():
 
     // --- Operators網羅 ---
     #[test]
-
     #[test]
-
     #[test]
     fn test_convert_binop_is() {
         let analyzer = SemanticAnalyzer::new();
@@ -3279,10 +3267,8 @@ def test():
     }
 
     #[test]
-
     // --- multiple assignments ---
     #[test]
-
     // --- function calls with expressions ---
     #[test]
     fn test_analyze_call_with_expr_args() {
@@ -3414,8 +3400,14 @@ def test():
         let hint = crate::parser::TypeHint {
             name: "Callable".to_string(),
             params: vec![
-                crate::parser::TypeHint { name: "int".to_string(), params: vec![] },
-                crate::parser::TypeHint { name: "bool".to_string(), params: vec![] },
+                crate::parser::TypeHint {
+                    name: "int".to_string(),
+                    params: vec![],
+                },
+                crate::parser::TypeHint {
+                    name: "bool".to_string(),
+                    params: vec![],
+                },
             ],
         };
         let ty = analyzer.type_from_hint(&hint);
@@ -3467,9 +3459,7 @@ def test():
 
     // --- more infer_type tests ---
     #[test]
-
     #[test]
-
     // --- closure/lambda tests ---
     #[test]
     fn test_analyze_lambda_complex() {
@@ -3561,7 +3551,6 @@ def documented():
 
     // --- multi-line string ---
     #[test]
-
     // --- escape sequences ---
     #[test]
     fn test_analyze_escape_sequences() {
@@ -3739,7 +3728,6 @@ def test():
 
     // --- unary neg ---
     #[test]
-
     // --- empty list ---
     #[test]
     fn test_analyze_empty_list() {
@@ -4001,7 +3989,6 @@ def test():
 
     // --- complex return expressions ---
     #[test]
-
     #[test]
     fn test_analyze_return_call_result() {
         let code = r#"
@@ -4044,10 +4031,13 @@ def test():
     #[test]
     fn test_infer_type_from_literal() {
         let analyzer = SemanticAnalyzer::new();
-        
+
         assert_eq!(analyzer.infer_type(&Expr::IntLiteral(42)), Type::Int);
         assert_eq!(analyzer.infer_type(&Expr::FloatLiteral(3.14)), Type::Float);
-        assert_eq!(analyzer.infer_type(&Expr::StringLiteral("test".to_string())), Type::String);
+        assert_eq!(
+            analyzer.infer_type(&Expr::StringLiteral("test".to_string())),
+            Type::String
+        );
         assert_eq!(analyzer.infer_type(&Expr::BoolLiteral(true)), Type::Bool);
     }
 
@@ -4056,20 +4046,20 @@ def test():
     fn test_scope_multiple_push_pop() {
         use super::scope::ScopeStack;
         let mut scope = ScopeStack::new();
-        
+
         scope.define("a", Type::Int, false);
         scope.push();
         scope.define("b", Type::String, false);
         scope.push();
         scope.define("c", Type::Float, false);
-        
+
         assert!(scope.lookup("a").is_some());
         assert!(scope.lookup("b").is_some());
         assert!(scope.lookup("c").is_some());
-        
+
         scope.pop();
         assert!(scope.lookup("c").is_none());
-        
+
         scope.pop();
         assert!(scope.lookup("b").is_none());
         assert!(scope.lookup("a").is_some());
@@ -4096,7 +4086,10 @@ def test():
             name: "list".to_string(),
             params: vec![crate::parser::TypeHint {
                 name: "list".to_string(),
-                params: vec![crate::parser::TypeHint { name: "int".to_string(), params: vec![] }],
+                params: vec![crate::parser::TypeHint {
+                    name: "int".to_string(),
+                    params: vec![],
+                }],
             }],
         };
         let ty = analyzer.type_from_hint(&hint);
@@ -4292,7 +4285,6 @@ def test():
     }
 
     #[test]
-
     // --- more analyze_statements coverage ---
     #[test]
     fn test_analyze_simple_assign() {
@@ -4414,7 +4406,6 @@ def test():
 
     // --- more class patterns ---
     #[test]
-
     #[test]
     fn test_analyze_class_one_field() {
         let code = r#"
@@ -4536,7 +4527,10 @@ def test():
 
     #[test]
     fn test_type_dict_complex() {
-        let ty = Type::Dict(Box::new(Type::String), Box::new(Type::List(Box::new(Type::Int))));
+        let ty = Type::Dict(
+            Box::new(Type::String),
+            Box::new(Type::List(Box::new(Type::Int))),
+        );
         if let Type::Dict(k, v) = ty {
             assert_eq!(*k, Type::String);
             assert!(matches!(*v, Type::List(_)));
@@ -4553,9 +4547,7 @@ def test():
 
     // --- more type hints ---
     #[test]
-
     #[test]
-
     // --- scope tests ---
     #[test]
     fn test_scope_shadowing() {
@@ -4857,7 +4849,6 @@ def noop():
 
     // --- pass in class ---
     #[test]
-
     // --- pass in if ---
     #[test]
     fn test_analyze_pass_if() {
@@ -5474,7 +5465,10 @@ def just_pass():
         let analyzer = SemanticAnalyzer::new();
         let hint = crate::parser::TypeHint {
             name: "list".to_string(),
-            params: vec![crate::parser::TypeHint { name: "str".to_string(), params: vec![] }],
+            params: vec![crate::parser::TypeHint {
+                name: "str".to_string(),
+                params: vec![],
+            }],
         };
         let ty = analyzer.type_from_hint(&hint);
         if let Type::List(inner) = ty {
@@ -5488,8 +5482,14 @@ def just_pass():
         let hint = crate::parser::TypeHint {
             name: "dict".to_string(),
             params: vec![
-                crate::parser::TypeHint { name: "str".to_string(), params: vec![] },
-                crate::parser::TypeHint { name: "int".to_string(), params: vec![] },
+                crate::parser::TypeHint {
+                    name: "str".to_string(),
+                    params: vec![],
+                },
+                crate::parser::TypeHint {
+                    name: "int".to_string(),
+                    params: vec![],
+                },
             ],
         };
         let ty = analyzer.type_from_hint(&hint);
@@ -5910,7 +5910,7 @@ def reverse_list(arr: list[int]) -> list[int]:
         scope.define("level2", Type::Float, false);
         scope.push();
         scope.define("level3", Type::Bool, false);
-        
+
         assert!(scope.lookup("level0").is_some());
         assert!(scope.lookup("level1").is_some());
         assert!(scope.lookup("level2").is_some());
@@ -5936,10 +5936,8 @@ def reverse_list(arr: list[int]) -> list[int]:
 
     // --- infer_type ListComp branch ---
     #[test]
-
     // --- infer_type GenExpr branch ---
     #[test]
-
     // --- infer_type IfExp branch ---
     #[test]
     fn test_infer_ifexp_same_types() {
@@ -6026,17 +6024,18 @@ def reverse_list(arr: list[int]) -> list[int]:
 
     // --- infer_type Index branch ---
     #[test]
-
     // --- infer_type Call branch ---
     #[test]
-
     #[test]
-
     // --- infer_type Attribute branch ---
     #[test]
     fn test_infer_attribute_dict_items() {
         let mut analyzer = SemanticAnalyzer::new();
-        analyzer.define("d", Type::Dict(Box::new(Type::String), Box::new(Type::Int)), false);
+        analyzer.define(
+            "d",
+            Type::Dict(Box::new(Type::String), Box::new(Type::Int)),
+            false,
+        );
         // For attribute, we test via analyze since infer_attribute_type is called internally
         let code = r#"
 def test():
@@ -6285,5 +6284,4 @@ def test():
         let op = analyzer.convert_binop(&crate::parser::BinOp::Pow);
         assert_eq!(op, IrBinOp::Pow);
     }
-
 }
