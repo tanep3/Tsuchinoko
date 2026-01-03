@@ -281,7 +281,11 @@ pub fn get_list_method_info(method: &str, elem_type: &Type) -> Option<MethodInfo
 }
 
 /// Dictメソッドの情報を取得
-pub fn get_dict_method_info(method: &str, key_type: &Type, value_type: &Type) -> Option<MethodInfo> {
+pub fn get_dict_method_info(
+    method: &str,
+    key_type: &Type,
+    value_type: &Type,
+) -> Option<MethodInfo> {
     match method {
         "get" => Some(MethodInfo {
             arg_count: 1, // 1-2

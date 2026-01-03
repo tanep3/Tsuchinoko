@@ -7,9 +7,9 @@
 //! - `exprs` - 式定義 (IrExpr)
 //! - `nodes` - ステートメント定義 (IrNode)
 
-pub mod ops;
 pub mod exprs;
 pub mod nodes;
+pub mod ops;
 
 // 演算子をre-export
 pub use ops::*;

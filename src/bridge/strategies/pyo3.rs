@@ -67,7 +67,9 @@ mod tests {
     #[test]
     fn test_pyo3_generate_code_returns_none() {
         let strategy = PyO3Strategy::new();
-        assert!(strategy.generate_code("numpy.mean", &["arr".to_string()]).is_none());
+        assert!(strategy
+            .generate_code("numpy.mean", &["arr".to_string()])
+            .is_none());
     }
 
     #[test]

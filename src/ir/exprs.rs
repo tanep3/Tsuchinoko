@@ -3,9 +3,9 @@
 //! 中間表現での式を定義する。
 //! リテラル、変数参照、演算、関数呼び出し、その他の式を含む。
 
-use crate::semantic::Type;
-use super::ops::{IrBinOp, IrUnaryOp};
 use super::nodes::IrNode;
+use super::ops::{IrBinOp, IrUnaryOp};
+use crate::semantic::Type;
 
 /// IR 式の型
 #[derive(Debug, Clone)]
@@ -40,7 +40,10 @@ pub enum IrExpr {
 
     // --- 呼び出し ---
     /// 関数呼び出し
-    Call { func: Box<IrExpr>, args: Vec<IrExpr> },
+    Call {
+        func: Box<IrExpr>,
+        args: Vec<IrExpr>,
+    },
     /// メソッド呼び出し (e.g., arr.len())
     MethodCall {
         target: Box<IrExpr>,
@@ -62,7 +65,10 @@ pub enum IrExpr {
 
     // --- コレクション ---
     /// リスト/Vec リテラル
-    List { elem_type: Type, elements: Vec<IrExpr> },
+    List {
+        elem_type: Type,
+        elements: Vec<IrExpr>,
+    },
     /// タプルリテラル
     Tuple(Vec<IrExpr>),
     /// 辞書/HashMap リテラル
@@ -91,7 +97,10 @@ pub enum IrExpr {
 
     // --- アクセス ---
     /// インデックスアクセス
-    Index { target: Box<IrExpr>, index: Box<IrExpr> },
+    Index {
+        target: Box<IrExpr>,
+        index: Box<IrExpr>,
+    },
     /// スライスアクセス (target[start..end])
     Slice {
         target: Box<IrExpr>,
@@ -99,7 +108,10 @@ pub enum IrExpr {
         end: Option<Box<IrExpr>>,
     },
     /// Range (forループ用)
-    Range { start: Box<IrExpr>, end: Box<IrExpr> },
+    Range {
+        start: Box<IrExpr>,
+        end: Box<IrExpr>,
+    },
 
     // --- 参照 ---
     /// 参照 (&expr)
@@ -117,7 +129,10 @@ pub enum IrExpr {
         ret_type: Type,
     },
     /// f-string (format! マクロ)
-    FString { parts: Vec<String>, values: Vec<IrExpr> },
+    FString {
+        parts: Vec<String>,
+        values: Vec<IrExpr>,
+    },
     /// 条件式 (if test { body } else { orelse })
     IfExp {
         test: Box<IrExpr>,
@@ -133,7 +148,10 @@ pub enum IrExpr {
     /// 生Rustコード (IRで表現できないパターン用)
     RawCode(String),
     /// JSON変換 (PyO3戻り値用)
-    JsonConversion { target: Box<IrExpr>, convert_to: String },
+    JsonConversion {
+        target: Box<IrExpr>,
+        convert_to: String,
+    },
     /// V1.3.1: struct構築 (semantic側で判定)
     StructConstruct {
         name: String,

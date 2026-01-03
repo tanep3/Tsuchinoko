@@ -416,7 +416,12 @@ impl SemanticAnalyzer {
 
     /// Define loop variables in scope based on iterator type
     /// Used by ListComp, GenExpr, and For loops
-    pub(crate) fn define_loop_variables(&mut self, target: &str, iter_ty: &Type, wrap_in_ref: bool) {
+    pub(crate) fn define_loop_variables(
+        &mut self,
+        target: &str,
+        iter_ty: &Type,
+        wrap_in_ref: bool,
+    ) {
         match iter_ty {
             Type::List(inner) => {
                 let elem_ty = inner.as_ref().clone();
@@ -464,7 +469,12 @@ impl SemanticAnalyzer {
     }
 
     /// Helper to define loop variables from element type (handles tuple unpacking)
-    pub(crate) fn define_loop_vars_from_elem(&mut self, target: &str, elem_ty: &Type, wrap_in_ref: bool) {
+    pub(crate) fn define_loop_vars_from_elem(
+        &mut self,
+        target: &str,
+        elem_ty: &Type,
+        wrap_in_ref: bool,
+    ) {
         if target.contains(',') {
             // Tuple unpacking: (k, v) for t in list_of_tuples
             if let Type::Tuple(elems) = elem_ty {

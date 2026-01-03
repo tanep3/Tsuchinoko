@@ -3,9 +3,9 @@
 //! 中間表現でのステートメントを定義する。
 //! 変数宣言、代入、制御構造、関数定義などを含む。
 
-use crate::semantic::Type;
 use super::exprs::IrExpr;
 use super::ops::IrAugAssignOp;
+use crate::semantic::Type;
 
 /// IR ノード型 (ステートメント)
 #[derive(Debug, Clone)]
@@ -33,7 +33,10 @@ pub enum IrNode {
         value: Box<IrExpr>,
     },
     /// 複数代入 (a, b = val) - タプルアンパック用
-    MultiAssign { targets: Vec<String>, value: Box<IrExpr> },
+    MultiAssign {
+        targets: Vec<String>,
+        value: Box<IrExpr>,
+    },
     /// 複数変数宣言 (let (a, b) = val)
     MultiVarDecl {
         targets: Vec<(String, Type, bool)>, // (name, type, mutable)
@@ -79,7 +82,10 @@ pub enum IrNode {
         body: Vec<IrNode>,
     },
     /// whileループ
-    While { cond: Box<IrExpr>, body: Vec<IrNode> },
+    While {
+        cond: Box<IrExpr>,
+        body: Vec<IrNode>,
+    },
     /// return文
     Return(Option<Box<IrExpr>>),
     /// break文
@@ -89,7 +95,10 @@ pub enum IrNode {
 
     // --- 構造体・型 ---
     /// struct定義 (@dataclass由来)
-    StructDef { name: String, fields: Vec<(String, Type)> },
+    StructDef {
+        name: String,
+        fields: Vec<(String, Type)>,
+    },
     /// implブロック
     ImplBlock {
         struct_name: String,

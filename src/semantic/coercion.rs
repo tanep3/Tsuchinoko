@@ -76,7 +76,13 @@ pub fn needs_some_wrap(expected_ty: &Type, actual_ty: &Type, expr: &Expr) -> boo
 /// Box化が必要な場合true
 pub fn needs_box_wrap(expected_ty: &Type, actual_ty: &Type) -> bool {
     matches!(expected_ty, Type::Func { is_boxed: true, .. })
-        && matches!(actual_ty, Type::Func { is_boxed: false, .. })
+        && matches!(
+            actual_ty,
+            Type::Func {
+                is_boxed: false,
+                ..
+            }
+        )
 }
 
 /// 参照の追加が必要かどうかを判定
@@ -133,8 +139,7 @@ pub fn needs_clone_or_to_string(
     actual_ty: &Type,
 ) -> Option<&'static str> {
     // Copy型のメソッド呼び出しはスキップ
-    let is_copy_method =
-        matches!(ir_arg, IrExpr::MethodCall { method, .. } if method == "len");
+    let is_copy_method = matches!(ir_arg, IrExpr::MethodCall { method, .. } if method == "len");
 
     if !resolved_actual.is_copy()
         && !matches!(actual_ty, Type::Ref(_))

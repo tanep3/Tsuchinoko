@@ -1492,7 +1492,11 @@ use pyo3::types::PyList;
                 let field_inits: Vec<String> = fields
                     .iter()
                     .map(|(field_name, value)| {
-                        format!("{}: {}", to_snake_case(field_name), self.emit_expr_no_outer_parens(value))
+                        format!(
+                            "{}: {}",
+                            to_snake_case(field_name),
+                            self.emit_expr_no_outer_parens(value)
+                        )
                     })
                     .collect();
                 format!("{} {{ {} }}", name, field_inits.join(", "))
@@ -1660,7 +1664,10 @@ mod tests {
     #[test]
     fn test_emit_string_lit() {
         let mut emitter = RustEmitter::new();
-        assert_eq!(emitter.emit_expr(&IrExpr::StringLit("hello".to_string())), "\"hello\"");
+        assert_eq!(
+            emitter.emit_expr(&IrExpr::StringLit("hello".to_string())),
+            "\"hello\""
+        );
     }
 
     #[test]
@@ -1686,7 +1693,10 @@ mod tests {
     #[test]
     fn test_emit_var_camel_to_snake() {
         let mut emitter = RustEmitter::new();
-        assert_eq!(emitter.emit_expr(&IrExpr::Var("myVariable".to_string())), "my_variable");
+        assert_eq!(
+            emitter.emit_expr(&IrExpr::Var("myVariable".to_string())),
+            "my_variable"
+        );
     }
 
     // --- 演算テスト ---
@@ -1827,7 +1837,7 @@ mod tests {
         let mut emitter = RustEmitter::new();
         let expr = IrExpr::BoxNew(Box::new(IrExpr::IntLit(42)));
         let result = emitter.emit_expr(&expr);
-        assert!(result.contains("Arc::new"));  // BoxNewはArc::newを生成
+        assert!(result.contains("Arc::new")); // BoxNewはArc::newを生成
     }
 
     #[test]
@@ -1942,10 +1952,7 @@ mod tests {
     fn test_emit_struct_def() {
         let node = IrNode::StructDef {
             name: "Point".to_string(),
-            fields: vec![
-                ("x".to_string(), Type::Int),
-                ("y".to_string(), Type::Int),
-            ],
+            fields: vec![("x".to_string(), Type::Int), ("y".to_string(), Type::Int)],
         };
         let result = emit(&[node]);
         assert!(result.contains("struct Point"));
@@ -2297,9 +2304,7 @@ mod tests {
         let expr = IrExpr::Dict {
             key_type: Type::String,
             value_type: Type::Int,
-            entries: vec![
-                (IrExpr::StringLit("a".to_string()), IrExpr::IntLit(1)),
-            ],
+            entries: vec![(IrExpr::StringLit("a".to_string()), IrExpr::IntLit(1))],
         };
         let result = emitter.emit_expr(&expr);
         assert!(result.contains("HashMap"));
@@ -3429,7 +3434,9 @@ mod tests {
                 ("flag".to_string(), Type::Bool),
             ],
             ret: Type::String,
-            body: vec![IrNode::Return(Some(Box::new(IrExpr::Var("name".to_string()))))],
+            body: vec![IrNode::Return(Some(Box::new(IrExpr::Var(
+                "name".to_string(),
+            ))))],
         };
         let result = emit(&[node]);
         assert!(result.contains("name: String"));

@@ -2495,7 +2495,7 @@ while x > 0:
     fn test_parse_expr_neg() {
         // 負のリテラルはIntLiteralとしてパースされる（-10 -> IntLiteral(-10)ではなくUnaryOp Negにはならない場合がある）
         // 実装に合わせてスキップするか、適切な入力を使う
-        let expr = parse_expr("0 - 10", 1).unwrap();  // 引き算で代替
+        let expr = parse_expr("0 - 10", 1).unwrap(); // 引き算で代替
         if let Expr::BinOp { op, .. } = expr {
             assert_eq!(op, BinOp::Sub);
         } else {
@@ -2773,7 +2773,12 @@ else:
     y = 0
 "#;
         let result = parse(code).unwrap();
-        if let Stmt::If { elif_clauses, else_body, .. } = &result.statements[0] {
+        if let Stmt::If {
+            elif_clauses,
+            else_body,
+            ..
+        } = &result.statements[0]
+        {
             assert_eq!(elif_clauses.len(), 1);
             assert!(else_body.is_some());
         }
@@ -3112,8 +3117,8 @@ def greet(name: str = "World"):
     fn test_parse_fstring_simple() {
         let expr = parse_fstring("hello {x}", 1).unwrap();
         if let Expr::FString { parts, values } = expr {
-            assert_eq!(parts.len(), 2);  // "hello ", ""
-            assert_eq!(values.len(), 1);  // x
+            assert_eq!(parts.len(), 2); // "hello ", ""
+            assert_eq!(values.len(), 1); // x
         }
     }
 
@@ -3295,7 +3300,7 @@ x = 1
         }
     }
 
-    // --- Expr: SingleQuote string ---  
+    // --- Expr: SingleQuote string ---
     #[test]
     fn test_parse_single_quote_string() {
         let expr = parse_expr("'test'", 1).unwrap();

@@ -1,5 +1,5 @@
 //! Expression analysis for SemanticAnalyzer
-//! 
+//!
 //! Extracted from mod.rs for maintainability
 
 use super::*;
@@ -653,10 +653,8 @@ impl SemanticAnalyzer {
                                 self.analyze_call_args(&resolved_args, &expected_types, name)?;
 
                             // Build field list with names and values
-                            let fields: Vec<(String, IrExpr)> = field_names
-                                .into_iter()
-                                .zip(ir_args.into_iter())
-                                .collect();
+                            let fields: Vec<(String, IrExpr)> =
+                                field_names.into_iter().zip(ir_args.into_iter()).collect();
 
                             return Ok(IrExpr::StructConstruct {
                                 name: name.clone(),
