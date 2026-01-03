@@ -822,30 +822,7 @@ mod tests {
     use super::*;
     use crate::parser::parse;
 
-
-
-
     // === カバレッジ80%達成用追加テスト ===
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     // --- analyze: 複雑なケース ---
     #[test]
@@ -861,8 +838,6 @@ def foo() -> int:
         }
     }
 
-
-
     #[test]
     fn test_analyze_binop_expr() {
         let code = "x = 1 + 2";
@@ -871,40 +846,11 @@ def foo() -> int:
         assert_eq!(ir.len(), 1);
     }
 
-
-
-
-
     // --- analyze_stmts テスト ---
-
 
     // === テストバッチ2: analyze_expr網羅 ===
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     // === テストバッチ3: Stmt網羅エンドツーエンドテスト ===
-
-
-
 
     // --- FuncDef variants ---
     #[test]
@@ -934,7 +880,6 @@ def greet(name: str = "World") -> str:
 
     // --- If statement variants ---
     // --- While loop ---
-
 
     // --- Break/Continue ---
     #[test]
@@ -978,7 +923,6 @@ def test():
         let ir = analyze(&program).unwrap();
         assert!(!ir.is_empty());
     }
-
 
     // --- Pass ---
     #[test]
@@ -1479,16 +1423,6 @@ def test():
         assert!(scope.lookup("y").is_none());
     }
 
-
-
-
-
-
-
-
-
-
-
     // --- complex expressions ---
     #[test]
     fn test_analyze_nested_binop() {
@@ -1896,7 +1830,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-
     // === テストバッチ7: Call/Method/Builtins網羅 ===
 
     // --- list constructor ---
@@ -2188,7 +2121,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-
     // === テストバッチ8-10: 大量追加で80%達成へ ===
 
     // --- Types網羅 ---
@@ -2248,8 +2180,6 @@ def test():
         let ty = Type::from_python_hint("tuple", &[Type::Int, Type::String]);
         assert!(matches!(ty, Type::Tuple(_)));
     }
-
-
 
     // --- coercion ---
     #[test]
@@ -2399,9 +2329,6 @@ def multi(a: int, b: int, c: int, d: int) -> int:
         assert!(!ir.is_empty());
     }
 
-
-
-
     // --- nested control flow ---
     #[test]
     fn test_analyze_nested_if_for() {
@@ -2531,7 +2458,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-
     // --- generator expressions (converted to list) ---
     #[test]
     fn test_analyze_generator_expr() {
@@ -2557,7 +2483,6 @@ def test():
         let ir = analyze(&program).unwrap();
         assert!(!ir.is_empty());
     }
-
 
     // --- scope depth ---
     #[test]
@@ -2614,7 +2539,6 @@ def test():
         let ir = analyze(&program).unwrap();
         assert!(!ir.is_empty());
     }
-
 
     // --- optional return ---
     #[test]
@@ -2894,8 +2818,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-
-
     // --- multiple function definitions ---
     #[test]
     fn test_analyze_multiple_functions() {
@@ -2931,7 +2853,6 @@ def test():
         let ir = analyze(&program).unwrap();
         assert!(ir.len() >= 3);
     }
-
 
     // --- early return ---
     #[test]
@@ -3013,7 +2934,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-
     // --- more builtins ---
     #[test]
     fn test_analyze_print_multiple_args() {
@@ -3064,8 +2984,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-
-
     // --- chained method calls (single) ---
     #[test]
     fn test_analyze_chained_method_single() {
@@ -3077,7 +2995,6 @@ def test():
         let ir = analyze(&program).unwrap();
         assert!(!ir.is_empty());
     }
-
 
     // --- scope operations ---
     #[test]
@@ -3115,10 +3032,6 @@ def test():
         assert!(Type::Unknown.is_compatible_with(&Type::Float));
         assert!(Type::Unknown.is_compatible_with(&Type::List(Box::new(Type::Int))));
     }
-
-
-
-
 
     // --- modulo operator ---
     #[test]
@@ -3231,9 +3144,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-
-
-
     // --- more analyze_statements coverage ---
     #[test]
     fn test_analyze_simple_assign() {
@@ -3268,14 +3178,6 @@ def test():
         let ir = analyze(&program).unwrap();
         assert!(!ir.is_empty());
     }
-
-
-
-
-
-
-
-
 
     // --- more function patterns ---
     #[test]
@@ -3406,12 +3308,6 @@ def test():
         let info = scope.lookup("x").unwrap();
         assert_eq!(info.ty, Type::Int);
     }
-
-
-
-
-
-
 
     // --- more complex patterns ---
     #[test]
@@ -3678,8 +3574,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-
-
     // === テストバッチ31-50: 80%達成へ ===
 
     // --- more builtins functions ---
@@ -3914,8 +3808,6 @@ def linear_search(arr: list[int], target: int) -> int:
         assert!(!ir.is_empty());
     }
 
-
-
     // --- more complex control flow ---
     #[test]
     fn test_analyze_nested_break() {
@@ -3999,15 +3891,6 @@ def test():
         let info = scope.lookup("x").unwrap();
         assert_eq!(info.ty, Type::String);
     }
-
-
-
-
-
-
-
-
-
 
     // --- more comparison patterns ---
     #[test]
@@ -4132,8 +4015,6 @@ def just_pass():
         let ir = analyze(&program).unwrap();
         assert!(!ir.is_empty());
     }
-
-
 
     // --- infer nested expressions ---
     #[test]
@@ -4354,12 +4235,6 @@ def explicit_void():
         let ir = analyze(&program).unwrap();
         assert!(!ir.is_empty());
     }
-
-
-
-
-
-
 
     // --- more string patterns ---
     #[test]
@@ -4814,6 +4689,4 @@ def test():
         let t2 = Type::Tuple(vec![Type::Int, Type::String]);
         assert!(t1.is_compatible_with(&t2));
     }
-
-
 }

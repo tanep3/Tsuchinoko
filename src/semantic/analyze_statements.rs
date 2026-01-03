@@ -1615,5 +1615,4 @@ def find_first(arr: list[int], target: int) -> int:
         let ir = analyze(&program).unwrap();
         assert!(!ir.is_empty());
     }
-
 }

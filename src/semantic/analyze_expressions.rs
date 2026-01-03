@@ -1780,5 +1780,4 @@ def test():
         let ir = analyze(&program).unwrap();
         assert!(!ir.is_empty());
     }
-
 }
