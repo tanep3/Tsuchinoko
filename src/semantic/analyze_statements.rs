@@ -1,0 +1,1010 @@
+//! Statement analysis for SemanticAnalyzer
+//!
+//! Extracted from mod.rs for maintainability
+
+use super::*;
+
+impl SemanticAnalyzer {
+    pub(crate) fn analyze_stmt(&mut self, stmt: &Stmt) -> Result<IrNode, TsuchinokoError> {
+        match stmt {
+            Stmt::Assign {
+                target,
+                type_hint,
+                value,
+            } => {
+                // Handle self.field = value pattern
+                if target.starts_with("self.") {
+                    let field_name = target.trim_start_matches("self.");
+                    // Strip dunder prefix for Rust struct field
+                    let rust_field_name = field_name.trim_start_matches("__").to_string();
+                    let ir_value = self.analyze_expr(value)?;
+                    return Ok(IrNode::FieldAssign {
+                        target: Box::new(IrExpr::Var("self".to_string())),
+                        field: rust_field_name,
+                        value: Box::new(ir_value),
+                    });
+                }
+
+                // Check for TypeAlias even in top-level analyze_stmt
+                if type_hint.is_none()
+                    && target
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
+                {
+                    if let Some(ty) = self.expr_to_type(value) {
+                        self.scope.define(target, ty.clone(), false);
+                        return Ok(IrNode::TypeAlias {
+                            name: target.clone(),
+                            ty,
+                        });
+                    }
+                }
+                let ty = match type_hint {
+                    Some(th) => self.type_from_hint(th),
+                    None => self.infer_type(value),
+                };
+
+                // Check if variable is already defined (re-assignment)
+                let is_reassign = self.scope.lookup(target).is_some();
+
+                // In Python, lists are always mutable. In Rust, we should make them mutable by default
+                // to allow modification (like push, index assign).
+                // Structs should also be mutable to allow &mut self method calls.
+                // Dicts need to be mutable for insert().
+                // Also respect re-assignment.
+                let should_be_mutable =
+                    is_reassign || matches!(ty, Type::List(_) | Type::Struct(_) | Type::Dict(_, _));
+
+                if !is_reassign {
+                    self.scope.define(target, ty.clone(), false);
+                }
+
+                let ir_value = self.analyze_expr(value)?;
+
+                // If type hint is concrete (String, Int, etc.) but expression is Type::Any,
+                // wrap with JsonConversion for proper type conversion
+                let expr_ty = self.infer_type(value);
+                let ir_value =
+                    if matches!(expr_ty, Type::Any) && !matches!(ty, Type::Any | Type::Unknown) {
+                        let conversion = match &ty {
+                            Type::Float => Some("f64"),
+                            Type::Int => Some("i64"),
+                            Type::String => Some("String"),
+                            Type::Bool => Some("bool"),
+                            _ => None,
+                        };
+                        if let Some(conv) = conversion {
+                            IrExpr::JsonConversion {
+                                target: Box::new(ir_value),
+                                convert_to: conv.to_string(),
+                            }
+                        } else {
+                            ir_value
+                        }
+                    } else {
+                        ir_value
+                    };
+
+                if is_reassign {
+                    Ok(IrNode::Assign {
+                        target: target.clone(),
+                        value: Box::new(ir_value),
+                    })
+                } else {
+                    // Dead code elimination: If initial value is 0 or empty and type is Int/Float,
+                    // and the variable will be shadowed by a for loop, emit a no-op.
+                    // However, semantic analysis doesn't have lookahead.
+                    // We'll mark this variable as "potentially shadowed" and handle in emit phase.
+                    // For now, just emit the declaration.
+                    Ok(IrNode::VarDecl {
+                        name: target.clone(),
+                        ty,
+                        mutable: should_be_mutable,
+                        init: Some(Box::new(ir_value)),
+                    })
+                }
+            }
+            Stmt::IndexAssign {
+                target,
+                index,
+                value,
+            } => {
+                let target_ty = self.infer_type(target);
+                let ir_target = self.analyze_expr(target)?;
+                let ir_index = self.analyze_expr(index)?;
+                let ir_value = self.analyze_expr(value)?;
+
+                // For sequence indexing, handle Ref/MutRef types
+                let mut current_target_ty = target_ty.clone();
+                while let Type::Ref(inner) | Type::MutRef(inner) = current_target_ty {
+                    current_target_ty = *inner;
+                }
+
+                // For Dict types, use insert() method instead of index assignment
+                if matches!(current_target_ty, Type::Dict(_, _)) {
+                    Ok(IrNode::Expr(IrExpr::MethodCall {
+                        target: Box::new(ir_target),
+                        method: "insert".to_string(),
+                        args: vec![ir_index, ir_value],
+                    }))
+                } else if matches!(current_target_ty, Type::Any) {
+                    // For Any type, use __setitem__ method call
+                    Ok(IrNode::Expr(IrExpr::PyO3MethodCall {
+                        target: Box::new(ir_target),
+                        method: "__setitem__".to_string(),
+                        args: vec![ir_index, ir_value],
+                    }))
+                } else {
+                    let final_index = match current_target_ty {
+                        Type::List(_) | Type::Tuple(_) | Type::String => IrExpr::Cast {
+                            target: Box::new(ir_index),
+                            ty: "usize".to_string(),
+                        },
+                        _ => ir_index,
+                    };
+
+                    Ok(IrNode::IndexAssign {
+                        target: Box::new(ir_target),
+                        index: Box::new(final_index),
+                        value: Box::new(ir_value),
+                    })
+                }
+            }
+            Stmt::AugAssign { target, op, value } => {
+                // Convert augmented assignment (x += 1) to IR
+                let ir_value = self.analyze_expr(value)?;
+
+                // V1.3.0: Special case for String += char (from reversed(str))
+                // In Rust, String += char is not allowed, use push() instead
+                let target_ty = self
+                    .scope
+                    .lookup(target)
+                    .map(|info| info.ty.clone())
+                    .unwrap_or(Type::Unknown);
+                if matches!(op, AugAssignOp::Add) && matches!(target_ty, Type::String) {
+                    // Convert to: target.push(value)
+                    return Ok(IrNode::Expr(IrExpr::MethodCall {
+                        target: Box::new(IrExpr::Var(target.clone())),
+                        method: "push".to_string(),
+                        args: vec![ir_value],
+                    }));
+                }
+
+                let ir_op = match op {
+                    AugAssignOp::Add => IrAugAssignOp::Add,
+                    AugAssignOp::Sub => IrAugAssignOp::Sub,
+                    AugAssignOp::Mul => IrAugAssignOp::Mul,
+                    AugAssignOp::Div => IrAugAssignOp::Div,
+                    AugAssignOp::FloorDiv => IrAugAssignOp::FloorDiv,
+                    AugAssignOp::Mod => IrAugAssignOp::Mod,
+                    // V1.3.0 additions
+                    AugAssignOp::Pow => IrAugAssignOp::Pow,
+                    AugAssignOp::BitAnd => IrAugAssignOp::BitAnd,
+                    AugAssignOp::BitOr => IrAugAssignOp::BitOr,
+                    AugAssignOp::BitXor => IrAugAssignOp::BitXor,
+                    AugAssignOp::Shl => IrAugAssignOp::Shl,
+                    AugAssignOp::Shr => IrAugAssignOp::Shr,
+                };
+                Ok(IrNode::AugAssign {
+                    target: target.clone(),
+                    op: ir_op,
+                    value: Box::new(ir_value),
+                })
+            }
+            Stmt::TupleAssign {
+                targets,
+                value,
+                starred_index,
+            } => {
+                // Handle star unpacking: head, *tail = values
+                if let Some(star_idx) = starred_index {
+                    let ir_value = self.analyze_expr(value)?;
+                    let value_ty = self.infer_type(value);
+
+                    // Get the element type from the source value
+                    let elem_ty = match &value_ty {
+                        Type::List(inner) => *inner.clone(),
+                        Type::Ref(inner) => {
+                            if let Type::List(elem) = inner.as_ref() {
+                                *elem.clone()
+                            } else {
+                                Type::Unknown
+                            }
+                        }
+                        _ => Type::Unknown,
+                    };
+
+                    // Generate individual assignments
+                    let mut nodes = Vec::new();
+
+                    for (i, target) in targets.iter().enumerate() {
+                        if i == *star_idx {
+                            // This is the starred target (e.g., *tail)
+                            // Generate: let tail = values[1..].to_vec();
+                            let start_idx = i;
+                            let end_offset = targets.len() - i - 1;
+
+                            let ty = Type::List(Box::new(elem_ty.clone()));
+                            self.scope.define(target, ty.clone(), false);
+
+                            // Build slice expression: values[start_idx..]  or values[start_idx..len-end_offset]
+                            let slice_expr = if end_offset == 0 {
+                                // values[i..].to_vec()
+                                IrExpr::MethodCall {
+                                    target: Box::new(IrExpr::Slice {
+                                        target: Box::new(ir_value.clone()),
+                                        start: Some(Box::new(IrExpr::IntLit(start_idx as i64))),
+                                        end: None,
+                                    }),
+                                    method: "to_vec".to_string(),
+                                    args: vec![],
+                                }
+                            } else {
+                                // values[i..len-end_offset].to_vec()
+                                // Need to calculate end index
+                                let len_call = IrExpr::MethodCall {
+                                    target: Box::new(ir_value.clone()),
+                                    method: "len".to_string(),
+                                    args: vec![],
+                                };
+                                let end_expr = IrExpr::BinOp {
+                                    left: Box::new(len_call),
+                                    op: IrBinOp::Sub,
+                                    right: Box::new(IrExpr::IntLit(end_offset as i64)),
+                                };
+                                IrExpr::MethodCall {
+                                    target: Box::new(IrExpr::Slice {
+                                        target: Box::new(ir_value.clone()),
+                                        start: Some(Box::new(IrExpr::IntLit(start_idx as i64))),
+                                        end: Some(Box::new(end_expr)),
+                                    }),
+                                    method: "to_vec".to_string(),
+                                    args: vec![],
+                                }
+                            };
+
+                            nodes.push(IrNode::VarDecl {
+                                name: target.clone(),
+                                ty,
+                                mutable: false,
+                                init: Some(Box::new(slice_expr)),
+                            });
+                        } else if i < *star_idx {
+                            // Before starred: head = values[i]
+                            self.scope.define(target, elem_ty.clone(), false);
+
+                            let index_expr = IrExpr::Index {
+                                target: Box::new(ir_value.clone()),
+                                index: Box::new(IrExpr::Cast {
+                                    target: Box::new(IrExpr::IntLit(i as i64)),
+                                    ty: "usize".to_string(),
+                                }),
+                            };
+
+                            nodes.push(IrNode::VarDecl {
+                                name: target.clone(),
+                                ty: elem_ty.clone(),
+                                mutable: false,
+                                init: Some(Box::new(index_expr)),
+                            });
+                        } else {
+                            // After starred: use negative indexing from end
+                            // values[len - (targets.len() - i)]
+                            let offset_from_end = targets.len() - i;
+                            self.scope.define(target, elem_ty.clone(), false);
+
+                            let len_call = IrExpr::MethodCall {
+                                target: Box::new(ir_value.clone()),
+                                method: "len".to_string(),
+                                args: vec![],
+                            };
+                            let index_expr = IrExpr::Index {
+                                target: Box::new(ir_value.clone()),
+                                index: Box::new(IrExpr::Cast {
+                                    target: Box::new(IrExpr::BinOp {
+                                        left: Box::new(len_call),
+                                        op: IrBinOp::Sub,
+                                        right: Box::new(IrExpr::IntLit(offset_from_end as i64)),
+                                    }),
+                                    ty: "usize".to_string(),
+                                }),
+                            };
+
+                            nodes.push(IrNode::VarDecl {
+                                name: target.clone(),
+                                ty: elem_ty.clone(),
+                                mutable: false,
+                                init: Some(Box::new(index_expr)),
+                            });
+                        }
+                    }
+
+                    return Ok(IrNode::Sequence(nodes));
+                }
+
+                // Regular tuple unpacking (no star)
+                // Determine if this is a declaration or assignment based on first variable
+                // (Simplified logic: if first var is not in scope, assume declaration for all)
+                let is_decl = self.scope.lookup(&targets[0]).is_none();
+                let ir_value = self.analyze_expr(value)?;
+
+                if is_decl {
+                    // Try to infer types if possible, otherwise Unknown
+                    // If value is a call, we might not know the return type yet without a better symbol table
+                    let result_type = self.infer_type(value);
+                    let elem_types = if let Type::Tuple(types) = result_type {
+                        if types.len() == targets.len() {
+                            types
+                        } else {
+                            vec![Type::Unknown; targets.len()]
+                        }
+                    } else {
+                        vec![Type::Unknown; targets.len()]
+                    };
+
+                    let mut decl_targets = Vec::new();
+                    for (i, target) in targets.iter().enumerate() {
+                        let ty = elem_types.get(i).unwrap_or(&Type::Unknown).clone();
+                        self.scope.define(target, ty.clone(), false);
+                        decl_targets.push((target.clone(), ty, false));
+                    }
+
+                    Ok(IrNode::MultiVarDecl {
+                        targets: decl_targets,
+                        value: Box::new(ir_value),
+                    })
+                } else {
+                    // Assignment to existing variables
+                    Ok(IrNode::MultiAssign {
+                        targets: targets.clone(),
+                        value: Box::new(ir_value),
+                    })
+                }
+            }
+            Stmt::IndexSwap {
+                left_targets,
+                right_values,
+            } => {
+                // Handle swap pattern: a[i], a[j] = a[j], a[i]
+                // Convert to Rust: a.swap(i as usize, j as usize)
+                // This only works for simple 2-element swaps on the same array
+
+                if left_targets.len() == 2 && right_values.len() == 2 {
+                    // Check if this is a simple swap pattern:
+                    // left_targets[0] matches right_values[1] and left_targets[1] matches right_values[0]
+                    if let (
+                        Expr::Index {
+                            target: t1,
+                            index: i1,
+                        },
+                        Expr::Index {
+                            target: t2,
+                            index: i2,
+                        },
+                    ) = (&left_targets[0], &left_targets[1])
+                    {
+                        // Check if targets are the same array
+                        if format!("{t1:?}") == format!("{t2:?}") {
+                            // Generate: target.swap(i1 as usize, i2 as usize)
+                            let ir_target = self.analyze_expr(t1)?;
+                            let ir_i1 = self.analyze_expr(i1)?;
+                            let ir_i2 = self.analyze_expr(i2)?;
+
+                            // Cast indices to usize
+                            let i1_cast = IrExpr::Cast {
+                                target: Box::new(ir_i1),
+                                ty: "usize".to_string(),
+                            };
+                            let i2_cast = IrExpr::Cast {
+                                target: Box::new(ir_i2),
+                                ty: "usize".to_string(),
+                            };
+
+                            return Ok(IrNode::Expr(IrExpr::MethodCall {
+                                target: Box::new(ir_target),
+                                method: "swap".to_string(),
+                                args: vec![i1_cast, i2_cast],
+                            }));
+                        }
+                    }
+                }
+
+                // Fallback: not a simple swap, generate temp variable approach
+                // For now, return an error for unsupported patterns
+                Err(TsuchinokoError::TypeError {
+                    line: 0,
+                    message: "Unsupported swap pattern - only a[i], a[j] = a[j], a[i] is supported"
+                        .to_string(),
+                })
+            }
+            Stmt::FuncDef {
+                name,
+                params,
+                return_type,
+                body,
+            } => {
+                let ret_type = return_type
+                    .as_ref()
+                    .map(|th| self.type_from_hint(th))
+                    .unwrap_or(Type::Unit);
+
+                // Collect mutations in the function body to detect which params need &mut
+                let mut reassigned_vars = std::collections::HashSet::new();
+                let mut mutated_vars = std::collections::HashSet::new();
+                let mut seen_vars = std::collections::HashSet::new();
+                for stmt in body {
+                    self.collect_mutations(
+                        stmt,
+                        &mut reassigned_vars,
+                        &mut mutated_vars,
+                        &mut seen_vars,
+                    );
+                }
+
+                let mut param_types = Vec::new();
+                for p in params {
+                    let base_ty = p
+                        .type_hint
+                        .as_ref()
+                        .map(|th| self.type_from_hint(th))
+                        .unwrap_or(Type::Unknown);
+
+                    // For variadic parameters (*args), wrap in Vec<T>
+                    let ty = if p.variadic {
+                        Type::List(Box::new(base_ty))
+                    } else {
+                        base_ty
+                    };
+
+                    // In Rust, we pass objects by reference.
+                    // So if ty is List/Dict/Struct/String/Tuple, the function signature should reflect Ref(ty).
+                    // If the parameter is mutated in the function body, use MutRef instead.
+                    let is_mutated = mutated_vars.contains(&p.name);
+                    let mut signature_ty = match &ty {
+                        Type::List(_)
+                        | Type::Dict(_, _)
+                        | Type::Struct(_)
+                        | Type::String
+                        | Type::Tuple(_) => {
+                            if is_mutated {
+                                Type::MutRef(Box::new(ty.clone()))
+                            } else {
+                                Type::Ref(Box::new(ty.clone()))
+                            }
+                        }
+                        _ => ty.clone(),
+                    };
+
+                    // Critical fix for closures: If the function returns a boxed closure,
+                    // we need to pass parameters by value (owned) to avoid lifetime issues ('static)
+                    if matches!(ret_type, Type::Func { is_boxed: true, .. }) {
+                        signature_ty = ty.clone();
+                    }
+
+                    param_types.push(signature_ty);
+                }
+
+                // If the return type is a Type::Struct (Alias), check if it resolves to a Func.
+                // If so, use the Func's return type as the function return type.
+                let mut resolved_ret_type = ret_type.clone();
+                if let Type::Struct(alias_name) = &ret_type {
+                    if let Some(info) = self.scope.lookup(alias_name) {
+                        if let Type::Func { ret, .. } = &info.ty {
+                            resolved_ret_type = *ret.clone();
+                        }
+                    }
+                }
+
+                // Define function in current scope BEFORE analyzing body (for recursion)
+                self.scope.define(
+                    name,
+                    Type::Func {
+                        params: param_types.clone(),
+                        ret: Box::new(resolved_ret_type.clone()),
+                        is_boxed: false,
+                    },
+                    false,
+                );
+
+                // Register function parameter info for default argument handling at call sites
+                let param_info: Vec<(String, Type, Option<Expr>, bool)> = params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        let ty = param_types.get(i).cloned().unwrap_or(Type::Unknown);
+                        (p.name.clone(), ty, p.default.clone(), p.variadic)
+                    })
+                    .collect();
+                self.func_param_info.insert(name.clone(), param_info);
+
+                // Check if nested function (Closure conversion)
+                if self.scope.depth() > 0 {
+                    self.scope.push();
+
+                    // Add parameters to scope
+                    let mut param_names = Vec::new();
+
+                    for (i, p) in params.iter().enumerate() {
+                        let ty = &param_types[i];
+                        self.scope.define(&p.name, ty.clone(), false);
+                        param_names.push(p.name.clone());
+                    }
+
+                    let ir_body = self.analyze_stmts(body)?;
+                    self.scope.pop();
+
+                    // Warn about closures if capturing variables?
+                    // Currently implicit capture via 'move' in Rust.
+
+                    let closure = IrExpr::Closure {
+                        params: param_names,
+                        body: ir_body,
+                        ret_type: ret_type.clone(),
+                    };
+
+                    // Wrap closure in Box::new(...) to match Type::Func (Box<dyn Fn...>)
+                    let boxed_closure = IrExpr::BoxNew(Box::new(closure));
+
+                    return Ok(IrNode::VarDecl {
+                        name: name.clone(),
+                        ty: Type::Func {
+                            params: param_types,
+                            ret: Box::new(resolved_ret_type),
+                            is_boxed: true,
+                        }, // Variable holding closure is Boxed
+                        mutable: false,
+                        init: Some(Box::new(boxed_closure)),
+                    });
+                }
+
+                self.scope.push();
+
+                // Add parameters to scope
+                let mut ir_params = Vec::new();
+                for (i, p) in params.iter().enumerate() {
+                    let ty = &param_types[i];
+                    self.scope.define(&p.name, ty.clone(), false);
+                    ir_params.push((p.name.clone(), ty.clone()));
+                }
+
+                // Store the return type for use in Return statement processing
+                let old_return_type = self.current_return_type.take();
+                self.current_return_type = Some(ret_type.clone());
+
+                let ir_body = self.analyze_stmts(body)?;
+
+                // Restore old return type
+                self.current_return_type = old_return_type;
+
+                self.scope.pop();
+
+                let ir_name = name.clone();
+                Ok(IrNode::FuncDecl {
+                    name: ir_name,
+                    params: ir_params,
+                    ret: ret_type,
+                    body: ir_body,
+                })
+            }
+
+            Stmt::If {
+                condition,
+                then_body,
+                elif_clauses,
+                else_body,
+            } => {
+                // Check for main block
+                if let Expr::BinOp { left, op, right } = condition {
+                    if let (Expr::Ident(l), AstBinOp::Eq, Expr::StringLiteral(r)) =
+                        (left.as_ref(), op, right.as_ref())
+                    {
+                        if l == "__name__" && r == "__main__" {
+                            self.scope.push();
+                            let mut ir_body = Vec::new();
+                            for s in then_body {
+                                ir_body.push(self.analyze_stmt(s)?);
+                            }
+                            self.scope.pop();
+
+                            return Ok(IrNode::FuncDecl {
+                                name: "main".to_string(),
+                                params: vec![],
+                                ret: Type::Unit,
+                                body: ir_body,
+                            });
+                        }
+                    }
+                }
+
+                // Check for type narrowing pattern: `if x is None:` or `if x is not None:`
+                // Extract variable name and narrowing direction
+                let narrowing_info = self.extract_none_check(condition);
+
+                let ir_cond = self.analyze_expr(condition)?;
+
+                // Analyze then block with narrowing (if applicable)
+                self.scope.push();
+                if let Some((var_name, is_none_in_then)) = &narrowing_info {
+                    if *is_none_in_then {
+                        // In `if x is None:` then block, x is definitely None
+                        // (No specific narrowing needed - x stays Optional)
+                    } else {
+                        // In `if x is not None:` then block, x is definitely NOT None
+                        // Narrow to inner type
+                        if let Some(Type::Optional(inner)) = self.scope.get_effective_type(var_name)
+                        {
+                            self.scope.narrow_type(var_name, *inner.clone());
+                        }
+                    }
+                }
+                let mut ir_then = Vec::new();
+                for s in then_body {
+                    ir_then.push(self.analyze_stmt(s)?);
+                }
+                self.scope.pop();
+
+                // Analyze else block with opposite narrowing
+                let mut ir_else = if let Some(else_stmts) = else_body {
+                    self.scope.push();
+                    if let Some((var_name, is_none_in_then)) = &narrowing_info {
+                        if *is_none_in_then {
+                            // In `if x is None:` else block, x is definitely NOT None
+                            // Narrow to inner type
+                            if let Some(Type::Optional(inner)) =
+                                self.scope.lookup(var_name).map(|v| v.ty.clone())
+                            {
+                                self.scope.narrow_type(var_name, *inner);
+                            }
+                        }
+                        // In `if x is not None:` else block, x is None (no narrowing needed)
+                    }
+                    let mut stmts = Vec::new();
+                    for s in else_stmts {
+                        stmts.push(self.analyze_stmt(s)?);
+                    }
+                    self.scope.pop();
+                    Some(stmts)
+                } else {
+                    None
+                };
+
+                for (elif_cond, elif_body) in elif_clauses.iter().rev() {
+                    let elif_ir_cond = self.analyze_expr(elif_cond)?;
+                    self.scope.push();
+                    let mut elif_ir_body = Vec::new();
+                    for s in elif_body {
+                        elif_ir_body.push(self.analyze_stmt(s)?);
+                    }
+                    self.scope.pop();
+
+                    let nested_if = IrNode::If {
+                        cond: Box::new(elif_ir_cond),
+                        then_block: elif_ir_body,
+                        else_block: ir_else,
+                    };
+                    ir_else = Some(vec![nested_if]);
+                }
+
+                Ok(IrNode::If {
+                    cond: Box::new(ir_cond),
+                    then_block: ir_then,
+                    else_block: ir_else,
+                })
+            }
+            Stmt::For { target, iter, body } => {
+                // V1.3.0: Handle enumerate(iterable) and zip(a, b)
+                let (actual_target, ir_iter, elem_type) = self.analyze_for_iter(target, iter)?;
+
+                self.scope.push();
+
+                // Define loop variables based on element type
+                if actual_target.contains(',') {
+                    // Tuple unpacking: i, item OR x, y, z
+                    let targets: Vec<_> = actual_target.split(',').map(|s| s.trim()).collect();
+                    if let Type::Tuple(types) = &elem_type {
+                        for (t, ty) in targets.iter().zip(types.iter()) {
+                            self.scope.define(t, ty.clone(), false);
+                        }
+                    } else {
+                        for t in &targets {
+                            self.scope.define(t, Type::Unknown, false);
+                        }
+                    }
+                } else {
+                    self.scope.define(&actual_target, elem_type.clone(), false);
+                }
+
+                // Use analyze_stmts to properly detect mutable variables in loop body
+                let ir_body = self.analyze_stmts(body)?;
+                self.scope.pop();
+
+                Ok(IrNode::For {
+                    var: actual_target,
+                    var_type: elem_type,
+                    iter: Box::new(ir_iter),
+                    body: ir_body,
+                })
+            }
+            Stmt::While { condition, body } => {
+                let ir_cond = self.analyze_expr(condition)?;
+
+                self.scope.push();
+                // Use analyze_stmts to properly detect mutable variables in loop body
+                let ir_body = self.analyze_stmts(body)?;
+                self.scope.pop();
+
+                Ok(IrNode::While {
+                    cond: Box::new(ir_cond),
+                    body: ir_body,
+                })
+            }
+            Stmt::Return(expr) => {
+                let ir_expr = match expr {
+                    Some(e) => {
+                        let ir = self.analyze_expr(e)?;
+                        let ty = self.infer_type(e);
+
+                        // Check if we're returning from an Optional function
+                        let is_optional_return =
+                            matches!(&self.current_return_type, Some(Type::Optional(_)));
+
+                        // If returning a Reference to a List (slice), use .to_vec() to return owned
+                        let ir = if let Type::Ref(inner) = &ty {
+                            if matches!(inner.as_ref(), Type::List(_)) {
+                                IrExpr::MethodCall {
+                                    target: Box::new(ir),
+                                    method: "to_vec".to_string(),
+                                    args: vec![],
+                                }
+                            } else {
+                                IrExpr::MethodCall {
+                                    target: Box::new(ir),
+                                    method: "clone".to_string(),
+                                    args: vec![],
+                                }
+                            }
+                        } else {
+                            ir
+                        };
+
+                        // If returning a string literal to a String return type, add .to_string()
+                        let ir = if matches!(self.current_return_type, Some(Type::String))
+                            && matches!(ir, IrExpr::StringLit(_))
+                        {
+                            IrExpr::MethodCall {
+                                target: Box::new(ir),
+                                method: "to_string".to_string(),
+                                args: vec![],
+                            }
+                        } else {
+                            ir
+                        };
+
+                        // Wrap in Some() if returning to Optional and value is not None
+                        if is_optional_return && !matches!(ir, IrExpr::NoneLit) {
+                            Some(Box::new(IrExpr::Call {
+                                func: Box::new(IrExpr::Var("Some".to_string())),
+                                args: vec![ir],
+                            }))
+                        } else if matches!(ty, Type::Any) {
+                            // Convert Type::Any (serde_json::Value) to expected return type
+                            if let Some(ret_ty) = &self.current_return_type {
+                                let conversion = match ret_ty {
+                                    Type::Float => Some("f64"),
+                                    Type::Int => Some("i64"),
+                                    Type::String => Some("String"),
+                                    Type::Bool => Some("bool"),
+                                    _ => None,
+                                };
+                                if let Some(conv) = conversion {
+                                    Some(Box::new(IrExpr::JsonConversion {
+                                        target: Box::new(ir),
+                                        convert_to: conv.to_string(),
+                                    }))
+                                } else {
+                                    Some(Box::new(ir))
+                                }
+                            } else {
+                                Some(Box::new(ir))
+                            }
+                        } else {
+                            Some(Box::new(ir))
+                        }
+                    }
+                    None => None,
+                };
+                Ok(IrNode::Return(ir_expr))
+            }
+            Stmt::Expr(expr) => {
+                let ir_expr = self.analyze_expr(expr)?;
+                Ok(IrNode::Expr(ir_expr))
+            }
+            Stmt::ClassDef {
+                name,
+                fields,
+                methods,
+            } => {
+                // Convert AST fields to IR fields with types
+                let ir_fields: Vec<(String, Type)> = fields
+                    .iter()
+                    .map(|f| {
+                        let ty = self.type_from_hint(&f.type_hint);
+                        (f.name.clone(), ty)
+                    })
+                    .collect();
+
+                // Save field types for constructor type checking
+                self.struct_field_types
+                    .insert(name.clone(), ir_fields.clone());
+
+                // Register this struct type in scope (for use in type hints)
+                self.scope.define(name, Type::Struct(name.clone()), false);
+
+                // If there are methods, create an impl block
+                let mut result_nodes = vec![IrNode::StructDef {
+                    name: name.clone(),
+                    fields: ir_fields.clone(),
+                }];
+
+                if !methods.is_empty() {
+                    let mut ir_methods = Vec::new();
+
+                    for method in methods {
+                        // Skip __init__ - it's handled via fields
+                        if method.name == "__init__" {
+                            continue;
+                        }
+
+                        // Parse method parameters
+                        let ir_params: Vec<(String, Type)> = method
+                            .params
+                            .iter()
+                            .map(|p| {
+                                let ty = p
+                                    .type_hint
+                                    .as_ref()
+                                    .map(|h| self.type_from_hint(h))
+                                    .unwrap_or(Type::Unknown);
+                                (p.name.clone(), ty)
+                            })
+                            .collect();
+
+                        let ret_ty = method
+                            .return_type
+                            .as_ref()
+                            .map(|h| self.type_from_hint(h))
+                            .unwrap_or(Type::Unit);
+
+                        // Analyze method body with self in scope
+                        self.scope.push();
+                        // Define self as this struct type
+                        self.scope.define("self", Type::Struct(name.clone()), false);
+                        // Define struct fields as self.field_name for type inference
+                        for (field_name, field_ty) in &ir_fields {
+                            // Strip dunder prefix for consistency
+                            let rust_field_name =
+                                if field_name.starts_with("__") && !field_name.ends_with("__") {
+                                    field_name.trim_start_matches("__")
+                                } else {
+                                    field_name.as_str()
+                                };
+                            self.scope.define(
+                                &format!("self.{rust_field_name}"),
+                                field_ty.clone(),
+                                false,
+                            );
+                        }
+                        // Define method params
+                        for (p_name, p_ty) in &ir_params {
+                            self.scope.define(p_name, p_ty.clone(), false);
+                        }
+
+                        let ir_body: Vec<IrNode> = method
+                            .body
+                            .iter()
+                            .map(|s| self.analyze_stmt(s))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        self.scope.pop();
+
+                        // Check if method modifies self (contains FieldAssign)
+                        let takes_mut_self = ir_body
+                            .iter()
+                            .any(|node| matches!(node, IrNode::FieldAssign { .. }));
+
+                        ir_methods.push(IrNode::MethodDecl {
+                            name: method.name.clone(),
+                            params: ir_params,
+                            ret: ret_ty,
+                            body: ir_body,
+                            takes_self: !method.is_static,
+                            takes_mut_self,
+                        });
+                    }
+
+                    result_nodes.push(IrNode::ImplBlock {
+                        struct_name: name.clone(),
+                        methods: ir_methods,
+                    });
+                }
+
+                // Return node(s) - use Sequence if multiple
+                if result_nodes.len() == 1 {
+                    Ok(result_nodes.remove(0))
+                } else {
+                    // Return Sequence containing StructDef + ImplBlock
+                    Ok(IrNode::Sequence(result_nodes))
+                }
+            }
+            Stmt::Raise {
+                exception_type: _,
+                message,
+            } => {
+                let msg_ir = self.analyze_expr(message)?;
+                // Extract string from message
+                let msg = if let IrExpr::StringLit(s) = msg_ir {
+                    s
+                } else {
+                    "Error".to_string()
+                };
+                Ok(IrNode::Panic(msg))
+            }
+            Stmt::TryExcept {
+                try_body,
+                except_type: _,
+                except_body,
+            } => {
+                // Analyze try body
+                let ir_try_body: Vec<IrNode> = try_body
+                    .iter()
+                    .map(|s| self.analyze_stmt(s))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                // Analyze except body
+                let ir_except_body: Vec<IrNode> = except_body
+                    .iter()
+                    .map(|s| self.analyze_stmt(s))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                Ok(IrNode::TryBlock {
+                    try_body: ir_try_body,
+                    except_body: ir_except_body,
+                })
+            }
+            Stmt::Break => Ok(IrNode::Break),
+            Stmt::Continue => Ok(IrNode::Continue),
+            // V1.3.0: Assert statement
+            Stmt::Assert { test, msg } => {
+                let ir_test = self.analyze_expr(test)?;
+                let ir_msg = match msg {
+                    Some(m) => Some(Box::new(self.analyze_expr(m)?)),
+                    None => None,
+                };
+                Ok(IrNode::Assert {
+                    test: Box::new(ir_test),
+                    msg: ir_msg,
+                })
+            }
+            Stmt::Import {
+                module,
+                alias,
+                items: _,
+            } => {
+                // Register PyO3 imports for numpy/pandas
+                let effective_name = alias.as_ref().unwrap_or(module);
+                if module == "numpy" || module == "pandas" {
+                    // Track this import for PyO3 wrapping
+                    self.pyo3_imports
+                        .push((module.clone(), effective_name.clone()));
+                }
+                // For now, return an empty sequence (no IR generated)
+                // The PyO3 wrapper will be added in emit phase
+                Ok(IrNode::PyO3Import {
+                    module: module.clone(),
+                    alias: alias.clone(),
+                })
+            }
+        }
+    }
+}
