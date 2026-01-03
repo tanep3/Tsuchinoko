@@ -822,267 +822,30 @@ mod tests {
     use super::*;
     use crate::parser::parse;
 
-    #[test]
-    fn test_analyze_function_def() {
-        let code = r#"
-def add(a: int, b: int) -> int:
-    return a + b
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert_eq!(ir.len(), 1);
 
-        if let IrNode::FuncDecl {
-            name,
-            params,
-            ret,
-            body,
-        } = &ir[0]
-        {
-            assert_eq!(name, "add");
-            assert_eq!(params.len(), 2);
-            assert_eq!(*ret, Type::Int);
-            assert_eq!(body.len(), 1);
-        }
-    }
 
-    #[test]
-    fn test_analyze_if_stmt() {
-        let code = r#"
-if x > 0:
-    y = 1
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert_eq!(ir.len(), 1);
-
-        if let IrNode::If { then_block, .. } = &ir[0] {
-            assert_eq!(then_block.len(), 1);
-        }
-    }
-
-    #[test]
-    fn test_analyze_for_loop() {
-        let code = r#"
-for i in range(10):
-    x = i
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert_eq!(ir.len(), 1);
-
-        if let IrNode::For { var, body, .. } = &ir[0] {
-            assert_eq!(var, "i");
-            assert_eq!(body.len(), 1);
-        }
-    }
-    #[test]
-    fn test_expr_to_type_callable() {
-        let analyzer = SemanticAnalyzer::new();
-        // Construct Expr for Callable[[int, int], bool]
-        // Parser logic simulation:
-        // Callable -> Ident
-        // [ ... ] -> Index
-        // Content is Tuple(List([int, int]), bool)
-
-        let index_expr = Expr::Tuple(vec![
-            Expr::List(vec![
-                Expr::Ident("int".to_string()),
-                Expr::Ident("int".to_string()),
-            ]),
-            Expr::Ident("bool".to_string()),
-        ]);
-
-        let expr = Expr::Index {
-            target: Box::new(Expr::Ident("Callable".to_string())),
-            index: Box::new(index_expr),
-        };
-
-        let ty = analyzer.expr_to_type(&expr);
-
-        if let Some(Type::Func {
-            params,
-            ret,
-            is_boxed,
-        }) = ty
-        {
-            assert_eq!(params.len(), 2);
-            assert_eq!(params[0], Type::Int);
-            assert_eq!(params[1], Type::Int);
-            assert_eq!(*ret, Type::Bool);
-            assert!(is_boxed);
-        } else {
-            panic!("Failed to parse Callable type: {ty:?}");
-        }
-    }
 
     // === カバレッジ80%達成用追加テスト ===
 
-    // --- analyze_expr テスト ---
-    #[test]
-    fn test_analyze_expr_int() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::IntLiteral(42);
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::IntLit(42)));
-    }
 
-    #[test]
-    fn test_analyze_expr_float() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::FloatLiteral(3.14);
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        if let IrExpr::FloatLit(f) = ir {
-            assert!((f - 3.14).abs() < 0.001);
-        }
-    }
 
-    #[test]
-    fn test_analyze_expr_string() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::StringLiteral("hello".to_string());
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::StringLit(_)));
-    }
 
-    #[test]
-    fn test_analyze_expr_bool() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BoolLiteral(true);
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::BoolLit(true)));
-    }
 
-    #[test]
-    fn test_analyze_expr_none() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::NoneLiteral;
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::NoneLit));
-    }
 
-    #[test]
-    fn test_analyze_expr_ident() {
-        let mut analyzer = SemanticAnalyzer::new();
-        analyzer.define("x", Type::Int, false);
-        let expr = Expr::Ident("x".to_string());
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::Var(_)));
-    }
 
-    #[test]
-    fn test_analyze_expr_list() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::List(vec![Expr::IntLiteral(1), Expr::IntLiteral(2)]);
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        if let IrExpr::List { elements, .. } = ir {
-            assert_eq!(elements.len(), 2);
-        }
-    }
 
-    #[test]
-    fn test_analyze_expr_tuple() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::Tuple(vec![Expr::IntLiteral(1), Expr::IntLiteral(2)]);
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        if let IrExpr::Tuple(elements) = ir {
-            assert_eq!(elements.len(), 2);
-        }
-    }
 
-    // --- infer_type テスト ---
-    #[test]
-    fn test_infer_type_int() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::IntLiteral(42);
-        let ty = analyzer.infer_type(&expr);
-        assert_eq!(ty, Type::Int);
-    }
 
-    #[test]
-    fn test_infer_type_float() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::FloatLiteral(3.14);
-        let ty = analyzer.infer_type(&expr);
-        assert_eq!(ty, Type::Float);
-    }
 
-    #[test]
-    fn test_infer_type_string() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::StringLiteral("hello".to_string());
-        let ty = analyzer.infer_type(&expr);
-        assert_eq!(ty, Type::String);
-    }
 
-    #[test]
-    fn test_infer_type_bool() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BoolLiteral(true);
-        let ty = analyzer.infer_type(&expr);
-        assert_eq!(ty, Type::Bool);
-    }
 
-    #[test]
-    fn test_infer_type_none() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::NoneLiteral;
-        let ty = analyzer.infer_type(&expr);
-        // Noneの型推論結果を確認（実装依存）
-        // Optional<Unknown>またはUnknownのいずれか
-        assert!(matches!(ty, Type::Optional(_) | Type::Unknown));
-    }
 
-    #[test]
-    fn test_infer_type_list() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::List(vec![Expr::IntLiteral(1)]);
-        let ty = analyzer.infer_type(&expr);
-        assert!(matches!(ty, Type::List(_)));
-    }
 
-    // --- convert_binop テスト ---
-    #[test]
-    fn test_convert_binop_add() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Add);
-        assert_eq!(op, IrBinOp::Add);
-    }
 
-    #[test]
-    fn test_convert_binop_sub() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Sub);
-        assert_eq!(op, IrBinOp::Sub);
-    }
 
-    #[test]
-    fn test_convert_binop_mul() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Mul);
-        assert_eq!(op, IrBinOp::Mul);
-    }
 
-    #[test]
-    fn test_convert_binop_div() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Div);
-        assert_eq!(op, IrBinOp::Div);
-    }
 
-    #[test]
-    fn test_convert_binop_eq() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Eq);
-        assert_eq!(op, IrBinOp::Eq);
-    }
 
-    #[test]
-    fn test_convert_binop_lt() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Lt);
-        assert_eq!(op, IrBinOp::Lt);
-    }
 
     // --- analyze: 複雑なケース ---
     #[test]
@@ -1098,35 +861,7 @@ def foo() -> int:
         }
     }
 
-    #[test]
-    fn test_analyze_class_def() {
-        let code = r#"
-class Point:
-    x: int
-    y: int
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(matches!(&ir[0], IrNode::StructDef { .. }));
-    }
 
-    #[test]
-    fn test_analyze_if_elif_else() {
-        let code = r#"
-if x > 0:
-    y = 1
-elif x < 0:
-    y = -1
-else:
-    y = 0
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        // IRではelifはネストしたelse_blockに変換される
-        if let IrNode::If { else_block, .. } = &ir[0] {
-            assert!(else_block.is_some());
-        }
-    }
 
     #[test]
     fn test_analyze_binop_expr() {
@@ -1136,363 +871,40 @@ else:
         assert_eq!(ir.len(), 1);
     }
 
-    #[test]
-    fn test_analyze_method_call() {
-        let code = r#"
-arr: list[int] = [1, 2, 3]
-arr.append(4)
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    // --- type_from_hint テスト ---
-    #[test]
-    fn test_type_from_hint_int() {
-        let analyzer = SemanticAnalyzer::new();
-        let hint = crate::parser::TypeHint {
-            name: "int".to_string(),
-            params: vec![],
-        };
-        let ty = analyzer.type_from_hint(&hint);
-        assert_eq!(ty, Type::Int);
-    }
 
-    #[test]
-    fn test_type_from_hint_str() {
-        let analyzer = SemanticAnalyzer::new();
-        let hint = crate::parser::TypeHint {
-            name: "str".to_string(),
-            params: vec![],
-        };
-        let ty = analyzer.type_from_hint(&hint);
-        assert_eq!(ty, Type::String);
-    }
 
-    #[test]
-    fn test_type_from_hint_list() {
-        let analyzer = SemanticAnalyzer::new();
-        let hint = crate::parser::TypeHint {
-            name: "list".to_string(),
-            params: vec![crate::parser::TypeHint {
-                name: "int".to_string(),
-                params: vec![],
-            }],
-        };
-        let ty = analyzer.type_from_hint(&hint);
-        assert!(matches!(ty, Type::List(_)));
-    }
 
     // --- analyze_stmts テスト ---
-    // --- SemanticAnalyzer::new テスト ---
-    #[test]
-    fn test_semantic_analyzer_new() {
-        let analyzer = SemanticAnalyzer::new();
-        assert!(analyzer.current_return_type.is_none());
-    }
 
-    // --- define テスト ---
-    #[test]
-    fn test_define_variable() {
-        let mut analyzer = SemanticAnalyzer::new();
-        analyzer.define("x", Type::Int, false);
-        let info = analyzer.scope.lookup("x");
-        assert!(info.is_some());
-    }
 
     // === テストバッチ2: analyze_expr網羅 ===
 
-    // --- BinOp テスト ---
-    #[test]
-    fn test_analyze_expr_binop_add() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BinOp {
-            left: Box::new(Expr::IntLiteral(1)),
-            op: crate::parser::BinOp::Add,
-            right: Box::new(Expr::IntLiteral(2)),
-        };
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::BinOp { .. }));
-    }
 
-    #[test]
-    fn test_analyze_expr_binop_sub() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BinOp {
-            left: Box::new(Expr::IntLiteral(5)),
-            op: crate::parser::BinOp::Sub,
-            right: Box::new(Expr::IntLiteral(3)),
-        };
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::BinOp { .. }));
-    }
 
-    #[test]
-    fn test_analyze_expr_binop_mul() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BinOp {
-            left: Box::new(Expr::IntLiteral(2)),
-            op: crate::parser::BinOp::Mul,
-            right: Box::new(Expr::IntLiteral(3)),
-        };
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::BinOp { .. }));
-    }
 
-    #[test]
-    fn test_analyze_expr_binop_div() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BinOp {
-            left: Box::new(Expr::IntLiteral(6)),
-            op: crate::parser::BinOp::Div,
-            right: Box::new(Expr::IntLiteral(2)),
-        };
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::BinOp { .. }));
-    }
 
-    #[test]
-    fn test_analyze_expr_binop_eq() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BinOp {
-            left: Box::new(Expr::IntLiteral(1)),
-            op: crate::parser::BinOp::Eq,
-            right: Box::new(Expr::IntLiteral(1)),
-        };
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::BinOp { .. }));
-    }
 
-    #[test]
-    fn test_analyze_expr_binop_lt() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BinOp {
-            left: Box::new(Expr::IntLiteral(1)),
-            op: crate::parser::BinOp::Lt,
-            right: Box::new(Expr::IntLiteral(2)),
-        };
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::BinOp { .. }));
-    }
 
-    #[test]
-    fn test_analyze_expr_binop_and() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BinOp {
-            left: Box::new(Expr::BoolLiteral(true)),
-            op: crate::parser::BinOp::And,
-            right: Box::new(Expr::BoolLiteral(false)),
-        };
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::BinOp { .. }));
-    }
 
-    #[test]
-    fn test_analyze_expr_binop_or() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BinOp {
-            left: Box::new(Expr::BoolLiteral(true)),
-            op: crate::parser::BinOp::Or,
-            right: Box::new(Expr::BoolLiteral(false)),
-        };
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::BinOp { .. }));
-    }
 
-    // --- UnaryOp テスト ---
-    #[test]
-    fn test_analyze_expr_unary_neg() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::UnaryOp {
-            op: crate::parser::UnaryOp::Neg,
-            operand: Box::new(Expr::IntLiteral(5)),
-        };
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::UnaryOp { .. }));
-    }
 
-    #[test]
-    fn test_analyze_expr_unary_not() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::UnaryOp {
-            op: crate::parser::UnaryOp::Not,
-            operand: Box::new(Expr::BoolLiteral(true)),
-        };
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::UnaryOp { .. }));
-    }
 
-    // --- Dict テスト ---
-    #[test]
-    fn test_analyze_expr_dict() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::Dict(vec![(
-            Expr::StringLiteral("a".to_string()),
-            Expr::IntLiteral(1),
-        )]);
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::Dict { .. }));
-    }
 
-    // --- FString テスト ---
-    #[test]
-    fn test_analyze_expr_fstring() {
-        let mut analyzer = SemanticAnalyzer::new();
-        analyzer.define("x", Type::Int, false);
-        let expr = Expr::FString {
-            parts: vec!["Value: ".to_string(), "".to_string()],
-            values: vec![Expr::Ident("x".to_string())],
-        };
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::FString { .. }));
-    }
 
-    // --- Index テスト ---
-    #[test]
-    fn test_analyze_expr_index() {
-        let mut analyzer = SemanticAnalyzer::new();
-        analyzer.define("arr", Type::List(Box::new(Type::Int)), false);
-        let expr = Expr::Index {
-            target: Box::new(Expr::Ident("arr".to_string())),
-            index: Box::new(Expr::IntLiteral(0)),
-        };
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::Index { .. }));
-    }
 
-    // --- IfExp テスト ---
-    #[test]
-    fn test_analyze_expr_ifexp() {
-        let mut analyzer = SemanticAnalyzer::new();
-        let expr = Expr::IfExp {
-            test: Box::new(Expr::BoolLiteral(true)),
-            body: Box::new(Expr::IntLiteral(1)),
-            orelse: Box::new(Expr::IntLiteral(0)),
-        };
-        let ir = analyzer.analyze_expr(&expr).unwrap();
-        assert!(matches!(ir, IrExpr::IfExp { .. }));
-    }
 
-    // --- infer_type 追加テスト ---
-    #[test]
-    fn test_infer_type_binop() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BinOp {
-            left: Box::new(Expr::IntLiteral(1)),
-            op: crate::parser::BinOp::Add,
-            right: Box::new(Expr::IntLiteral(2)),
-        };
-        let ty = analyzer.infer_type(&expr);
-        assert_eq!(ty, Type::Int);
-    }
 
-    // --- convert_binop 追加テスト ---
-    #[test]
-    fn test_convert_binop_mod() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Mod);
-        assert_eq!(op, IrBinOp::Mod);
-    }
 
-    #[test]
-    fn test_convert_binop_lteq() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::LtEq);
-        assert_eq!(op, IrBinOp::LtEq);
-    }
 
-    #[test]
-    fn test_convert_binop_noteq() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::NotEq);
-        assert_eq!(op, IrBinOp::NotEq);
-    }
 
-    // --- type_from_hint 追加 ---
-    #[test]
-    fn test_type_from_hint_float() {
-        let analyzer = SemanticAnalyzer::new();
-        let hint = crate::parser::TypeHint {
-            name: "float".to_string(),
-            params: vec![],
-        };
-        let ty = analyzer.type_from_hint(&hint);
-        assert_eq!(ty, Type::Float);
-    }
 
-    #[test]
-    fn test_type_from_hint_bool() {
-        let analyzer = SemanticAnalyzer::new();
-        let hint = crate::parser::TypeHint {
-            name: "bool".to_string(),
-            params: vec![],
-        };
-        let ty = analyzer.type_from_hint(&hint);
-        assert_eq!(ty, Type::Bool);
-    }
 
-    #[test]
-    fn test_type_from_hint_dict() {
-        let analyzer = SemanticAnalyzer::new();
-        let hint = crate::parser::TypeHint {
-            name: "dict".to_string(),
-            params: vec![
-                crate::parser::TypeHint {
-                    name: "str".to_string(),
-                    params: vec![],
-                },
-                crate::parser::TypeHint {
-                    name: "int".to_string(),
-                    params: vec![],
-                },
-            ],
-        };
-        let ty = analyzer.type_from_hint(&hint);
-        assert!(matches!(ty, Type::Dict(_, _)));
-    }
 
     // === テストバッチ3: Stmt網羅エンドツーエンドテスト ===
 
-    // --- For loop variants ---
-    #[test]
-    fn test_analyze_for_range() {
-        let code = r#"
-def test():
-    for i in range(5):
-        x = i
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_for_enumerate() {
-        let code = r#"
-def test():
-    arr: list[int] = [1, 2, 3]
-    for i, v in enumerate(arr):
-        x = i + v
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    // --- ClassDef variants ---
-    #[test]
-    fn test_analyze_class_with_method() {
-        let code = r#"
-class Counter:
-    count: int
-    def increment(self):
-        self.count += 1
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- FuncDef variants ---
     #[test]
@@ -1522,30 +934,7 @@ def greet(name: str = "World") -> str:
 
     // --- If statement variants ---
     // --- While loop ---
-    // --- Return variants ---
-    #[test]
-    fn test_analyze_return_none() {
-        let code = r#"
-def foo():
-    return
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        if let IrNode::FuncDecl { body, .. } = &ir[0] {
-            assert!(matches!(&body[0], IrNode::Return(_)));
-        }
-    }
 
-    #[test]
-    fn test_analyze_return_string() {
-        let code = r#"
-def foo() -> str:
-    return "hello"
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(matches!(&ir[0], IrNode::FuncDecl { .. }));
-    }
 
     // --- Break/Continue ---
     #[test]
@@ -1590,17 +979,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    // --- Expr statement ---
-    #[test]
-    fn test_analyze_expr_stmt() {
-        let code = r#"
-def test():
-    print("hello")
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- Pass ---
     #[test]
@@ -2101,107 +1479,15 @@ def test():
         assert!(scope.lookup("y").is_none());
     }
 
-    // --- operators テスト ---
-    #[test]
-    fn test_convert_binop_pow() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Pow);
-        assert_eq!(op, IrBinOp::Pow);
-    }
 
-    #[test]
-    fn test_convert_binop_bitand() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::BitAnd);
-        assert_eq!(op, IrBinOp::BitAnd);
-    }
 
-    #[test]
-    fn test_convert_binop_bitor() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::BitOr);
-        assert_eq!(op, IrBinOp::BitOr);
-    }
 
-    #[test]
-    fn test_convert_binop_bitxor() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::BitXor);
-        assert_eq!(op, IrBinOp::BitXor);
-    }
 
-    #[test]
-    fn test_convert_binop_shl() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Shl);
-        assert_eq!(op, IrBinOp::Shl);
-    }
 
-    #[test]
-    fn test_convert_binop_shr() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Shr);
-        assert_eq!(op, IrBinOp::Shr);
-    }
 
-    // --- type_from_hint 追加 ---
-    #[test]
-    fn test_type_from_hint_optional() {
-        let analyzer = SemanticAnalyzer::new();
-        let hint = crate::parser::TypeHint {
-            name: "Optional".to_string(),
-            params: vec![crate::parser::TypeHint {
-                name: "int".to_string(),
-                params: vec![],
-            }],
-        };
-        let ty = analyzer.type_from_hint(&hint);
-        assert!(matches!(ty, Type::Optional(_)));
-    }
 
-    #[test]
-    fn test_type_from_hint_tuple() {
-        let analyzer = SemanticAnalyzer::new();
-        let hint = crate::parser::TypeHint {
-            name: "tuple".to_string(),
-            params: vec![
-                crate::parser::TypeHint {
-                    name: "int".to_string(),
-                    params: vec![],
-                },
-                crate::parser::TypeHint {
-                    name: "str".to_string(),
-                    params: vec![],
-                },
-            ],
-        };
-        let ty = analyzer.type_from_hint(&hint);
-        assert!(matches!(ty, Type::Tuple(_)));
-    }
 
-    // --- infer_type 追加 ---
-    #[test]
-    fn test_infer_type_unary() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::UnaryOp {
-            op: crate::parser::UnaryOp::Neg,
-            operand: Box::new(Expr::IntLiteral(5)),
-        };
-        let ty = analyzer.infer_type(&expr);
-        assert_eq!(ty, Type::Int);
-    }
 
-    #[test]
-    fn test_infer_type_ifexp() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::IfExp {
-            test: Box::new(Expr::BoolLiteral(true)),
-            body: Box::new(Expr::IntLiteral(1)),
-            orelse: Box::new(Expr::IntLiteral(0)),
-        };
-        let ty = analyzer.infer_type(&expr);
-        assert_eq!(ty, Type::Int);
-    }
 
     // --- complex expressions ---
     #[test]
@@ -2610,19 +1896,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    // --- multiple targets in for ---
-    #[test]
-    fn test_analyze_for_multiple_targets() {
-        let code = r#"
-def test():
-    points: list[tuple[int, int]] = [(1, 2), (3, 4)]
-    for x, y in points:
-        z = x + y
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // === テストバッチ7: Call/Method/Builtins網羅 ===
 
@@ -2915,17 +2188,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    // --- method chaining ---
-    #[test]
-    fn test_analyze_method_chaining() {
-        let code = r#"
-def test():
-    s = "  hello  ".strip().upper()
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // === テストバッチ8-10: 大量追加で80%達成へ ===
 
@@ -2987,20 +2249,7 @@ def test():
         assert!(matches!(ty, Type::Tuple(_)));
     }
 
-    // --- Operators網羅 ---
-    #[test]
-    fn test_convert_binop_is() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Is);
-        assert_eq!(op, IrBinOp::Is);
-    }
 
-    #[test]
-    fn test_convert_binop_isnot() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::IsNot);
-        assert_eq!(op, IrBinOp::IsNot);
-    }
 
     // --- coercion ---
     #[test]
@@ -3150,51 +2399,8 @@ def multi(a: int, b: int, c: int, d: int) -> int:
         assert!(!ir.is_empty());
     }
 
-    // --- class with multiple methods ---
-    #[test]
-    fn test_analyze_class_multiple_methods() {
-        let code = r#"
-class Calculator:
-    value: int
-    
-    def add(self, x: int):
-        self.value += x
-    
-    def sub(self, x: int):
-        self.value -= x
-    
-    def get(self) -> int:
-        return self.value
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    // --- complex for loops ---
-    #[test]
-    fn test_analyze_for_range_start_end() {
-        let code = r#"
-def test():
-    for i in range(5, 10):
-        x = i
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_for_range_start_end_step() {
-        let code = r#"
-def test():
-    for i in range(0, 10, 2):
-        x = i
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- nested control flow ---
     #[test]
@@ -3325,17 +2531,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    // --- class inheritance (basic) ---
-    #[test]
-    fn test_analyze_class_simple() {
-        let code = r#"
-class Base:
-    x: int
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- generator expressions (converted to list) ---
     #[test]
@@ -3363,26 +2558,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    // --- complex type hints ---
-    #[test]
-    fn test_type_from_hint_callable() {
-        let analyzer = SemanticAnalyzer::new();
-        let hint = crate::parser::TypeHint {
-            name: "Callable".to_string(),
-            params: vec![
-                crate::parser::TypeHint {
-                    name: "int".to_string(),
-                    params: vec![],
-                },
-                crate::parser::TypeHint {
-                    name: "bool".to_string(),
-                    params: vec![],
-                },
-            ],
-        };
-        let ty = analyzer.type_from_hint(&hint);
-        assert!(matches!(ty, Type::Func { .. }));
-    }
 
     // --- scope depth ---
     #[test]
@@ -3440,17 +2615,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    // --- return tuple ---
-    #[test]
-    fn test_analyze_return_tuple() {
-        let code = r#"
-def divmod_custom(a: int, b: int) -> tuple[int, int]:
-    return a // b, a % b
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- optional return ---
     #[test]
@@ -3730,36 +2894,7 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    // --- if with multiple conditions ---
-    #[test]
-    fn test_analyze_if_compound_condition() {
-        let code = r#"
-def test():
-    x: int = 5
-    y: int = 10
-    if x > 0 and y > 0:
-        z = x + y
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    // --- while with compound condition ---
-    #[test]
-    fn test_analyze_while_compound() {
-        let code = r#"
-def test():
-    x: int = 0
-    y: int = 10
-    while x < 10 and y > 0:
-        x += 1
-        y -= 1
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- multiple function definitions ---
     #[test]
@@ -3797,18 +2932,6 @@ def test():
         assert!(ir.len() >= 3);
     }
 
-    // --- class with field types ---
-    #[test]
-    fn test_analyze_class_with_typed_fields() {
-        let code = r#"
-class Person:
-    name: str
-    age: int
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- early return ---
     #[test]
@@ -3890,18 +3013,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    // --- method with multiple params ---
-    #[test]
-    fn test_analyze_method_many_params() {
-        let code = r#"
-class Calculator:
-    def calc(self, a: int, b: int, c: int) -> int:
-        return a + b + c
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- more builtins ---
     #[test]
@@ -3953,32 +3064,7 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    // --- complex return expressions ---
-    #[test]
-    fn test_analyze_return_call_result() {
-        let code = r#"
-def helper(x: int) -> int:
-    return x * 2
 
-def main_func() -> int:
-    return helper(10) + helper(20)
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(ir.len() >= 2);
-    }
-
-    // --- ternary return ---
-    #[test]
-    fn test_analyze_return_ternary() {
-        let code = r#"
-def max_val(a: int, b: int) -> int:
-    return a if a > b else b
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- chained method calls (single) ---
     #[test]
@@ -3992,19 +3078,6 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    // --- infer from expression ---
-    #[test]
-    fn test_infer_type_from_literal() {
-        let analyzer = SemanticAnalyzer::new();
-
-        assert_eq!(analyzer.infer_type(&Expr::IntLiteral(42)), Type::Int);
-        assert_eq!(analyzer.infer_type(&Expr::FloatLiteral(3.14)), Type::Float);
-        assert_eq!(
-            analyzer.infer_type(&Expr::StringLiteral("test".to_string())),
-            Type::String
-        );
-        assert_eq!(analyzer.infer_type(&Expr::BoolLiteral(true)), Type::Bool);
-    }
 
     // --- scope operations ---
     #[test]
@@ -4043,66 +3116,9 @@ def test():
         assert!(Type::Unknown.is_compatible_with(&Type::List(Box::new(Type::Int))));
     }
 
-    // --- list type from hint ---
-    #[test]
-    fn test_type_from_hint_nested_list() {
-        let analyzer = SemanticAnalyzer::new();
-        let hint = crate::parser::TypeHint {
-            name: "list".to_string(),
-            params: vec![crate::parser::TypeHint {
-                name: "list".to_string(),
-                params: vec![crate::parser::TypeHint {
-                    name: "int".to_string(),
-                    params: vec![],
-                }],
-            }],
-        };
-        let ty = analyzer.type_from_hint(&hint);
-        if let Type::List(inner) = ty {
-            assert!(matches!(*inner, Type::List(_)));
-        } else {
-            panic!("Expected nested list type");
-        }
-    }
 
-    // --- complex type inference ---
-    #[test]
-    fn test_infer_type_complex_binop() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BinOp {
-            left: Box::new(Expr::BinOp {
-                left: Box::new(Expr::IntLiteral(1)),
-                op: crate::parser::BinOp::Add,
-                right: Box::new(Expr::IntLiteral(2)),
-            }),
-            op: crate::parser::BinOp::Mul,
-            right: Box::new(Expr::IntLiteral(3)),
-        };
-        assert_eq!(analyzer.infer_type(&expr), Type::Int);
-    }
 
-    // --- expression inference ---
-    #[test]
-    fn test_infer_type_comparison() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BinOp {
-            left: Box::new(Expr::IntLiteral(1)),
-            op: crate::parser::BinOp::Lt,
-            right: Box::new(Expr::IntLiteral(2)),
-        };
-        assert_eq!(analyzer.infer_type(&expr), Type::Bool);
-    }
 
-    #[test]
-    fn test_infer_type_equality() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::BinOp {
-            left: Box::new(Expr::IntLiteral(1)),
-            op: crate::parser::BinOp::Eq,
-            right: Box::new(Expr::IntLiteral(1)),
-        };
-        assert_eq!(analyzer.infer_type(&expr), Type::Bool);
-    }
 
     // --- modulo operator ---
     #[test]
@@ -4215,39 +3231,8 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    // --- more analyze_expressions coverage ---
-    #[test]
-    fn test_analyze_expr_list_empty() {
-        let code = r#"
-def test():
-    arr = []
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_expr_dict_empty() {
-        let code = r#"
-def test():
-    d = {}
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_expr_parenthesized() {
-        let code = r#"
-def test():
-    x = (1 + 2)
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- more analyze_statements coverage ---
     #[test]
@@ -4284,115 +3269,13 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    #[test]
-    fn test_analyze_if_elif() {
-        let code = r#"
-def test():
-    x: int = 5
-    if x < 0:
-        y = -1
-    elif x == 0:
-        y = 0
-    else:
-        y = 1
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_if_elif_chain() {
-        let code = r#"
-def classify(x: int) -> str:
-    if x < 0:
-        return "negative"
-    elif x == 0:
-        return "zero"
-    elif x > 0:
-        return "positive"
-    return "unknown"
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    // --- more for loop patterns ---
-    #[test]
-    fn test_analyze_for_list_direct() {
-        let code = r#"
-def test():
-    for x in [1, 2, 3]:
-        y = x
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_for_str_direct() {
-        let code = r#"
-def test():
-    for c in "hello":
-        print(c)
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    // --- more while patterns ---
-    #[test]
-    fn test_analyze_while_true() {
-        let code = r#"
-def test():
-    while True:
-        break
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_while_false() {
-        let code = r#"
-def test():
-    while False:
-        x = 1
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    // --- more class patterns ---
-    #[test]
-    fn test_analyze_class_one_field() {
-        let code = r#"
-class Single:
-    value: int
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_class_many_fields() {
-        let code = r#"
-class Data:
-    a: int
-    b: str
-    c: float
-    d: bool
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- more function patterns ---
     #[test]
@@ -4524,53 +3407,11 @@ def test():
         assert_eq!(info.ty, Type::Int);
     }
 
-    // --- infer tests ---
-    #[test]
-    fn test_infer_type_list_literal() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::List(vec![Expr::IntLiteral(1), Expr::IntLiteral(2)]);
-        let ty = analyzer.infer_type(&expr);
-        assert!(matches!(ty, Type::List(_)));
-    }
 
-    #[test]
-    fn test_infer_type_empty_list() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::List(vec![]);
-        let ty = analyzer.infer_type(&expr);
-        if let Type::List(inner) = ty {
-            assert_eq!(*inner, Type::Unknown);
-        }
-    }
 
-    // --- operators coverage ---
-    #[test]
-    fn test_convert_binop_and() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::And);
-        assert_eq!(op, IrBinOp::And);
-    }
 
-    #[test]
-    fn test_convert_binop_or() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Or);
-        assert_eq!(op, IrBinOp::Or);
-    }
 
-    #[test]
-    fn test_convert_binop_eq_v2() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Eq);
-        assert_eq!(op, IrBinOp::Eq);
-    }
 
-    #[test]
-    fn test_convert_binop_lt_v2() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Lt);
-        assert_eq!(op, IrBinOp::Lt);
-    }
 
     // --- more complex patterns ---
     #[test]
@@ -4837,23 +3678,7 @@ def test():
         assert!(!ir.is_empty());
     }
 
-    // --- type inference from variable ---
-    #[test]
-    fn test_infer_type_from_variable() {
-        let mut analyzer = SemanticAnalyzer::new();
-        analyzer.define("x", Type::Int, false);
-        let expr = Expr::Ident("x".to_string());
-        let ty = analyzer.infer_type(&expr);
-        assert_eq!(ty, Type::Int);
-    }
 
-    #[test]
-    fn test_infer_type_unknown_variable() {
-        let analyzer = SemanticAnalyzer::new();
-        let expr = Expr::Ident("unknown".to_string());
-        let ty = analyzer.infer_type(&expr);
-        assert_eq!(ty, Type::Unknown);
-    }
 
     // === テストバッチ31-50: 80%達成へ ===
 
@@ -5089,46 +3914,7 @@ def linear_search(arr: list[int], target: int) -> int:
         assert!(!ir.is_empty());
     }
 
-    // --- class with methods ---
-    #[test]
-    fn test_analyze_class_counter() {
-        let code = r#"
-class Counter:
-    count: int
-    
-    def increment(self):
-        self.count += 1
-    
-    def decrement(self):
-        self.count -= 1
-    
-    def get(self) -> int:
-        return self.count
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_class_stack() {
-        let code = r#"
-class Stack:
-    items: list[int]
-    
-    def push(self, item: int):
-        self.items.append(item)
-    
-    def pop(self) -> int:
-        return self.items.pop()
-    
-    def is_empty(self) -> bool:
-        return len(self.items) == 0
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- more complex control flow ---
     #[test]
@@ -5214,86 +4000,14 @@ def test():
         assert_eq!(info.ty, Type::String);
     }
 
-    // --- more operator tests ---
-    #[test]
-    fn test_convert_binop_matmul() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::MatMul);
-        assert_eq!(op, IrBinOp::MatMul);
-    }
 
-    #[test]
-    fn test_convert_binop_add_v2() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Add);
-        assert_eq!(op, IrBinOp::Add);
-    }
 
-    #[test]
-    fn test_convert_binop_sub_v2() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Sub);
-        assert_eq!(op, IrBinOp::Sub);
-    }
 
-    #[test]
-    fn test_convert_binop_mul_v2() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Mul);
-        assert_eq!(op, IrBinOp::Mul);
-    }
 
-    #[test]
-    fn test_convert_binop_div_v2() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Div);
-        assert_eq!(op, IrBinOp::Div);
-    }
 
-    // --- more expression patterns ---
-    #[test]
-    fn test_analyze_expr_add() {
-        let code = r#"
-def test():
-    x = 1 + 2
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_expr_sub() {
-        let code = r#"
-def test():
-    x = 5 - 3
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_expr_mul() {
-        let code = r#"
-def test():
-    x = 4 * 5
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_expr_div() {
-        let code = r#"
-def test():
-    x = 10 / 2
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- more comparison patterns ---
     #[test]
@@ -5419,45 +4133,7 @@ def just_pass():
         assert!(!ir.is_empty());
     }
 
-    // --- type hint combinations ---
-    #[test]
-    fn test_type_from_hint_list_str() {
-        let analyzer = SemanticAnalyzer::new();
-        let hint = crate::parser::TypeHint {
-            name: "list".to_string(),
-            params: vec![crate::parser::TypeHint {
-                name: "str".to_string(),
-                params: vec![],
-            }],
-        };
-        let ty = analyzer.type_from_hint(&hint);
-        if let Type::List(inner) = ty {
-            assert_eq!(*inner, Type::String);
-        }
-    }
 
-    #[test]
-    fn test_type_from_hint_dict_str_int() {
-        let analyzer = SemanticAnalyzer::new();
-        let hint = crate::parser::TypeHint {
-            name: "dict".to_string(),
-            params: vec![
-                crate::parser::TypeHint {
-                    name: "str".to_string(),
-                    params: vec![],
-                },
-                crate::parser::TypeHint {
-                    name: "int".to_string(),
-                    params: vec![],
-                },
-            ],
-        };
-        let ty = analyzer.type_from_hint(&hint);
-        if let Type::Dict(k, v) = ty {
-            assert_eq!(*k, Type::String);
-            assert_eq!(*v, Type::Int);
-        }
-    }
 
     // --- infer nested expressions ---
     #[test]
@@ -5679,97 +4355,11 @@ def explicit_void():
         assert!(!ir.is_empty());
     }
 
-    // --- more class patterns ---
-    #[test]
-    fn test_analyze_class_with_init() {
-        let code = r#"
-class Point:
-    x: int
-    y: int
-    
-    def __init__(self, x: int, y: int):
-        self.x = x
-        self.y = y
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_class_method_self() {
-        let code = r#"
-class Calculator:
-    result: int
-    
-    def reset(self):
-        self.result = 0
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    // --- more while patterns ---
-    #[test]
-    fn test_analyze_while_complex_condition() {
-        let code = r#"
-def test():
-    i: int = 0
-    j: int = 10
-    while i < 10 and j > 0 and i != j:
-        i += 1
-        j -= 1
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_while_counter() {
-        let code = r#"
-def count_to(n: int) -> int:
-    count: int = 0
-    while count < n:
-        count += 1
-    return count
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    // --- more for patterns ---
-    #[test]
-    fn test_analyze_for_with_continue() {
-        let code = r#"
-def sum_odd(n: int) -> int:
-    total: int = 0
-    for i in range(n):
-        if i % 2 == 0:
-            continue
-        total += i
-    return total
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
-    #[test]
-    fn test_analyze_for_with_break() {
-        let code = r#"
-def find_first(arr: list[int], target: int) -> int:
-    for i in range(len(arr)):
-        if arr[i] == target:
-            return i
-    return -1
-"#;
-        let program = parse(code).unwrap();
-        let ir = analyze(&program).unwrap();
-        assert!(!ir.is_empty());
-    }
 
     // --- more string patterns ---
     #[test]
@@ -6225,18 +4815,5 @@ def test():
         assert!(t1.is_compatible_with(&t2));
     }
 
-    // --- operators convert ---
-    #[test]
-    fn test_convert_binop_mod_v2() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Mod);
-        assert_eq!(op, IrBinOp::Mod);
-    }
 
-    #[test]
-    fn test_convert_binop_pow_v2() {
-        let analyzer = SemanticAnalyzer::new();
-        let op = analyzer.convert_binop(&crate::parser::BinOp::Pow);
-        assert_eq!(op, IrBinOp::Pow);
-    }
 }

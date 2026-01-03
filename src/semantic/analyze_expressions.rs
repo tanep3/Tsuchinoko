@@ -1221,3 +1221,564 @@ impl SemanticAnalyzer {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::approx_constant)]
+mod tests {
+    use super::*;
+    use crate::parser::parse;
+    use crate::semantic::analyze;
+
+    #[test]
+    fn test_expr_to_type_callable() {
+        let analyzer = SemanticAnalyzer::new();
+        // Construct Expr for Callable[[int, int], bool]
+        // Parser logic simulation:
+        // Callable -> Ident
+        // [ ... ] -> Index
+        // Content is Tuple(List([int, int]), bool)
+
+        let index_expr = Expr::Tuple(vec![
+            Expr::List(vec![
+                Expr::Ident("int".to_string()),
+                Expr::Ident("int".to_string()),
+            ]),
+            Expr::Ident("bool".to_string()),
+        ]);
+
+        let expr = Expr::Index {
+            target: Box::new(Expr::Ident("Callable".to_string())),
+            index: Box::new(index_expr),
+        };
+
+        let ty = analyzer.expr_to_type(&expr);
+
+        if let Some(Type::Func {
+            params,
+            ret,
+            is_boxed,
+        }) = ty
+        {
+            assert_eq!(params.len(), 2);
+            assert_eq!(params[0], Type::Int);
+            assert_eq!(params[1], Type::Int);
+            assert_eq!(*ret, Type::Bool);
+            assert!(is_boxed);
+        } else {
+            panic!("Failed to parse Callable type: {ty:?}");
+        }
+    }
+
+    // --- analyze_expr テスト ---
+    #[test]
+    fn test_analyze_expr_int() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::IntLiteral(42);
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::IntLit(42)));
+    }
+
+    #[test]
+    fn test_analyze_expr_float() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::FloatLiteral(3.14);
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        if let IrExpr::FloatLit(f) = ir {
+            assert!((f - 3.14).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn test_analyze_expr_string() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::StringLiteral("hello".to_string());
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::StringLit(_)));
+    }
+
+    #[test]
+    fn test_analyze_expr_bool() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BoolLiteral(true);
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::BoolLit(true)));
+    }
+
+    #[test]
+    fn test_analyze_expr_none() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::NoneLiteral;
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::NoneLit));
+    }
+
+    #[test]
+    fn test_analyze_expr_ident() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.define("x", Type::Int, false);
+        let expr = Expr::Ident("x".to_string());
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::Var(_)));
+    }
+
+    #[test]
+    fn test_analyze_expr_list() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::List(vec![Expr::IntLiteral(1), Expr::IntLiteral(2)]);
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        if let IrExpr::List { elements, .. } = ir {
+            assert_eq!(elements.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_analyze_expr_tuple() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::Tuple(vec![Expr::IntLiteral(1), Expr::IntLiteral(2)]);
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        if let IrExpr::Tuple(elements) = ir {
+            assert_eq!(elements.len(), 2);
+        }
+    }
+
+    // --- infer_type テスト ---
+    #[test]
+    fn test_infer_type_int() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::IntLiteral(42);
+        let ty = analyzer.infer_type(&expr);
+        assert_eq!(ty, Type::Int);
+    }
+
+    #[test]
+    fn test_infer_type_float() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::FloatLiteral(3.14);
+        let ty = analyzer.infer_type(&expr);
+        assert_eq!(ty, Type::Float);
+    }
+
+    #[test]
+    fn test_infer_type_string() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::StringLiteral("hello".to_string());
+        let ty = analyzer.infer_type(&expr);
+        assert_eq!(ty, Type::String);
+    }
+
+    #[test]
+    fn test_infer_type_bool() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BoolLiteral(true);
+        let ty = analyzer.infer_type(&expr);
+        assert_eq!(ty, Type::Bool);
+    }
+
+    #[test]
+    fn test_infer_type_none() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::NoneLiteral;
+        let ty = analyzer.infer_type(&expr);
+        // Noneの型推論結果を確認（実装依存）
+        // Optional<Unknown>またはUnknownのいずれか
+        assert!(matches!(ty, Type::Optional(_) | Type::Unknown));
+    }
+
+    #[test]
+    fn test_infer_type_list() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::List(vec![Expr::IntLiteral(1)]);
+        let ty = analyzer.infer_type(&expr);
+        assert!(matches!(ty, Type::List(_)));
+    }
+
+    // --- BinOp テスト ---
+    #[test]
+    fn test_analyze_expr_binop_add() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::IntLiteral(1)),
+            op: crate::parser::BinOp::Add,
+            right: Box::new(Expr::IntLiteral(2)),
+        };
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::BinOp { .. }));
+    }
+
+    #[test]
+    fn test_analyze_expr_binop_sub() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::IntLiteral(5)),
+            op: crate::parser::BinOp::Sub,
+            right: Box::new(Expr::IntLiteral(3)),
+        };
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::BinOp { .. }));
+    }
+
+    #[test]
+    fn test_analyze_expr_binop_mul() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::IntLiteral(2)),
+            op: crate::parser::BinOp::Mul,
+            right: Box::new(Expr::IntLiteral(3)),
+        };
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::BinOp { .. }));
+    }
+
+    #[test]
+    fn test_analyze_expr_binop_div() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::IntLiteral(6)),
+            op: crate::parser::BinOp::Div,
+            right: Box::new(Expr::IntLiteral(2)),
+        };
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::BinOp { .. }));
+    }
+
+    #[test]
+    fn test_analyze_expr_binop_eq() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::IntLiteral(1)),
+            op: crate::parser::BinOp::Eq,
+            right: Box::new(Expr::IntLiteral(1)),
+        };
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::BinOp { .. }));
+    }
+
+    #[test]
+    fn test_analyze_expr_binop_lt() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::IntLiteral(1)),
+            op: crate::parser::BinOp::Lt,
+            right: Box::new(Expr::IntLiteral(2)),
+        };
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::BinOp { .. }));
+    }
+
+    #[test]
+    fn test_analyze_expr_binop_and() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::BoolLiteral(true)),
+            op: crate::parser::BinOp::And,
+            right: Box::new(Expr::BoolLiteral(false)),
+        };
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::BinOp { .. }));
+    }
+
+    #[test]
+    fn test_analyze_expr_binop_or() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::BoolLiteral(true)),
+            op: crate::parser::BinOp::Or,
+            right: Box::new(Expr::BoolLiteral(false)),
+        };
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::BinOp { .. }));
+    }
+
+    // --- UnaryOp テスト ---
+    #[test]
+    fn test_analyze_expr_unary_neg() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::UnaryOp {
+            op: crate::parser::UnaryOp::Neg,
+            operand: Box::new(Expr::IntLiteral(5)),
+        };
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::UnaryOp { .. }));
+    }
+
+    #[test]
+    fn test_analyze_expr_unary_not() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::UnaryOp {
+            op: crate::parser::UnaryOp::Not,
+            operand: Box::new(Expr::BoolLiteral(true)),
+        };
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::UnaryOp { .. }));
+    }
+
+    // --- Dict テスト ---
+    #[test]
+    fn test_analyze_expr_dict() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::Dict(vec![(
+            Expr::StringLiteral("a".to_string()),
+            Expr::IntLiteral(1),
+        )]);
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::Dict { .. }));
+    }
+
+    // --- FString テスト ---
+    #[test]
+    fn test_analyze_expr_fstring() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.define("x", Type::Int, false);
+        let expr = Expr::FString {
+            parts: vec!["Value: ".to_string(), "".to_string()],
+            values: vec![Expr::Ident("x".to_string())],
+        };
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::FString { .. }));
+    }
+
+    // --- Index テスト ---
+    #[test]
+    fn test_analyze_expr_index() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.define("arr", Type::List(Box::new(Type::Int)), false);
+        let expr = Expr::Index {
+            target: Box::new(Expr::Ident("arr".to_string())),
+            index: Box::new(Expr::IntLiteral(0)),
+        };
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::Index { .. }));
+    }
+
+    // --- IfExp テスト ---
+    #[test]
+    fn test_analyze_expr_ifexp() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let expr = Expr::IfExp {
+            test: Box::new(Expr::BoolLiteral(true)),
+            body: Box::new(Expr::IntLiteral(1)),
+            orelse: Box::new(Expr::IntLiteral(0)),
+        };
+        let ir = analyzer.analyze_expr(&expr).unwrap();
+        assert!(matches!(ir, IrExpr::IfExp { .. }));
+    }
+
+    // --- infer_type 追加テスト ---
+    #[test]
+    fn test_infer_type_binop() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::IntLiteral(1)),
+            op: crate::parser::BinOp::Add,
+            right: Box::new(Expr::IntLiteral(2)),
+        };
+        let ty = analyzer.infer_type(&expr);
+        assert_eq!(ty, Type::Int);
+    }
+
+    // --- Expr statement ---
+    #[test]
+    fn test_analyze_expr_stmt() {
+        let code = r#"
+def test():
+    print("hello")
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- infer_type 追加 ---
+    #[test]
+    fn test_infer_type_unary() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::UnaryOp {
+            op: crate::parser::UnaryOp::Neg,
+            operand: Box::new(Expr::IntLiteral(5)),
+        };
+        let ty = analyzer.infer_type(&expr);
+        assert_eq!(ty, Type::Int);
+    }
+
+    #[test]
+    fn test_infer_type_ifexp() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::IfExp {
+            test: Box::new(Expr::BoolLiteral(true)),
+            body: Box::new(Expr::IntLiteral(1)),
+            orelse: Box::new(Expr::IntLiteral(0)),
+        };
+        let ty = analyzer.infer_type(&expr);
+        assert_eq!(ty, Type::Int);
+    }
+
+    // --- infer from expression ---
+    #[test]
+    fn test_infer_type_from_literal() {
+        let analyzer = SemanticAnalyzer::new();
+
+        assert_eq!(analyzer.infer_type(&Expr::IntLiteral(42)), Type::Int);
+        assert_eq!(analyzer.infer_type(&Expr::FloatLiteral(3.14)), Type::Float);
+        assert_eq!(
+            analyzer.infer_type(&Expr::StringLiteral("test".to_string())),
+            Type::String
+        );
+        assert_eq!(analyzer.infer_type(&Expr::BoolLiteral(true)), Type::Bool);
+    }
+
+    // --- complex type inference ---
+    #[test]
+    fn test_infer_type_complex_binop() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::BinOp {
+                left: Box::new(Expr::IntLiteral(1)),
+                op: crate::parser::BinOp::Add,
+                right: Box::new(Expr::IntLiteral(2)),
+            }),
+            op: crate::parser::BinOp::Mul,
+            right: Box::new(Expr::IntLiteral(3)),
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Int);
+    }
+
+    // --- expression inference ---
+    #[test]
+    fn test_infer_type_comparison() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::IntLiteral(1)),
+            op: crate::parser::BinOp::Lt,
+            right: Box::new(Expr::IntLiteral(2)),
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Bool);
+    }
+
+    #[test]
+    fn test_infer_type_equality() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::BinOp {
+            left: Box::new(Expr::IntLiteral(1)),
+            op: crate::parser::BinOp::Eq,
+            right: Box::new(Expr::IntLiteral(1)),
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Bool);
+    }
+
+    // --- more analyze_expressions coverage ---
+    #[test]
+    fn test_analyze_expr_list_empty() {
+        let code = r#"
+def test():
+    arr = []
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_expr_dict_empty() {
+        let code = r#"
+def test():
+    d = {}
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_expr_parenthesized() {
+        let code = r#"
+def test():
+    x = (1 + 2)
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- infer tests ---
+    #[test]
+    fn test_infer_type_list_literal() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::List(vec![Expr::IntLiteral(1), Expr::IntLiteral(2)]);
+        let ty = analyzer.infer_type(&expr);
+        assert!(matches!(ty, Type::List(_)));
+    }
+
+    #[test]
+    fn test_infer_type_empty_list() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::List(vec![]);
+        let ty = analyzer.infer_type(&expr);
+        if let Type::List(inner) = ty {
+            assert_eq!(*inner, Type::Unknown);
+        }
+    }
+
+    // --- type inference from variable ---
+    #[test]
+    fn test_infer_type_from_variable() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.define("x", Type::Int, false);
+        let expr = Expr::Ident("x".to_string());
+        let ty = analyzer.infer_type(&expr);
+        assert_eq!(ty, Type::Int);
+    }
+
+    #[test]
+    fn test_infer_type_unknown_variable() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::Ident("unknown".to_string());
+        let ty = analyzer.infer_type(&expr);
+        assert_eq!(ty, Type::Unknown);
+    }
+
+    // --- more expression patterns ---
+    #[test]
+    fn test_analyze_expr_add() {
+        let code = r#"
+def test():
+    x = 1 + 2
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_expr_sub() {
+        let code = r#"
+def test():
+    x = 5 - 3
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_expr_mul() {
+        let code = r#"
+def test():
+    x = 4 * 5
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_expr_div() {
+        let code = r#"
+def test():
+    x = 10 / 2
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+}

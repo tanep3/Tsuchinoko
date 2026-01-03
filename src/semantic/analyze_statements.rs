@@ -1008,3 +1008,612 @@ impl SemanticAnalyzer {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::approx_constant)]
+mod tests {
+    use super::*;
+    use crate::parser::parse;
+    use crate::semantic::analyze;
+
+    #[test]
+    fn test_analyze_function_def() {
+        let code = r#"
+def add(a: int, b: int) -> int:
+    return a + b
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert_eq!(ir.len(), 1);
+
+        if let IrNode::FuncDecl {
+            name,
+            params,
+            ret,
+            body,
+        } = &ir[0]
+        {
+            assert_eq!(name, "add");
+            assert_eq!(params.len(), 2);
+            assert_eq!(*ret, Type::Int);
+            assert_eq!(body.len(), 1);
+        }
+    }
+
+    #[test]
+    fn test_analyze_if_stmt() {
+        let code = r#"
+if x > 0:
+    y = 1
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert_eq!(ir.len(), 1);
+
+        if let IrNode::If { then_block, .. } = &ir[0] {
+            assert_eq!(then_block.len(), 1);
+        }
+    }
+
+    #[test]
+    fn test_analyze_for_loop() {
+        let code = r#"
+for i in range(10):
+    x = i
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert_eq!(ir.len(), 1);
+
+        if let IrNode::For { var, body, .. } = &ir[0] {
+            assert_eq!(var, "i");
+            assert_eq!(body.len(), 1);
+        }
+    }
+
+    #[test]
+    fn test_analyze_class_def() {
+        let code = r#"
+class Point:
+    x: int
+    y: int
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(matches!(&ir[0], IrNode::StructDef { .. }));
+    }
+
+    #[test]
+    fn test_analyze_if_elif_else() {
+        let code = r#"
+if x > 0:
+    y = 1
+elif x < 0:
+    y = -1
+else:
+    y = 0
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        // IRではelifはネストしたelse_blockに変換される
+        if let IrNode::If { else_block, .. } = &ir[0] {
+            assert!(else_block.is_some());
+        }
+    }
+
+    #[test]
+    fn test_analyze_method_call() {
+        let code = r#"
+arr: list[int] = [1, 2, 3]
+arr.append(4)
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- SemanticAnalyzer::new テスト ---
+    #[test]
+    fn test_semantic_analyzer_new() {
+        let analyzer = SemanticAnalyzer::new();
+        assert!(analyzer.current_return_type.is_none());
+    }
+
+    // --- define テスト ---
+    #[test]
+    fn test_define_variable() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.define("x", Type::Int, false);
+        let info = analyzer.scope.lookup("x");
+        assert!(info.is_some());
+    }
+
+    // --- For loop variants ---
+    #[test]
+    fn test_analyze_for_range() {
+        let code = r#"
+def test():
+    for i in range(5):
+        x = i
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_for_enumerate() {
+        let code = r#"
+def test():
+    arr: list[int] = [1, 2, 3]
+    for i, v in enumerate(arr):
+        x = i + v
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- ClassDef variants ---
+    #[test]
+    fn test_analyze_class_with_method() {
+        let code = r#"
+class Counter:
+    count: int
+    def increment(self):
+        self.count += 1
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- Return variants ---
+    #[test]
+    fn test_analyze_return_none() {
+        let code = r#"
+def foo():
+    return
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        if let IrNode::FuncDecl { body, .. } = &ir[0] {
+            assert!(matches!(&body[0], IrNode::Return(_)));
+        }
+    }
+
+    #[test]
+    fn test_analyze_return_string() {
+        let code = r#"
+def foo() -> str:
+    return "hello"
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(matches!(&ir[0], IrNode::FuncDecl { .. }));
+    }
+
+    // --- multiple targets in for ---
+    #[test]
+    fn test_analyze_for_multiple_targets() {
+        let code = r#"
+def test():
+    points: list[tuple[int, int]] = [(1, 2), (3, 4)]
+    for x, y in points:
+        z = x + y
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- method chaining ---
+    #[test]
+    fn test_analyze_method_chaining() {
+        let code = r#"
+def test():
+    s = "  hello  ".strip().upper()
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- class with multiple methods ---
+    #[test]
+    fn test_analyze_class_multiple_methods() {
+        let code = r#"
+class Calculator:
+    value: int
+    
+    def add(self, x: int):
+        self.value += x
+    
+    def sub(self, x: int):
+        self.value -= x
+    
+    def get(self) -> int:
+        return self.value
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- complex for loops ---
+    #[test]
+    fn test_analyze_for_range_start_end() {
+        let code = r#"
+def test():
+    for i in range(5, 10):
+        x = i
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_for_range_start_end_step() {
+        let code = r#"
+def test():
+    for i in range(0, 10, 2):
+        x = i
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- class inheritance (basic) ---
+    #[test]
+    fn test_analyze_class_simple() {
+        let code = r#"
+class Base:
+    x: int
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- return tuple ---
+    #[test]
+    fn test_analyze_return_tuple() {
+        let code = r#"
+def divmod_custom(a: int, b: int) -> tuple[int, int]:
+    return a // b, a % b
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- if with multiple conditions ---
+    #[test]
+    fn test_analyze_if_compound_condition() {
+        let code = r#"
+def test():
+    x: int = 5
+    y: int = 10
+    if x > 0 and y > 0:
+        z = x + y
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- while with compound condition ---
+    #[test]
+    fn test_analyze_while_compound() {
+        let code = r#"
+def test():
+    x: int = 0
+    y: int = 10
+    while x < 10 and y > 0:
+        x += 1
+        y -= 1
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- class with field types ---
+    #[test]
+    fn test_analyze_class_with_typed_fields() {
+        let code = r#"
+class Person:
+    name: str
+    age: int
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- method with multiple params ---
+    #[test]
+    fn test_analyze_method_many_params() {
+        let code = r#"
+class Calculator:
+    def calc(self, a: int, b: int, c: int) -> int:
+        return a + b + c
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- complex return expressions ---
+    #[test]
+    fn test_analyze_return_call_result() {
+        let code = r#"
+def helper(x: int) -> int:
+    return x * 2
+
+def main_func() -> int:
+    return helper(10) + helper(20)
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(ir.len() >= 2);
+    }
+
+    // --- ternary return ---
+    #[test]
+    fn test_analyze_return_ternary() {
+        let code = r#"
+def max_val(a: int, b: int) -> int:
+    return a if a > b else b
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_if_elif() {
+        let code = r#"
+def test():
+    x: int = 5
+    if x < 0:
+        y = -1
+    elif x == 0:
+        y = 0
+    else:
+        y = 1
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_if_elif_chain() {
+        let code = r#"
+def classify(x: int) -> str:
+    if x < 0:
+        return "negative"
+    elif x == 0:
+        return "zero"
+    elif x > 0:
+        return "positive"
+    return "unknown"
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- more for loop patterns ---
+    #[test]
+    fn test_analyze_for_list_direct() {
+        let code = r#"
+def test():
+    for x in [1, 2, 3]:
+        y = x
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_for_str_direct() {
+        let code = r#"
+def test():
+    for c in "hello":
+        print(c)
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- more while patterns ---
+    #[test]
+    fn test_analyze_while_true() {
+        let code = r#"
+def test():
+    while True:
+        break
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_while_false() {
+        let code = r#"
+def test():
+    while False:
+        x = 1
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- more class patterns ---
+    #[test]
+    fn test_analyze_class_one_field() {
+        let code = r#"
+class Single:
+    value: int
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_class_many_fields() {
+        let code = r#"
+class Data:
+    a: int
+    b: str
+    c: float
+    d: bool
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- class with methods ---
+    #[test]
+    fn test_analyze_class_counter() {
+        let code = r#"
+class Counter:
+    count: int
+    
+    def increment(self):
+        self.count += 1
+    
+    def decrement(self):
+        self.count -= 1
+    
+    def get(self) -> int:
+        return self.count
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_class_stack() {
+        let code = r#"
+class Stack:
+    items: list[int]
+    
+    def push(self, item: int):
+        self.items.append(item)
+    
+    def pop(self) -> int:
+        return self.items.pop()
+    
+    def is_empty(self) -> bool:
+        return len(self.items) == 0
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- more class patterns ---
+    #[test]
+    fn test_analyze_class_with_init() {
+        let code = r#"
+class Point:
+    x: int
+    y: int
+    
+    def __init__(self, x: int, y: int):
+        self.x = x
+        self.y = y
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_class_method_self() {
+        let code = r#"
+class Calculator:
+    result: int
+    
+    def reset(self):
+        self.result = 0
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- more while patterns ---
+    #[test]
+    fn test_analyze_while_complex_condition() {
+        let code = r#"
+def test():
+    i: int = 0
+    j: int = 10
+    while i < 10 and j > 0 and i != j:
+        i += 1
+        j -= 1
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_while_counter() {
+        let code = r#"
+def count_to(n: int) -> int:
+    count: int = 0
+    while count < n:
+        count += 1
+    return count
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    // --- more for patterns ---
+    #[test]
+    fn test_analyze_for_with_continue() {
+        let code = r#"
+def sum_odd(n: int) -> int:
+    total: int = 0
+    for i in range(n):
+        if i % 2 == 0:
+            continue
+        total += i
+    return total
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_for_with_break() {
+        let code = r#"
+def find_first(arr: list[int], target: int) -> int:
+    for i in range(len(arr)):
+        if arr[i] == target:
+            return i
+    return -1
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(!ir.is_empty());
+    }
+
+}
