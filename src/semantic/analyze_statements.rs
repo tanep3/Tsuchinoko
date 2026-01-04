@@ -952,16 +952,42 @@ impl SemanticAnalyzer {
             }
             Stmt::TryExcept {
                 try_body,
-                except_type: _,
-                except_body,
+                except_clauses,
+                finally_body,
             } => {
                 // Use analyze_stmts to properly detect mutable variables in try/except blocks
                 let ir_try_body = self.analyze_stmts(try_body)?;
-                let ir_except_body = self.analyze_stmts(except_body)?;
+
+                // Collect all except bodies into one (Rust doesn't have typed exceptions)
+                // For now, we merge all except clauses into a single except block
+                // TODO: V1.5.0+ could add support for exception variable (as e)
+                let mut ir_except_body = Vec::new();
+                for clause in except_clauses {
+                    // If clause has a name (as e), define the variable
+                    if let Some(ref name) = clause.name {
+                        self.scope.push();
+                        self.scope.define(name, Type::String, false);
+                    }
+
+                    let clause_body = self.analyze_stmts(&clause.body)?;
+                    ir_except_body.extend(clause_body);
+
+                    if clause.name.is_some() {
+                        self.scope.pop();
+                    }
+                }
+
+                // Analyze finally body if present
+                let ir_finally_body = if let Some(fb) = finally_body {
+                    Some(self.analyze_stmts(fb)?)
+                } else {
+                    None
+                };
 
                 Ok(IrNode::TryBlock {
                     try_body: ir_try_body,
                     except_body: ir_except_body,
+                    finally_body: ir_finally_body,
                 })
             }
             Stmt::Break => Ok(IrNode::Break),

@@ -594,6 +594,7 @@ use pyo3::types::PyList;
             IrNode::TryBlock {
                 try_body,
                 except_body,
+                finally_body,
             } => {
                 // Use std::panic::catch_unwind to catch panics (like division by zero)
                 // and fall back to except_body
@@ -652,6 +653,16 @@ use pyo3::types::PyList;
                 self.indent -= 2;
                 result.push_str(&format!("{indent}    }}\n"));
                 result.push_str(&format!("{indent}}}\n"));
+
+                // V1.5.0: Emit finally block after the match
+                if let Some(finally_nodes) = finally_body {
+                    result.push_str(&format!("{indent}// finally block\n"));
+                    for node in finally_nodes {
+                        result.push_str(&self.emit_node(node));
+                        result.push('\n');
+                    }
+                }
+
                 result
             }
             IrNode::ImplBlock {

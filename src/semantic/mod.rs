@@ -354,14 +354,21 @@ impl SemanticAnalyzer {
             // V1.5.0: Recurse into TryExcept bodies to detect mutations
             Stmt::TryExcept {
                 try_body,
-                except_body,
-                ..
+                except_clauses,
+                finally_body,
             } => {
                 for s in try_body {
                     self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
                 }
-                for s in except_body {
-                    self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
+                for clause in except_clauses {
+                    for s in &clause.body {
+                        self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
+                    }
+                }
+                if let Some(fb) = finally_body {
+                    for s in fb {
+                        self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
+                    }
                 }
             }
             _ => {}

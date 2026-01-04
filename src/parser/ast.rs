@@ -213,11 +213,11 @@ pub enum Stmt {
         fields: Vec<Field>,
         methods: Vec<MethodDef>,
     },
-    /// Try-except statement
+    /// Try-except statement (V1.5.0: supports multiple except clauses and finally)
     TryExcept {
         try_body: Vec<Stmt>,
-        except_type: Option<String>,
-        except_body: Vec<Stmt>,
+        except_clauses: Vec<ExceptClause>,
+        finally_body: Option<Vec<Stmt>>,
     },
     /// Raise statement
     Raise {
@@ -269,6 +269,18 @@ pub struct MethodDef {
     pub return_type: Option<TypeHint>,
     pub body: Vec<Stmt>,
     pub is_static: bool, // @staticmethod
+}
+
+/// Except clause (V1.5.0)
+/// Represents one `except` block in a try-except statement
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExceptClause {
+    /// Exception types to catch (empty = bare except)
+    pub types: Vec<String>,
+    /// Optional exception variable name (as e)
+    pub name: Option<String>,
+    /// Body of the except block
+    pub body: Vec<Stmt>,
 }
 
 /// Program (collection of statements)

@@ -108,10 +108,11 @@ pub enum IrNode {
     TypeAlias { name: String, ty: Type },
 
     // --- 例外・アサート ---
-    /// try-exceptブロック (match Resultへ変換)
+    /// try-exceptブロック (V1.5.0: finally support)
     TryBlock {
         try_body: Vec<IrNode>,
         except_body: Vec<IrNode>,
+        finally_body: Option<Vec<IrNode>>,
     },
     /// アサート文 (V1.3.0)
     Assert {
