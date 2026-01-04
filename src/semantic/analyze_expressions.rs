@@ -1187,6 +1187,30 @@ impl SemanticAnalyzer {
                 })
             }
             Expr::Attribute { value, attr } => {
+                // V1.4.0: Check for native constant access (math.pi, math.e)
+                if let Expr::Ident(module) = value.as_ref() {
+                    if module == "math" {
+                        match attr.as_str() {
+                            "pi" => {
+                                return Ok(IrExpr::RawCode("std::f64::consts::PI".to_string()));
+                            }
+                            "e" => {
+                                return Ok(IrExpr::RawCode("std::f64::consts::E".to_string()));
+                            }
+                            "tau" => {
+                                return Ok(IrExpr::RawCode("std::f64::consts::TAU".to_string()));
+                            }
+                            "inf" => {
+                                return Ok(IrExpr::RawCode("f64::INFINITY".to_string()));
+                            }
+                            "nan" => {
+                                return Ok(IrExpr::RawCode("f64::NAN".to_string()));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
                 // Standalone attribute access (not call)
                 // Could be field access.
                 let ir_target = self.analyze_expr(value)?;
