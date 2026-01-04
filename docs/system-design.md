@@ -1,8 +1,8 @@
 # Tsuchinoko システム設計書
 
 > **著者**: Tane Channel Technology  
-> **バージョン**: 1.2.0  
-> **最終更新**: 2025-12-31
+> **バージョン**: 1.4.0  
+> **最終更新**: 2026-01-04
 
 ---
 
@@ -174,6 +174,53 @@ flowchart TB
 |------|-----|
 | 未知の import | `import obscure_library` |
 | 未サポート構文 | `eval()`, 動的属性 |
+
+### 3.4 V1.4.0 新機能
+
+#### 外部ライブラリ自動検出
+
+V1.4.0 では、`numpy`/`pandas` のハードコード判定を削除し、ネイティブモジュール以外はすべて外部ライブラリとして扱う。
+
+```rust
+// src/semantic/analyze_statements.rs
+const NATIVE_MODULES: &[&str] = &["math", "typing", "dataclasses", "typing_extensions"];
+
+// NATIVE_MODULES にないモジュールは外部ライブラリとして登録
+if !NATIVE_MODULES.contains(&module.as_str()) {
+    self.external_imports.push((module.clone(), effective_name.clone()));
+}
+```
+
+#### `from module import func` 構文
+
+```python
+from numpy import mean, std
+result = mean(values)  # → py_bridge.call_json("numpy.mean", ...)
+```
+
+#### math 定数の Native 変換
+
+| Python | Rust |
+|--------|------|
+| `math.pi` | `std::f64::consts::PI` |
+| `math.e` | `std::f64::consts::E` |
+| `math.tau` | `std::f64::consts::TAU` |
+| `math.inf` | `f64::INFINITY` |
+| `math.nan` | `f64::NAN` |
+
+#### `--project` オプション強制
+
+外部ライブラリを使用するコードは `--project` オプションが必須。
+
+```bash
+# エラーメッセージが表示される
+$ tnk script_with_numpy.py
+Error: This code uses external Python libraries.
+       Please use --project option to generate a complete project.
+
+# 正しい使い方
+$ tnk script_with_numpy.py --project ./output
+```
 
 ---
 
