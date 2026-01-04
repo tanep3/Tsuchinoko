@@ -18,8 +18,8 @@ pub trait TypeInference {
     /// スコープへのアクセスを提供
     fn scope(&self) -> &ScopeStack;
 
-    /// PyO3インポート情報へのアクセス
-    fn pyo3_imports(&self) -> &[(String, String)];
+    /// 外部モジュールインポート情報へのアクセス
+    fn external_imports(&self) -> &[(String, String)];
 
     /// 型ヒントから Type を生成する
     ///
@@ -126,7 +126,7 @@ pub trait TypeInference {
         if let Expr::Attribute { value, .. } = func {
             if let Expr::Ident(module_alias) = value.as_ref() {
                 let is_pyo3 = self
-                    .pyo3_imports()
+                    .external_imports()
                     .iter()
                     .any(|(_, alias)| alias == module_alias);
                 if is_pyo3 {
@@ -193,7 +193,7 @@ pub trait TypeInference {
                 // PyO3モジュール呼び出しをチェック
                 if let Expr::Ident(module_alias) = target {
                     if self
-                        .pyo3_imports()
+                        .external_imports()
                         .iter()
                         .any(|(_, alias)| alias == module_alias)
                     {
@@ -356,14 +356,14 @@ mod tests {
     // テスト用のモック構造体
     struct MockAnalyzer {
         scope: ScopeStack,
-        pyo3_imports: Vec<(String, String)>,
+        external_imports: Vec<(String, String)>,
     }
 
     impl MockAnalyzer {
         fn new() -> Self {
             Self {
                 scope: ScopeStack::new(),
-                pyo3_imports: Vec::new(),
+                external_imports: Vec::new(),
             }
         }
     }
@@ -373,8 +373,8 @@ mod tests {
             &self.scope
         }
 
-        fn pyo3_imports(&self) -> &[(String, String)] {
-            &self.pyo3_imports
+        fn external_imports(&self) -> &[(String, String)] {
+            &self.external_imports
         }
     }
 

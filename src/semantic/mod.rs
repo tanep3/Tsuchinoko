@@ -55,8 +55,8 @@ pub struct SemanticAnalyzer {
     /// Function name -> Vec of (param_name, param_type, default_expr, is_variadic) for default arg handling
     #[allow(clippy::type_complexity)]
     func_param_info: std::collections::HashMap<String, Vec<(String, Type, Option<Expr>, bool)>>,
-    /// PyO3 imports: (module, alias) - e.g., ("numpy", "np")
-    pyo3_imports: Vec<(String, String)>,
+    /// External imports: (module, alias) - e.g., ("numpy", "np")
+    external_imports: Vec<(String, String)>,
 }
 
 impl Default for SemanticAnalyzer {
@@ -73,7 +73,7 @@ impl SemanticAnalyzer {
             struct_field_types: std::collections::HashMap::new(),
             mutable_vars: std::collections::HashSet::new(),
             func_param_info: std::collections::HashMap::new(),
-            pyo3_imports: Vec::new(),
+            external_imports: Vec::new(),
         }
     }
 

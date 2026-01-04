@@ -39,7 +39,7 @@ pub struct RustEmitter {
     /// Whether resident Python process is needed
     needs_resident: bool,
     /// PyO3 imports: (module, alias) - e.g., ("numpy", "np")
-    pyo3_imports: Vec<(String, String)>,
+    external_imports: Vec<(String, String)>,
     /// Functions that require py_bridge argument
     resident_functions: std::collections::HashSet<String>,
     /// Whether we are currently emitting inside a function wrapper that already has py_bridge
@@ -75,7 +75,7 @@ impl RustEmitter {
             struct_defs: HashMap::new(),
             uses_pyo3: false,
             needs_resident: false,
-            pyo3_imports: Vec::new(),
+            external_imports: Vec::new(),
             resident_functions: std::collections::HashSet::new(),
             is_inside_resident_func: false,
         }
@@ -91,7 +91,8 @@ impl RustEmitter {
                 if let IrNode::PyO3Import { module, alias } = node {
                     self.uses_pyo3 = true;
                     let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
-                    self.pyo3_imports.push((module.clone(), effective_alias));
+                    self.external_imports
+                        .push((module.clone(), effective_alias));
                 }
             }
         }
@@ -160,7 +161,7 @@ use pyo3::types::PyList;
     fn emit_pyo3_main(&self, user_body: &str) -> String {
         // Generate import statements for each PyO3 module
         let imports: Vec<String> = self
-            .pyo3_imports
+            .external_imports
             .iter()
             .map(|(module, alias)| {
                 format!(
@@ -729,7 +730,8 @@ use pyo3::types::PyList;
                 // Mark that PyO3 is needed and track the import
                 self.uses_pyo3 = true;
                 let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
-                self.pyo3_imports.push((module.clone(), effective_alias));
+                self.external_imports
+                    .push((module.clone(), effective_alias));
 
                 // Don't emit anything here - imports are handled in main wrapper
                 String::new()
@@ -1525,8 +1527,8 @@ use pyo3::types::PyList;
                     "np" => "numpy".to_string(),
                     "pd" => "pandas".to_string(),
                     _ => {
-                        // pyo3_imports から逆引き
-                        self.pyo3_imports
+                        // external_imports から逆引き
+                        self.external_imports
                             .iter()
                             .find(|(_, alias)| alias == module)
                             .map(|(real, _)| real.clone())

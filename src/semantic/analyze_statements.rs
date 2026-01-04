@@ -991,13 +991,20 @@ impl SemanticAnalyzer {
                 alias,
                 items: _,
             } => {
-                // Register PyO3 imports for numpy/pandas
+                // V1.4.0: Register external imports for non-native modules
+                // Native modules (math, etc.) are handled directly in Rust,
+                // so they should NOT be registered as external imports.
                 let effective_name = alias.as_ref().unwrap_or(module);
-                if module == "numpy" || module == "pandas" {
-                    // Track this import for PyO3 wrapping
-                    self.pyo3_imports
+
+                // Native module whitelist - these are converted to Rust native code
+                const NATIVE_MODULES: &[&str] = &["math", "typing"];
+
+                if !NATIVE_MODULES.contains(&module.as_str()) {
+                    // Non-native modules go through Resident Worker
+                    self.external_imports
                         .push((module.clone(), effective_name.clone()));
                 }
+
                 // For now, return an empty sequence (no IR generated)
                 // The PyO3 wrapper will be added in emit phase
                 Ok(IrNode::PyO3Import {

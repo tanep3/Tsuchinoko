@@ -395,7 +395,7 @@ impl SemanticAnalyzer {
                     if let Expr::Ident(module_alias) = value.as_ref() {
                         // Check if this is a PyO3 import alias
                         let is_pyo3_module = self
-                            .pyo3_imports
+                            .external_imports
                             .iter()
                             .any(|(_, alias)| alias == module_alias);
 
