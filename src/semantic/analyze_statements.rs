@@ -989,20 +989,36 @@ impl SemanticAnalyzer {
             Stmt::Import {
                 module,
                 alias,
-                items: _,
+                items,
             } => {
-                // Register PyO3 imports for numpy/pandas
-                let effective_name = alias.as_ref().unwrap_or(module);
-                if module == "numpy" || module == "pandas" {
-                    // Track this import for PyO3 wrapping
-                    self.pyo3_imports
-                        .push((module.clone(), effective_name.clone()));
+                // V1.4.0: Register external imports for non-native modules
+                // Native modules (math, etc.) are handled directly in Rust,
+                // so they should NOT be registered as external imports.
+
+                // Native module whitelist - these are converted to Rust native code
+                const NATIVE_MODULES: &[&str] = &["math", "typing"];
+
+                if !NATIVE_MODULES.contains(&module.as_str()) {
+                    // Non-native modules go through Resident Worker
+                    if let Some(ref item_list) = items {
+                        // "from module import a, b, c" - register each item as (module, item)
+                        for item in item_list {
+                            self.external_imports.push((module.clone(), item.clone()));
+                        }
+                    } else {
+                        // "import module" or "import module as alias"
+                        let effective_name = alias.as_ref().unwrap_or(module);
+                        self.external_imports
+                            .push((module.clone(), effective_name.clone()));
+                    }
                 }
+
                 // For now, return an empty sequence (no IR generated)
                 // The PyO3 wrapper will be added in emit phase
                 Ok(IrNode::PyO3Import {
                     module: module.clone(),
                     alias: alias.clone(),
+                    items: items.clone(),
                 })
             }
         }

@@ -39,7 +39,7 @@ pub struct RustEmitter {
     /// Whether resident Python process is needed
     needs_resident: bool,
     /// PyO3 imports: (module, alias) - e.g., ("numpy", "np")
-    pyo3_imports: Vec<(String, String)>,
+    external_imports: Vec<(String, String)>,
     /// Functions that require py_bridge argument
     resident_functions: std::collections::HashSet<String>,
     /// Whether we are currently emitting inside a function wrapper that already has py_bridge
@@ -75,7 +75,7 @@ impl RustEmitter {
             struct_defs: HashMap::new(),
             uses_pyo3: false,
             needs_resident: false,
-            pyo3_imports: Vec::new(),
+            external_imports: Vec::new(),
             resident_functions: std::collections::HashSet::new(),
             is_inside_resident_func: false,
         }
@@ -88,10 +88,24 @@ impl RustEmitter {
         // Pass 1: Collect all PyO3Import nodes first (top-level only)
         if is_top_level {
             for node in nodes {
-                if let IrNode::PyO3Import { module, alias } = node {
+                if let IrNode::PyO3Import {
+                    module,
+                    alias,
+                    items,
+                } = node
+                {
                     self.uses_pyo3 = true;
-                    let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
-                    self.pyo3_imports.push((module.clone(), effective_alias));
+                    if let Some(ref item_list) = items {
+                        // "from module import a, b, c"
+                        for item in item_list {
+                            self.external_imports.push((module.clone(), item.clone()));
+                        }
+                    } else {
+                        // "import module" or "import module as alias"
+                        let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
+                        self.external_imports
+                            .push((module.clone(), effective_alias));
+                    }
                 }
             }
         }
@@ -160,7 +174,7 @@ use pyo3::types::PyList;
     fn emit_pyo3_main(&self, user_body: &str) -> String {
         // Generate import statements for each PyO3 module
         let imports: Vec<String> = self
-            .pyo3_imports
+            .external_imports
             .iter()
             .map(|(module, alias)| {
                 format!(
@@ -725,11 +739,24 @@ use pyo3::types::PyList;
                     .collect::<Vec<_>>()
                     .join("\n")
             }
-            IrNode::PyO3Import { module, alias } => {
+            IrNode::PyO3Import {
+                module,
+                alias,
+                items,
+            } => {
                 // Mark that PyO3 is needed and track the import
                 self.uses_pyo3 = true;
-                let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
-                self.pyo3_imports.push((module.clone(), effective_alias));
+                if let Some(ref item_list) = items {
+                    // "from module import a, b, c"
+                    for item in item_list {
+                        self.external_imports.push((module.clone(), item.clone()));
+                    }
+                } else {
+                    // "import module" or "import module as alias"
+                    let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
+                    self.external_imports
+                        .push((module.clone(), effective_alias));
+                }
 
                 // Don't emit anything here - imports are handled in main wrapper
                 String::new()
@@ -918,6 +945,35 @@ use pyo3::types::PyList;
                     };
 
                     if let Some(name) = func_name_opt {
+                        // V1.4.0: Check if this is a from-imported function
+                        // external_imports contains (module, item) tuples
+                        // If name matches any item, convert to py_bridge.call_json("module.item", ...)
+                        let from_import_module = self
+                            .external_imports
+                            .iter()
+                            .find(|(_, item)| item == &name)
+                            .map(|(module, _)| module.clone());
+
+                        if let Some(module) = from_import_module {
+                            // This is a from-imported function - use py_bridge
+                            self.needs_resident = true;
+                            let args_str: Vec<_> = args
+                                .iter()
+                                .map(|a| {
+                                    format!(
+                                        "serde_json::json!({})",
+                                        self.emit_expr_no_outer_parens(a)
+                                    )
+                                })
+                                .collect();
+                            return format!(
+                                "py_bridge.call_json::<serde_json::Value>(\"{}.{}\", &[{}]).unwrap().as_f64().unwrap()",
+                                module,
+                                name,
+                                args_str.join(", ")
+                            );
+                        }
+
                         // V1.3.1: int/float/str are now handled by semantic analyzer
                         // and converted to IrExpr::Cast or IrExpr::MethodCall
                         // V1.3.1: Struct constructors are now handled by semantic analyzer
@@ -1525,8 +1581,8 @@ use pyo3::types::PyList;
                     "np" => "numpy".to_string(),
                     "pd" => "pandas".to_string(),
                     _ => {
-                        // pyo3_imports から逆引き
-                        self.pyo3_imports
+                        // external_imports から逆引き
+                        self.external_imports
                             .iter()
                             .find(|(_, alias)| alias == module)
                             .map(|(real, _)| real.clone())

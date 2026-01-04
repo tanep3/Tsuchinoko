@@ -56,7 +56,7 @@ impl SemanticAnalyzer {
                 if let Expr::Attribute { value, .. } = func.as_ref() {
                     if let Expr::Ident(module_alias) = value.as_ref() {
                         let is_pyo3_module = self
-                            .pyo3_imports
+                            .external_imports
                             .iter()
                             .any(|(_, alias)| alias == module_alias);
                         if is_pyo3_module {
@@ -150,7 +150,7 @@ impl SemanticAnalyzer {
                     // Check if this is a PyO3 module call (np.array, pd.DataFrame, etc.)
                     if let Expr::Ident(module_alias) = value.as_ref() {
                         if self
-                            .pyo3_imports
+                            .external_imports
                             .iter()
                             .any(|(_, alias)| alias == module_alias)
                         {

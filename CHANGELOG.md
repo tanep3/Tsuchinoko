@@ -5,27 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.3] - 2026-01-04 - Test Modularization & Regression Fix
+## [1.4.0] - 2026-01-04 - External Library Enhancements
 
-### Changed - Code Quality
+### Added - External Libraries
 
-- **Major Test Modularization**: Extracted tests to `src/*/tests/` subdirectories
-  - `semantic/mod.rs`: 5,088 → 820 lines (**84% reduction**)
-  - `parser/mod.rs`: 3,331 → 2,223 lines (**33% reduction**)
-  - `emitter/mod.rs`: 3,775 → 1,618 lines (**57% reduction**)
-  - **Total: 7,537 lines removed from main modules**
-- **TDD Compliance**: Tests now colocated with implementation in `tests/mod.rs` subdirectories
-- **Examples Folder Split**: `examples/simple/` (45 files) and `examples/import/` (6 files)
-- **Regression Test Script**: Updated `run_regression_tests.py` to use `--project` for import tests
+- **`from module import func` Syntax**: Support for direct function imports
+  - `from numpy import mean, std` → `py_bridge.call_json("numpy.mean", ...)`
+  - Automatic conversion to PythonBridge calls
+- **Automatic External Library Detection**: Non-native modules are now automatically detected
+  - Removed hardcoded `numpy`/`pandas` checks
+  - All external imports trigger Resident Worker usage
+- **`--project` Enforcement**: Error message when external libraries are used without `--project` flag
+  - Clear guidance on using `--project` for proper dependency setup
+- **OpenCV Support**: Added `cv2` to tested external libraries
 
-### Fixed
+### Added - Math Module
 
-- **Test Distribution Script**: Fixed test extraction script that lost 40 tests in v1.3.2
-- **Negative Index Regression**: Fixed `arr[-1]` handling when wrapped with Cast expression
-  - Added `extract_negative_index` helper function
-  - Now correctly generates `arr[arr.len() - 1]` instead of `arr[(-1i64 as usize)]`
+- **Native Constants (V1.4.0)**: `math.pi`, `math.e`, `math.tau`, `math.inf`, `math.nan`
+  - Converted to native Rust constants (`std::f64::consts::PI`, etc.)
+  - Zero overhead - compiled directly as Rust constants
+
+### Changed
+
+- **`pyo3_imports` → `external_imports`**: Renamed internal field for clarity
+- **Python Syntax Coverage**: 62% → **73%** (78 features supported)
 
 ### Tests
+
+- **Regression Tests**: 54/54 passed (100%)
+- **New Tests**: `v1_4_math_constants_test.py`, `v1_4_from_import_test.py`, `v1_4_opencv_simple.py`
+
+---
+
+## [1.3.3] - 2026-01-04 - Test Modularization & Regression Fix
 
 - **Unit Tests**: 809 passed
 - **Regression Tests**: 51/51 passed (100%)

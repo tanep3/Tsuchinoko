@@ -65,8 +65,14 @@ Tsuchinoko V1.2.0 introduces a Resident Python Worker to support libraries that 
 
 - **NumPy** (`import numpy as np`)
 - **Pandas** (`import pandas as pd`)
+- **OpenCV** (`import cv2`) (V1.4.0)
 - **SciPy**
 - Any other library accessible in your Python environment via IPC calls.
+
+### `from` Import Syntax (V1.4.0) 🆕
+
+- **Direct function import**: `from numpy import mean, std`
+- Automatically converted to `py_bridge.call_json("numpy.mean", ...)` calls
 
 ### Persistent Object Handles 🆕
 
@@ -93,6 +99,11 @@ Tsuchinoko now supports persisting Python objects across bridge calls. This allo
 - `all()`, `any()` - boolean check (V1.3.0)
 - `map()`, `filter()` - functional transformation (V1.3.0)
 - `assert` - assertion statement (V1.3.0)
+
+## Math Module (V1.3.0 / V1.4.0)
+
+- **Functions**: `math.sqrt`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `exp`, `log`, `log10`, `log2`, `abs`, `floor`, `ceil`, `round`
+- **Constants (V1.4.0)**: `math.pi`, `math.e`, `math.tau`, `math.inf`, `math.nan` → Native Rust constants
 
 ## String Features
 
