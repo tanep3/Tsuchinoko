@@ -1486,6 +1486,12 @@ use pyo3::types::PyList;
                     } else if method == "copy" {
                         // Python list.copy() -> Rust .to_vec()
                         format!("{}.to_vec()", self.emit_expr_internal(target))
+                    } else if method == "collect_hashset" {
+                        // V1.5.0: set() constructor -> .collect::<HashSet<_>>()
+                        format!(
+                            "{}.collect::<std::collections::HashSet<_>>()",
+                            self.emit_expr_internal(target)
+                        )
                     } else {
                         format!("{}.{}()", self.emit_expr_internal(target), method)
                     }

@@ -388,6 +388,31 @@ impl SemanticAnalyzer {
                             }
                         }
                     }
+
+                    // V1.5.0: set(iterable) -> iterable.iter().cloned().collect::<HashSet<_>>()
+                    if name == "set" && args.len() == 1 && kwargs.is_empty() {
+                        let arg = &args[0];
+                        let ir_arg = self.analyze_expr(arg)?;
+
+                        // Build: arg.iter().cloned().collect()
+                        // Use MethodCall chain, emitter will handle turbofish
+                        let iter_call = IrExpr::MethodCall {
+                            target: Box::new(ir_arg),
+                            method: "iter".to_string(),
+                            args: vec![],
+                        };
+                        let cloned_call = IrExpr::MethodCall {
+                            target: Box::new(iter_call),
+                            method: "cloned".to_string(),
+                            args: vec![],
+                        };
+                        // Special marker for set collect - emitter will add turbofish
+                        return Ok(IrExpr::MethodCall {
+                            target: Box::new(cloned_call),
+                            method: "collect_hashset".to_string(), // Special marker
+                            args: vec![],
+                        });
+                    }
                 }
 
                 // Handle PyO3 module calls: np.array(...) -> np.call_method1("array", (...))?
