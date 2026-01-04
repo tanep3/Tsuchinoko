@@ -1291,23 +1291,34 @@ use pyo3::types::PyList;
             }
             IrExpr::Index { target, index } => {
                 // Handle negative index: arr[-1] -> arr[arr.len()-1]
-                // Case 1: UnaryOp { Neg, IntLit(n) }
-                if let IrExpr::UnaryOp {
-                    op: IrUnaryOp::Neg,
-                    operand,
-                } = index.as_ref()
-                {
-                    if let IrExpr::IntLit(n) = operand.as_ref() {
-                        let target_str = self.emit_expr(target);
-                        return format!("{target_str}[{target_str}.len() - {n}]");
+                // Helper function to extract negative index value
+                fn extract_negative_index(expr: &IrExpr) -> Option<i64> {
+                    match expr {
+                        // Case 1: UnaryOp { Neg, IntLit(n) }
+                        IrExpr::UnaryOp {
+                            op: IrUnaryOp::Neg,
+                            operand,
+                        } => {
+                            if let IrExpr::IntLit(n) = operand.as_ref() {
+                                return Some(*n);
+                            }
+                        }
+                        // Case 2: IntLit with negative value
+                        IrExpr::IntLit(n) if *n < 0 => {
+                            return Some(n.abs());
+                        }
+                        // Case 3: Cast { target: ..., ty } - unwrap and recurse
+                        IrExpr::Cast { target, .. } => {
+                            return extract_negative_index(target);
+                        }
+                        _ => {}
                     }
+                    None
                 }
-                // Case 2: IntLit with negative value
-                if let IrExpr::IntLit(n) = index.as_ref() {
-                    if *n < 0 {
-                        let target_str = self.emit_expr(target);
-                        return format!("{}[{}.len() - {}]", target_str, target_str, n.abs());
-                    }
+
+                if let Some(abs_val) = extract_negative_index(index) {
+                    let target_str = self.emit_expr(target);
+                    return format!("{target_str}[{target_str}.len() - {abs_val}]");
                 }
                 format!("{}[{}]", self.emit_expr(target), self.emit_expr(index))
             }
