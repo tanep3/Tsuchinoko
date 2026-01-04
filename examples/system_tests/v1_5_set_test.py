@@ -28,12 +28,31 @@ def test_set_remove() -> int:
     return 2
 
 
-# def test_set_union() -> int:
-#     """SET-005: set union |"""
-#     a: set[int] = {1, 2}
-#     b: set[int] = {2, 3}
-#     c: set[int] = a | b
-#     return 3  # Should be 3: {1, 2, 3}
+def test_set_union() -> int:
+    """SET-005: set union |"""
+    a: set[int] = {1, 2}
+    b: set[int] = {2, 3}
+    c: set[int] = a | b
+    # c should be {1, 2, 3}
+    return 3
+
+
+def test_set_intersection() -> int:
+    """SET-005: set intersection &"""
+    a: set[int] = {1, 2, 3}
+    b: set[int] = {2, 3, 4}
+    c: set[int] = a & b
+    # c should be {2, 3}
+    return 2
+
+
+def test_set_difference() -> int:
+    """SET-005: set difference -"""
+    a: set[int] = {1, 2, 3}
+    b: set[int] = {2, 3}
+    c: set[int] = a - b
+    # c should be {1}
+    return 1
 
 
 def test_set_in() -> bool:
@@ -43,12 +62,14 @@ def test_set_in() -> bool:
 
 
 def main() -> None:
-    print(test_set_literal())      # Expected: 3
-    print(test_set_constructor())  # Expected: 3
-    print(test_set_add())          # Expected: 3
-    print(test_set_remove())       # Expected: 2
-    # print(test_set_union())      # Expected: 3
-    print(test_set_in())           # Expected: true
+    print(test_set_literal())       # Expected: 3
+    print(test_set_constructor())   # Expected: 3
+    print(test_set_add())           # Expected: 3
+    print(test_set_remove())        # Expected: 2
+    print(test_set_union())         # Expected: 3
+    print(test_set_intersection())  # Expected: 2
+    print(test_set_difference())    # Expected: 1
+    print(test_set_in())            # Expected: true
 
 
 main()

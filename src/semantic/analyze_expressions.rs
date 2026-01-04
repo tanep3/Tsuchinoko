@@ -156,6 +156,48 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                // V1.5.0: Set operations - |, &, - on set types
+                // a | b -> a.union(&b).cloned().collect()
+                // a & b -> a.intersection(&b).cloned().collect()
+                // a - b -> a.difference(&b).cloned().collect()
+                if matches!(op, AstBinOp::BitOr | AstBinOp::BitAnd | AstBinOp::Sub) {
+                    let left_ty = self.infer_type(left);
+                    let right_ty = self.infer_type(right);
+
+                    // Check if both operands are set types
+                    if matches!(left_ty, Type::Set(_)) && matches!(right_ty, Type::Set(_)) {
+                        let ir_left = self.analyze_expr(left)?;
+                        let ir_right = self.analyze_expr(right)?;
+
+                        let method = match op {
+                            AstBinOp::BitOr => "union",
+                            AstBinOp::BitAnd => "intersection",
+                            AstBinOp::Sub => "difference",
+                            _ => unreachable!(),
+                        };
+
+                        // Generate: left.method(&right).cloned().collect()
+                        let method_call = IrExpr::MethodCall {
+                            target: Box::new(ir_left),
+                            method: method.to_string(),
+                            args: vec![IrExpr::Reference {
+                                target: Box::new(ir_right),
+                            }],
+                        };
+                        let cloned_call = IrExpr::MethodCall {
+                            target: Box::new(method_call),
+                            method: "cloned".to_string(),
+                            args: vec![],
+                        };
+                        // Use collect_hashset marker for type inference
+                        return Ok(IrExpr::MethodCall {
+                            target: Box::new(cloned_call),
+                            method: "collect_hashset".to_string(),
+                            args: vec![],
+                        });
+                    }
+                }
+
                 let ir_left = self.analyze_expr(left)?;
                 let ir_right = self.analyze_expr(right)?;
                 let ir_op = self.convert_binop(op);
