@@ -2,6 +2,38 @@
 
 本プロジェクトの主要な変更点をここに記録します。
 
+## [1.4.0] - 2026-01-04 - 外部ライブラリ機能強化
+
+### 追加 - 外部ライブラリ
+
+- **`from module import func` 構文**: 関数の直接インポートをサポート
+  - `from numpy import mean, std` → `py_bridge.call_json("numpy.mean", ...)`
+  - PythonBridge 呼び出しへ自動変換
+- **外部ライブラリ自動検出**: ネイティブでないモジュールを自動検出
+  - `numpy`/`pandas` のハードコード判定を削除
+  - すべての外部インポートが Resident Worker を使用
+- **`--project` オプション強制**: 外部ライブラリ使用時にエラーメッセージ表示
+  - `--project` を使用した適切な依存関係設定を案内
+- **OpenCV 対応**: `cv2` をテスト済み外部ライブラリに追加
+
+### 追加 - Math モジュール
+
+- **ネイティブ定数 (V1.4.0)**: `math.pi`, `math.e`, `math.tau`, `math.inf`, `math.nan`
+  - Rust ネイティブ定数に変換 (`std::f64::consts::PI` など)
+  - ゼロオーバーヘッド - Rust 定数として直接コンパイル
+
+### 変更
+
+- **`pyo3_imports` → `external_imports`**: 内部フィールド名を明確化
+- **Python 構文カバレッジ**: 62% → **73%** (78機能サポート)
+
+### テスト
+
+- **リグレッションテスト**: 54/54 パス (100%)
+- **新規テスト**: `v1_4_math_constants_test.py`, `v1_4_from_import_test.py`, `v1_4_opencv_simple.py`
+
+---
+
 ## [1.3.3] - 2026-01-04 - テストモジュール化 & リグレッション修正
 
 ### 変更 - コード品質
