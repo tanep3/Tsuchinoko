@@ -287,6 +287,7 @@ impl SemanticAnalyzer {
                         if matches!(
                             attr.as_str(),
                             "append" | "extend" | "push" | "pop" | "insert" | "remove" | "clear"
+                                | "add" | "discard"  // V1.5.0: Set methods
                         ) {
                             mutated_vars.insert(name);
                         }

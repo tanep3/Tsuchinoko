@@ -73,6 +73,8 @@ pub enum Expr {
     Attribute { value: Box<Expr>, attr: String },
     /// Dict literal
     Dict(Vec<(Expr, Expr)>),
+    /// Set literal (V1.5.0)
+    Set(Vec<Expr>),
     /// f-string literal f"..."
     FString {
         /// Static parts of the f-string

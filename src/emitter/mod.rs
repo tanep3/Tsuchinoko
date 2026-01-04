@@ -1142,6 +1142,28 @@ use pyo3::types::PyList;
                     }
                 }
             }
+            // V1.5.0: Set literal
+            IrExpr::Set { elem_type, elements } => {
+                if elements.is_empty() {
+                    "std::collections::HashSet::new()".to_string()
+                } else {
+                    let elems: Vec<_> = elements
+                        .iter()
+                        .map(|e| {
+                            let mut s = self.emit_expr_no_outer_parens(e);
+                            // For String type, add .to_string() to literals
+                            if matches!(elem_type, Type::String)
+                                && s.starts_with('"')
+                                && !s.contains(".to_string()")
+                            {
+                                s = format!("{s}.to_string()");
+                            }
+                            s
+                        })
+                        .collect();
+                    format!("std::collections::HashSet::from([{}])", elems.join(", "))
+                }
+            }
             IrExpr::FString { parts, values } => {
                 // Generate format string: "{:?}{:?}{:?}" from parts
                 // Use {:?} (Debug) instead of {} (Display) to support Vec and other types
@@ -1468,14 +1490,34 @@ use pyo3::types::PyList;
                         format!("{}.{}()", self.emit_expr_internal(target), method)
                     }
                 } else {
-                    let args_str: Vec<_> =
-                        args.iter().map(|a| self.emit_expr_internal(a)).collect();
-                    format!(
-                        "{}.{}({})",
-                        self.emit_expr_internal(target),
-                        method,
-                        args_str.join(", ")
-                    )
+                    // V1.5.0: Set method translations
+                    if method == "add" {
+                        // Python set.add(x) -> Rust set.insert(x)
+                        let args_str: Vec<_> =
+                            args.iter().map(|a| self.emit_expr_internal(a)).collect();
+                        format!(
+                            "{}.insert({})",
+                            self.emit_expr_internal(target),
+                            args_str.join(", ")
+                        )
+                    } else if method == "remove" || method == "discard" {
+                        // Python set.remove(x) / set.discard(x) -> Rust set.remove(&x)
+                        let arg = &args[0];
+                        format!(
+                            "{}.remove(&{})",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(arg)
+                        )
+                    } else {
+                        let args_str: Vec<_> =
+                            args.iter().map(|a| self.emit_expr_internal(a)).collect();
+                        format!(
+                            "{}.{}({})",
+                            self.emit_expr_internal(target),
+                            method,
+                            args_str.join(", ")
+                        )
+                    }
                 }
             }
             IrExpr::PyO3MethodCall {

@@ -1127,6 +1127,28 @@ impl SemanticAnalyzer {
                     entries: ir_entries,
                 })
             }
+            // V1.5.0: Set literal
+            Expr::Set(elements) => {
+                let mut ir_elements = Vec::new();
+                let mut elem_type = Type::Unknown;
+
+                for (i, e) in elements.iter().enumerate() {
+                    let ir_elem = self.analyze_expr(e)?;
+                    ir_elements.push(ir_elem);
+
+                    let et = self.infer_type(e);
+                    if i == 0 {
+                        elem_type = et;
+                    } else if et != elem_type {
+                        elem_type = Type::Any;
+                    }
+                }
+
+                Ok(IrExpr::Set {
+                    elem_type,
+                    elements: ir_elements,
+                })
+            }
             Expr::FString { parts, values } => {
                 let ir_values: Vec<IrExpr> = values
                     .iter()

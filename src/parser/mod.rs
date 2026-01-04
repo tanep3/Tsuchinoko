@@ -1844,10 +1844,30 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
 
         let entries = split_by_comma_balanced(inner);
         let mut parsed_entries = Vec::new();
+
+        // V1.5.0: Check if this is a set literal (no colons) or dict literal (has colons)
+        // First entry determines the type
+        let first_entry = entries.first().map(|s| s.trim()).unwrap_or("");
+        let is_set_literal = !first_entry.is_empty()
+            && utils::find_char_balanced(first_entry, ':').is_none();
+
+        if is_set_literal {
+            // Parse as set literal {1, 2, 3}
+            let mut set_elements = Vec::new();
+            for entry in entries {
+                let entry = entry.trim();
+                if !entry.is_empty() {
+                    set_elements.push(parse_expr(entry, line_num)?);
+                }
+            }
+            return Ok(Expr::Set(set_elements));
+        }
+
+        // Parse as dict literal {k: v, ...}
         for entry in entries {
             let entry = entry.trim();
             // Find the colon that separates key: value
-            if let Some(colon_pos) = entry.find(':') {
+            if let Some(colon_pos) = utils::find_char_balanced(entry, ':') {
                 let key = parse_expr(entry[..colon_pos].trim(), line_num)?;
                 let value = parse_expr(entry[colon_pos + 1..].trim(), line_num)?;
                 parsed_entries.push((key, value));

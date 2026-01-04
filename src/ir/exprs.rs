@@ -77,6 +77,11 @@ pub enum IrExpr {
         value_type: Type,
         entries: Vec<(IrExpr, IrExpr)>,
     },
+    /// セット/HashSet リテラル (V1.5.0)
+    Set {
+        elem_type: Type,
+        elements: Vec<IrExpr>,
+    },
 
     // --- 内包表記 ---
     /// リスト内包表記 [elt for target in iter if condition]
