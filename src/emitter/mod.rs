@@ -88,11 +88,24 @@ impl RustEmitter {
         // Pass 1: Collect all PyO3Import nodes first (top-level only)
         if is_top_level {
             for node in nodes {
-                if let IrNode::PyO3Import { module, alias } = node {
+                if let IrNode::PyO3Import {
+                    module,
+                    alias,
+                    items,
+                } = node
+                {
                     self.uses_pyo3 = true;
-                    let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
-                    self.external_imports
-                        .push((module.clone(), effective_alias));
+                    if let Some(ref item_list) = items {
+                        // "from module import a, b, c"
+                        for item in item_list {
+                            self.external_imports.push((module.clone(), item.clone()));
+                        }
+                    } else {
+                        // "import module" or "import module as alias"
+                        let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
+                        self.external_imports
+                            .push((module.clone(), effective_alias));
+                    }
                 }
             }
         }
@@ -726,12 +739,24 @@ use pyo3::types::PyList;
                     .collect::<Vec<_>>()
                     .join("\n")
             }
-            IrNode::PyO3Import { module, alias } => {
+            IrNode::PyO3Import {
+                module,
+                alias,
+                items,
+            } => {
                 // Mark that PyO3 is needed and track the import
                 self.uses_pyo3 = true;
-                let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
-                self.external_imports
-                    .push((module.clone(), effective_alias));
+                if let Some(ref item_list) = items {
+                    // "from module import a, b, c"
+                    for item in item_list {
+                        self.external_imports.push((module.clone(), item.clone()));
+                    }
+                } else {
+                    // "import module" or "import module as alias"
+                    let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
+                    self.external_imports
+                        .push((module.clone(), effective_alias));
+                }
 
                 // Don't emit anything here - imports are handled in main wrapper
                 String::new()
@@ -920,6 +945,35 @@ use pyo3::types::PyList;
                     };
 
                     if let Some(name) = func_name_opt {
+                        // V1.4.0: Check if this is a from-imported function
+                        // external_imports contains (module, item) tuples
+                        // If name matches any item, convert to py_bridge.call_json("module.item", ...)
+                        let from_import_module = self
+                            .external_imports
+                            .iter()
+                            .find(|(_, item)| item == &name)
+                            .map(|(module, _)| module.clone());
+
+                        if let Some(module) = from_import_module {
+                            // This is a from-imported function - use py_bridge
+                            self.needs_resident = true;
+                            let args_str: Vec<_> = args
+                                .iter()
+                                .map(|a| {
+                                    format!(
+                                        "serde_json::json!({})",
+                                        self.emit_expr_no_outer_parens(a)
+                                    )
+                                })
+                                .collect();
+                            return format!(
+                                "py_bridge.call_json::<serde_json::Value>(\"{}.{}\", &[{}]).unwrap().as_f64().unwrap()",
+                                module,
+                                name,
+                                args_str.join(", ")
+                            );
+                        }
+
                         // V1.3.1: int/float/str are now handled by semantic analyzer
                         // and converted to IrExpr::Cast or IrExpr::MethodCall
                         // V1.3.1: Struct constructors are now handled by semantic analyzer

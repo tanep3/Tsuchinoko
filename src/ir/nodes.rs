@@ -127,9 +127,12 @@ pub enum IrNode {
     /// シーケンス (複数トップレベル項目)
     Sequence(Vec<IrNode>),
     /// PyO3 import (numpy, pandas等)
+    /// V1.4.0: items フィールドを追加し、from import の個別関数名を保持
     PyO3Import {
         module: String,
         alias: Option<String>,
+        /// For "from module import a, b, c" - contains ["a", "b", "c"]
+        items: Option<Vec<String>>,
     },
 }
 

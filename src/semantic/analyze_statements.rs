@@ -989,20 +989,28 @@ impl SemanticAnalyzer {
             Stmt::Import {
                 module,
                 alias,
-                items: _,
+                items,
             } => {
                 // V1.4.0: Register external imports for non-native modules
                 // Native modules (math, etc.) are handled directly in Rust,
                 // so they should NOT be registered as external imports.
-                let effective_name = alias.as_ref().unwrap_or(module);
 
                 // Native module whitelist - these are converted to Rust native code
                 const NATIVE_MODULES: &[&str] = &["math", "typing"];
 
                 if !NATIVE_MODULES.contains(&module.as_str()) {
                     // Non-native modules go through Resident Worker
-                    self.external_imports
-                        .push((module.clone(), effective_name.clone()));
+                    if let Some(ref item_list) = items {
+                        // "from module import a, b, c" - register each item as (module, item)
+                        for item in item_list {
+                            self.external_imports.push((module.clone(), item.clone()));
+                        }
+                    } else {
+                        // "import module" or "import module as alias"
+                        let effective_name = alias.as_ref().unwrap_or(module);
+                        self.external_imports
+                            .push((module.clone(), effective_name.clone()));
+                    }
                 }
 
                 // For now, return an empty sequence (no IR generated)
@@ -1010,6 +1018,7 @@ impl SemanticAnalyzer {
                 Ok(IrNode::PyO3Import {
                     module: module.clone(),
                     alias: alias.clone(),
+                    items: items.clone(),
                 })
             }
         }
