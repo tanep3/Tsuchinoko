@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-01-04 - Correct Test Distribution
+
+### Fixed
+
+- **Test Distribution Script**: Fixed test extraction script that lost 40 tests in v1.3.2
+- **Test Count**: 809 unit tests (correctly preserved)
+
+### Changed - Code Quality
+
+- **Semantic Module Test Distribution**:
+  - Moved 48 expression-related tests to `analyze_expressions.rs`
+  - Moved 42 statement-related tests to `analyze_statements.rs`
+  - `mod.rs` reduced from 6,242 to 5,088 lines (18% reduction)
+  - Tests correctly colocated with implementation
+
 ## [1.3.2] - 2026-01-04 - Test Distribution & TDD Improvement
 
 ### Changed - Code Quality

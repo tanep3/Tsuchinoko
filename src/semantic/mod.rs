@@ -824,6 +824,49 @@ mod tests {
 
     // === カバレッジ80%達成用追加テスト ===
 
+    // --- convert_binop テスト ---
+    #[test]
+    fn test_convert_binop_add() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Add);
+        assert_eq!(op, IrBinOp::Add);
+    }
+
+    #[test]
+    fn test_convert_binop_sub() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Sub);
+        assert_eq!(op, IrBinOp::Sub);
+    }
+
+    #[test]
+    fn test_convert_binop_mul() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Mul);
+        assert_eq!(op, IrBinOp::Mul);
+    }
+
+    #[test]
+    fn test_convert_binop_div() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Div);
+        assert_eq!(op, IrBinOp::Div);
+    }
+
+    #[test]
+    fn test_convert_binop_eq() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Eq);
+        assert_eq!(op, IrBinOp::Eq);
+    }
+
+    #[test]
+    fn test_convert_binop_lt() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Lt);
+        assert_eq!(op, IrBinOp::Lt);
+    }
+
     // --- analyze: 複雑なケース ---
     #[test]
     fn test_analyze_return() {
@@ -846,9 +889,109 @@ def foo() -> int:
         assert_eq!(ir.len(), 1);
     }
 
-    // --- analyze_stmts テスト ---
+    // --- type_from_hint テスト ---
+    #[test]
+    fn test_type_from_hint_int() {
+        let analyzer = SemanticAnalyzer::new();
+        let hint = crate::parser::TypeHint {
+            name: "int".to_string(),
+            params: vec![],
+        };
+        let ty = analyzer.type_from_hint(&hint);
+        assert_eq!(ty, Type::Int);
+    }
+
+    #[test]
+    fn test_type_from_hint_str() {
+        let analyzer = SemanticAnalyzer::new();
+        let hint = crate::parser::TypeHint {
+            name: "str".to_string(),
+            params: vec![],
+        };
+        let ty = analyzer.type_from_hint(&hint);
+        assert_eq!(ty, Type::String);
+    }
+
+    #[test]
+    fn test_type_from_hint_list() {
+        let analyzer = SemanticAnalyzer::new();
+        let hint = crate::parser::TypeHint {
+            name: "list".to_string(),
+            params: vec![crate::parser::TypeHint {
+                name: "int".to_string(),
+                params: vec![],
+            }],
+        };
+        let ty = analyzer.type_from_hint(&hint);
+        assert!(matches!(ty, Type::List(_)));
+    }
 
     // === テストバッチ2: analyze_expr網羅 ===
+
+    // --- convert_binop 追加テスト ---
+    #[test]
+    fn test_convert_binop_mod() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Mod);
+        assert_eq!(op, IrBinOp::Mod);
+    }
+
+    #[test]
+    fn test_convert_binop_lteq() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::LtEq);
+        assert_eq!(op, IrBinOp::LtEq);
+    }
+
+    #[test]
+    fn test_convert_binop_noteq() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::NotEq);
+        assert_eq!(op, IrBinOp::NotEq);
+    }
+
+    // --- type_from_hint 追加 ---
+    #[test]
+    fn test_type_from_hint_float() {
+        let analyzer = SemanticAnalyzer::new();
+        let hint = crate::parser::TypeHint {
+            name: "float".to_string(),
+            params: vec![],
+        };
+        let ty = analyzer.type_from_hint(&hint);
+        assert_eq!(ty, Type::Float);
+    }
+
+    #[test]
+    fn test_type_from_hint_bool() {
+        let analyzer = SemanticAnalyzer::new();
+        let hint = crate::parser::TypeHint {
+            name: "bool".to_string(),
+            params: vec![],
+        };
+        let ty = analyzer.type_from_hint(&hint);
+        assert_eq!(ty, Type::Bool);
+    }
+
+    #[test]
+    fn test_type_from_hint_dict() {
+        let analyzer = SemanticAnalyzer::new();
+        let hint = crate::parser::TypeHint {
+            name: "dict".to_string(),
+            params: vec![
+                crate::parser::TypeHint {
+                    name: "str".to_string(),
+                    params: vec![],
+                },
+                crate::parser::TypeHint {
+                    name: "int".to_string(),
+                    params: vec![],
+                },
+            ],
+        };
+        let ty = analyzer.type_from_hint(&hint);
+        assert!(matches!(ty, Type::Dict(_, _)));
+    }
 
     // === テストバッチ3: Stmt網羅エンドツーエンドテスト ===
 
@@ -877,9 +1020,6 @@ def greet(name: str = "World") -> str:
         let ir = analyze(&program).unwrap();
         assert!(matches!(&ir[0], IrNode::FuncDecl { .. }));
     }
-
-    // --- If statement variants ---
-    // --- While loop ---
 
     // --- Break/Continue ---
     #[test]
@@ -1421,6 +1561,84 @@ def test():
         scope.pop();
         assert!(scope.lookup("x").is_some());
         assert!(scope.lookup("y").is_none());
+    }
+
+    // --- operators テスト ---
+    #[test]
+    fn test_convert_binop_pow() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Pow);
+        assert_eq!(op, IrBinOp::Pow);
+    }
+
+    #[test]
+    fn test_convert_binop_bitand() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::BitAnd);
+        assert_eq!(op, IrBinOp::BitAnd);
+    }
+
+    #[test]
+    fn test_convert_binop_bitor() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::BitOr);
+        assert_eq!(op, IrBinOp::BitOr);
+    }
+
+    #[test]
+    fn test_convert_binop_bitxor() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::BitXor);
+        assert_eq!(op, IrBinOp::BitXor);
+    }
+
+    #[test]
+    fn test_convert_binop_shl() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Shl);
+        assert_eq!(op, IrBinOp::Shl);
+    }
+
+    #[test]
+    fn test_convert_binop_shr() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Shr);
+        assert_eq!(op, IrBinOp::Shr);
+    }
+
+    // --- type_from_hint 追加 ---
+    #[test]
+    fn test_type_from_hint_optional() {
+        let analyzer = SemanticAnalyzer::new();
+        let hint = crate::parser::TypeHint {
+            name: "Optional".to_string(),
+            params: vec![crate::parser::TypeHint {
+                name: "int".to_string(),
+                params: vec![],
+            }],
+        };
+        let ty = analyzer.type_from_hint(&hint);
+        assert!(matches!(ty, Type::Optional(_)));
+    }
+
+    #[test]
+    fn test_type_from_hint_tuple() {
+        let analyzer = SemanticAnalyzer::new();
+        let hint = crate::parser::TypeHint {
+            name: "tuple".to_string(),
+            params: vec![
+                crate::parser::TypeHint {
+                    name: "int".to_string(),
+                    params: vec![],
+                },
+                crate::parser::TypeHint {
+                    name: "str".to_string(),
+                    params: vec![],
+                },
+            ],
+        };
+        let ty = analyzer.type_from_hint(&hint);
+        assert!(matches!(ty, Type::Tuple(_)));
     }
 
     // --- complex expressions ---
@@ -2181,6 +2399,21 @@ def test():
         assert!(matches!(ty, Type::Tuple(_)));
     }
 
+    // --- Operators網羅 ---
+    #[test]
+    fn test_convert_binop_is() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Is);
+        assert_eq!(op, IrBinOp::Is);
+    }
+
+    #[test]
+    fn test_convert_binop_isnot() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::IsNot);
+        assert_eq!(op, IrBinOp::IsNot);
+    }
+
     // --- coercion ---
     #[test]
     fn test_analyze_int_float_coercion() {
@@ -2482,6 +2715,27 @@ def test():
         let program = parse(code).unwrap();
         let ir = analyze(&program).unwrap();
         assert!(!ir.is_empty());
+    }
+
+    // --- complex type hints ---
+    #[test]
+    fn test_type_from_hint_callable() {
+        let analyzer = SemanticAnalyzer::new();
+        let hint = crate::parser::TypeHint {
+            name: "Callable".to_string(),
+            params: vec![
+                crate::parser::TypeHint {
+                    name: "int".to_string(),
+                    params: vec![],
+                },
+                crate::parser::TypeHint {
+                    name: "bool".to_string(),
+                    params: vec![],
+                },
+            ],
+        };
+        let ty = analyzer.type_from_hint(&hint);
+        assert!(matches!(ty, Type::Func { .. }));
     }
 
     // --- scope depth ---
@@ -3033,6 +3287,28 @@ def test():
         assert!(Type::Unknown.is_compatible_with(&Type::List(Box::new(Type::Int))));
     }
 
+    // --- list type from hint ---
+    #[test]
+    fn test_type_from_hint_nested_list() {
+        let analyzer = SemanticAnalyzer::new();
+        let hint = crate::parser::TypeHint {
+            name: "list".to_string(),
+            params: vec![crate::parser::TypeHint {
+                name: "list".to_string(),
+                params: vec![crate::parser::TypeHint {
+                    name: "int".to_string(),
+                    params: vec![],
+                }],
+            }],
+        };
+        let ty = analyzer.type_from_hint(&hint);
+        if let Type::List(inner) = ty {
+            assert!(matches!(*inner, Type::List(_)));
+        } else {
+            panic!("Expected nested list type");
+        }
+    }
+
     // --- modulo operator ---
     #[test]
     fn test_analyze_modulo() {
@@ -3307,6 +3583,35 @@ def test():
         scope.pop();
         let info = scope.lookup("x").unwrap();
         assert_eq!(info.ty, Type::Int);
+    }
+
+    // --- operators coverage ---
+    #[test]
+    fn test_convert_binop_and() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::And);
+        assert_eq!(op, IrBinOp::And);
+    }
+
+    #[test]
+    fn test_convert_binop_or() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Or);
+        assert_eq!(op, IrBinOp::Or);
+    }
+
+    #[test]
+    fn test_convert_binop_eq_v2() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Eq);
+        assert_eq!(op, IrBinOp::Eq);
+    }
+
+    #[test]
+    fn test_convert_binop_lt_v2() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Lt);
+        assert_eq!(op, IrBinOp::Lt);
     }
 
     // --- more complex patterns ---
@@ -3892,6 +4197,42 @@ def test():
         assert_eq!(info.ty, Type::String);
     }
 
+    // --- more operator tests ---
+    #[test]
+    fn test_convert_binop_matmul() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::MatMul);
+        assert_eq!(op, IrBinOp::MatMul);
+    }
+
+    #[test]
+    fn test_convert_binop_add_v2() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Add);
+        assert_eq!(op, IrBinOp::Add);
+    }
+
+    #[test]
+    fn test_convert_binop_sub_v2() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Sub);
+        assert_eq!(op, IrBinOp::Sub);
+    }
+
+    #[test]
+    fn test_convert_binop_mul_v2() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Mul);
+        assert_eq!(op, IrBinOp::Mul);
+    }
+
+    #[test]
+    fn test_convert_binop_div_v2() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Div);
+        assert_eq!(op, IrBinOp::Div);
+    }
+
     // --- more comparison patterns ---
     #[test]
     fn test_analyze_cmp_lt() {
@@ -4014,6 +4355,46 @@ def just_pass():
         let program = parse(code).unwrap();
         let ir = analyze(&program).unwrap();
         assert!(!ir.is_empty());
+    }
+
+    // --- type hint combinations ---
+    #[test]
+    fn test_type_from_hint_list_str() {
+        let analyzer = SemanticAnalyzer::new();
+        let hint = crate::parser::TypeHint {
+            name: "list".to_string(),
+            params: vec![crate::parser::TypeHint {
+                name: "str".to_string(),
+                params: vec![],
+            }],
+        };
+        let ty = analyzer.type_from_hint(&hint);
+        if let Type::List(inner) = ty {
+            assert_eq!(*inner, Type::String);
+        }
+    }
+
+    #[test]
+    fn test_type_from_hint_dict_str_int() {
+        let analyzer = SemanticAnalyzer::new();
+        let hint = crate::parser::TypeHint {
+            name: "dict".to_string(),
+            params: vec![
+                crate::parser::TypeHint {
+                    name: "str".to_string(),
+                    params: vec![],
+                },
+                crate::parser::TypeHint {
+                    name: "int".to_string(),
+                    params: vec![],
+                },
+            ],
+        };
+        let ty = analyzer.type_from_hint(&hint);
+        if let Type::Dict(k, v) = ty {
+            assert_eq!(*k, Type::String);
+            assert_eq!(*v, Type::Int);
+        }
     }
 
     // --- infer nested expressions ---
@@ -4688,5 +5069,20 @@ def test():
         let t1 = Type::Tuple(vec![Type::Int, Type::String]);
         let t2 = Type::Tuple(vec![Type::Int, Type::String]);
         assert!(t1.is_compatible_with(&t2));
+    }
+
+    // --- operators convert ---
+    #[test]
+    fn test_convert_binop_mod_v2() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Mod);
+        assert_eq!(op, IrBinOp::Mod);
+    }
+
+    #[test]
+    fn test_convert_binop_pow_v2() {
+        let analyzer = SemanticAnalyzer::new();
+        let op = analyzer.convert_binop(&crate::parser::BinOp::Pow);
+        assert_eq!(op, IrBinOp::Pow);
     }
 }

@@ -1112,6 +1112,7 @@ arr.append(4)
         assert!(!ir.is_empty());
     }
 
+    // --- analyze_stmts テスト ---
     // --- SemanticAnalyzer::new テスト ---
     #[test]
     fn test_semantic_analyzer_new() {
@@ -1168,6 +1169,8 @@ class Counter:
         assert!(!ir.is_empty());
     }
 
+    // --- If statement variants ---
+    // --- While loop ---
     // --- Return variants ---
     #[test]
     fn test_analyze_return_none() {
