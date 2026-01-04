@@ -1,0 +1,88 @@
+use tsuchinoko::bridge::PythonBridge;
+
+fn test_numpy(py_bridge: &mut tsuchinoko::bridge::PythonBridge) -> () {
+    println!("{}", "=== numpy test ===");
+
+    let a: serde_json::Value = {
+let _arg_0 = vec![1i64, 2i64, 3i64, 4i64, 5i64];
+    py_bridge.call_json::<serde_json::Value>("numpy.array", &[serde_json::json!(_arg_0)]).unwrap()
+};
+    let s: serde_json::Value = {
+let _arg_0 = a;
+    py_bridge.call_json::<serde_json::Value>("numpy.sum", &[serde_json::json!(_arg_0)]).unwrap()
+};
+    println!("{} {}", "sum(a) =", bridge::display_value(&s));
+
+    let m: serde_json::Value = {
+let _arg_0 = vec![vec![1i64, 2i64], vec![3i64, 4i64]];
+    py_bridge.call_json::<serde_json::Value>("numpy.array", &[serde_json::json!(_arg_0)]).unwrap()
+};
+    let n: serde_json::Value = {
+let _arg_0 = vec![vec![5i64, 6i64], vec![7i64, 8i64]];
+    py_bridge.call_json::<serde_json::Value>("numpy.array", &[serde_json::json!(_arg_0)]).unwrap()
+};
+    let p: serde_json::Value = {
+let _arg_0 = m;
+    let _arg_1 = n;
+    py_bridge.call_json::<serde_json::Value>("numpy.dot", &[serde_json::json!(_arg_0), serde_json::json!(_arg_1)]).unwrap()
+};
+    println!("{}", "dot(m,n) =");
+
+    println!("{}", bridge::display_value(&p));
+
+}
+fn test_pandas(py_bridge: &mut tsuchinoko::bridge::PythonBridge) -> () {
+    println!("{}", "\n=== pandas test ===");
+
+    let df: serde_json::Value = {
+let _arg_0 = serde_json::json!({ "name": vec!["Alice".to_string(), "Bob".to_string(), "Charlie".to_string()], "score": vec![80i64, 92i64, 85i64] });
+    py_bridge.call_json::<serde_json::Value>("pandas.DataFrame", &[serde_json::json!(_arg_0)]).unwrap()
+};
+    let txt: String = {
+
+    py_bridge.call_json_method::<serde_json::Value>(df.clone(), "to_string", &[]).unwrap()
+}.as_str().unwrap().to_string();
+    println!("{}", &txt);
+
+}
+fn test_interop(py_bridge: &mut tsuchinoko::bridge::PythonBridge) -> () {
+    println!("{}", "\n=== interop test ===");
+
+    let mat: serde_json::Value = {
+let _arg_0 = vec![vec![10i64, 20i64], vec![30i64, 40i64]];
+    py_bridge.call_json::<serde_json::Value>("numpy.array", &[serde_json::json!(_arg_0)]).unwrap()
+};
+    let df2: serde_json::Value = {
+let _arg_0 = mat;
+    py_bridge.call_json::<serde_json::Value>("pandas.DataFrame", &[serde_json::json!(_arg_0)]).unwrap()
+};
+    println!("{}", bridge::display_value(&{
+
+    py_bridge.call_json_method::<serde_json::Value>(df2.clone(), "to_string", &[]).unwrap()
+}));
+
+    let back: serde_json::Value = {
+
+    py_bridge.call_json_method::<serde_json::Value>(df2.clone(), "to_numpy", &[]).unwrap()
+};
+    println!("{}", "back =");
+
+    println!("{}", bridge::display_value(&back));
+
+}
+fn main() {
+    let mut py_bridge = tsuchinoko::bridge::PythonBridge::new()
+        .expect("Failed to start Python worker");
+    
+        test_numpy(&mut py_bridge);
+
+        test_pandas(&mut py_bridge);
+
+        test_interop(&mut py_bridge);
+
+        println!("{}", "\n=== done ===");
+}
+
+// Note: This code uses the PythonBridge for calling Python libraries.
+// Make sure Python is installed and the required libraries are available.
+// The Python worker process will be started automatically.
