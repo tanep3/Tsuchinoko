@@ -5,20 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.3] - 2026-01-04 - Correct Test Distribution
+## [1.3.3] - 2026-01-04 - Test Modularization & Regression Fix
+
+### Changed - Code Quality
+
+- **Major Test Modularization**: Extracted tests to `src/*/tests/` subdirectories
+  - `semantic/mod.rs`: 5,088 → 820 lines (**84% reduction**)
+  - `parser/mod.rs`: 3,331 → 2,223 lines (**33% reduction**)
+  - `emitter/mod.rs`: 3,775 → 1,618 lines (**57% reduction**)
+  - **Total: 7,537 lines removed from main modules**
+- **TDD Compliance**: Tests now colocated with implementation in `tests/mod.rs` subdirectories
+- **Examples Folder Split**: `examples/simple/` (45 files) and `examples/import/` (6 files)
+- **Regression Test Script**: Updated `run_regression_tests.py` to use `--project` for import tests
 
 ### Fixed
 
 - **Test Distribution Script**: Fixed test extraction script that lost 40 tests in v1.3.2
-- **Test Count**: 809 unit tests (correctly preserved)
+- **Negative Index Regression**: Fixed `arr[-1]` handling when wrapped with Cast expression
+  - Added `extract_negative_index` helper function
+  - Now correctly generates `arr[arr.len() - 1]` instead of `arr[(-1i64 as usize)]`
 
-### Changed - Code Quality
+### Tests
 
-- **Semantic Module Test Distribution**:
-  - Moved 48 expression-related tests to `analyze_expressions.rs`
-  - Moved 42 statement-related tests to `analyze_statements.rs`
-  - `mod.rs` reduced from 6,242 to 5,088 lines (18% reduction)
-  - Tests correctly colocated with implementation
+- **Unit Tests**: 809 passed
+- **Regression Tests**: 51/51 passed (100%)
 
 ## [1.3.2] - 2026-01-04 - Test Distribution & TDD Improvement
 
