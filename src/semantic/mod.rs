@@ -351,6 +351,19 @@ impl SemanticAnalyzer {
                     seen_vars.insert(target.clone());
                 }
             }
+            // V1.5.0: Recurse into TryExcept bodies to detect mutations
+            Stmt::TryExcept {
+                try_body,
+                except_body,
+                ..
+            } => {
+                for s in try_body {
+                    self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
+                }
+                for s in except_body {
+                    self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
+                }
+            }
             _ => {}
         }
     }

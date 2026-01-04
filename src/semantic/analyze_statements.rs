@@ -955,17 +955,9 @@ impl SemanticAnalyzer {
                 except_type: _,
                 except_body,
             } => {
-                // Analyze try body
-                let ir_try_body: Vec<IrNode> = try_body
-                    .iter()
-                    .map(|s| self.analyze_stmt(s))
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                // Analyze except body
-                let ir_except_body: Vec<IrNode> = except_body
-                    .iter()
-                    .map(|s| self.analyze_stmt(s))
-                    .collect::<Result<Vec<_>, _>>()?;
+                // Use analyze_stmts to properly detect mutable variables in try/except blocks
+                let ir_try_body = self.analyze_stmts(try_body)?;
+                let ir_except_body = self.analyze_stmts(except_body)?;
 
                 Ok(IrNode::TryBlock {
                     try_body: ir_try_body,

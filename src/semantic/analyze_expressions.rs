@@ -690,7 +690,7 @@ impl SemanticAnalyzer {
                         )?;
 
                         let final_func = if name == "main" {
-                            Box::new(IrExpr::Var("user_main".to_string()))
+                            Box::new(IrExpr::Var("main_py".to_string()))
                         } else {
                             Box::new(IrExpr::Var(name.clone()))
                         };
