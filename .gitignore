@@ -46,3 +46,5 @@ old_versions/
 
 # Transpiler outputs
 tmp/
+src/bin/regression_test.rs
+src/bin/test.rs
