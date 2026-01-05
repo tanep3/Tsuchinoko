@@ -1,5 +1,5 @@
 # v1.5.0 Phase 5 Tests - Slice Complete Support
-# Tests for: step slicing, reverse slicing, range+step slicing (list only first)
+# Tests for: step slicing, reverse slicing, range+step slicing (list AND string)
 
 def test_slice_step() -> list[int]:
     """SLC-001: arr[::2] - every 2nd element"""
@@ -19,23 +19,24 @@ def test_slice_range_step() -> list[int]:
     return arr[1:8:2]  # Expected: [1, 3, 5, 7]
 
 
-# String step slicing will be added later
-# def test_str_slice_step() -> str:
-#     """SLC-001 for string: s[::2]"""
-#     s: str = "abcdefghij"
-#     return s[::2]  # Expected: "acegi"
+def test_str_slice_step() -> str:
+    """SLC-001 for string: s[::2]"""
+    s: str = "abcdefghij"
+    return s[::2]  # Expected: "acegi"
 
 
-# def test_str_reverse() -> str:
-#     """SLC-002 for string: s[::-1]"""
-#     s: str = "hello"
-#     return s[::-1]  # Expected: "olleh"
+def test_str_reverse() -> str:
+    """SLC-002 for string: s[::-1]"""
+    s: str = "hello"
+    return s[::-1]  # Expected: "olleh"
 
 
 def main() -> None:
     print(test_slice_step())       # Expected: [0, 2, 4, 6, 8]
     print(test_slice_reverse())    # Expected: [5, 4, 3, 2, 1]
     print(test_slice_range_step()) # Expected: [1, 3, 5, 7]
+    print(test_str_slice_step())   # Expected: acegi
+    print(test_str_reverse())      # Expected: olleh
 
 
 main()

@@ -1340,6 +1340,7 @@ impl SemanticAnalyzer {
                 // Python slices: nums[:3], nums[-3:], nums[1:len(nums)-1], nums[::2], nums[::-1]
                 // Rust equivalents depend on the slice type
                 let ir_target = self.analyze_expr(target)?;
+                let target_type = self.infer_type(target);
 
                 let ir_start = match start {
                     Some(s) => Some(Box::new(self.analyze_expr(s)?)),
@@ -1355,6 +1356,30 @@ impl SemanticAnalyzer {
                     Some(s) => Some(Box::new(self.analyze_expr(s)?)),
                     None => None,
                 };
+
+                // V1.5.0: Special handling for String step slices (use chars() instead of iter())
+                if matches!(target_type, Type::String) && ir_step.is_some() {
+                    let target_str = self.emit_simple_ir_expr(&ir_target);
+                    let step_expr = ir_step.as_ref().unwrap();
+                    let step_val_str = self.emit_simple_ir_expr(step_expr);
+                    
+                    // Check if step is -1 (reverse)
+                    let is_reverse = matches!(step_expr.as_ref(), IrExpr::IntLit(-1));
+                    
+                    if is_reverse {
+                        // s[::-1] -> s.chars().rev().collect::<String>()
+                        return Ok(IrExpr::RawCode(format!(
+                            "{}.chars().rev().collect::<String>()",
+                            target_str
+                        )));
+                    } else {
+                        // s[::n] -> s.chars().step_by(n).collect::<String>()
+                        return Ok(IrExpr::RawCode(format!(
+                            "{}.chars().step_by({} as usize).collect::<String>()",
+                            target_str, step_val_str
+                        )));
+                    }
+                }
 
                 Ok(IrExpr::Slice {
                     target: Box::new(ir_target),
