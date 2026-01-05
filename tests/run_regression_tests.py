@@ -18,7 +18,10 @@ def run_simple_test(py_file):
     print(f"Testing {py_file}...", end="", flush=True)
     
     abs_py_file = os.path.abspath(py_file)
-    output_rs = "src/bin/regression_test.rs"
+    # Output to tmp directory (ignored by git)
+    os.makedirs("tmp", exist_ok=True)
+    output_rs = "tmp/regression_test.rs"
+    output_bin = "tmp/regression_test"
     
     # 1. Transpile
     cmd_transpile = ["cargo", "run", "--quiet", "--bin", "tnk", "--", abs_py_file, "-o", output_rs]
@@ -30,12 +33,20 @@ def run_simple_test(py_file):
         print(e.stderr)
         return False
 
-    # 2. Run
-    cmd_run = ["cargo", "run", "--quiet", "--bin", "regression_test"]
+    # 2. Compile with rustc
+    cmd_compile = ["rustc", output_rs, "-o", output_bin]
     
     try:
+        subprocess.run(cmd_compile, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        print(" ❌ Compile Failed")
+        print(e.stderr)
+        return False
+
+    # 3. Run
+    try:
         start_time = time.time()
-        subprocess.run(cmd_run, capture_output=True, text=True, check=True, timeout=15)
+        subprocess.run([output_bin], capture_output=True, text=True, check=True, timeout=15)
         duration = time.time() - start_time
         print(f" ✅ OK ({duration:.2f}s)")
         return True
@@ -53,7 +64,7 @@ def run_import_test(py_file):
     print(f"Testing {py_file}...", end="", flush=True)
     
     abs_py_file = os.path.abspath(py_file)
-    project_dir = "/tmp/tsuchinoko_regression_project"
+    project_dir = "tmp/tsuchinoko_regression_project"
     
     # プロジェクトディレクトリをクリア
     if os.path.exists(project_dir):
@@ -103,8 +114,8 @@ def run_import_test(py_file):
 
 
 def main():
-    # src/bin ディレクトリを作成
-    os.makedirs("src/bin", exist_ok=True)
+    # tmp ディレクトリを作成 (git ignore対象)
+    os.makedirs("tmp", exist_ok=True)
     
     # 単一テストファイルを取得
     simple_files = sorted(glob.glob("examples/simple/*.py"))

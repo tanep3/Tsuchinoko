@@ -1495,26 +1495,27 @@ impl SemanticAnalyzer {
                 };
 
                 // V1.5.0: Special handling for String step slices (use chars() instead of iter())
-                if matches!(target_type, Type::String) && ir_step.is_some() {
-                    let target_str = self.emit_simple_ir_expr(&ir_target);
-                    let step_expr = ir_step.as_ref().unwrap();
-                    let step_val_str = self.emit_simple_ir_expr(step_expr);
+                if let Some(ref step_box) = ir_step {
+                    if matches!(target_type, Type::String) {
+                        let target_str = self.emit_simple_ir_expr(&ir_target);
+                        let step_val_str = self.emit_simple_ir_expr(step_box);
 
-                    // Check if step is -1 (reverse)
-                    let is_reverse = matches!(step_expr.as_ref(), IrExpr::IntLit(-1));
+                        // Check if step is -1 (reverse)
+                        let is_reverse = matches!(step_box.as_ref(), IrExpr::IntLit(-1));
 
-                    if is_reverse {
-                        // s[::-1] -> s.chars().rev().collect::<String>()
-                        return Ok(IrExpr::RawCode(format!(
-                            "{}.chars().rev().collect::<String>()",
-                            target_str
-                        )));
-                    } else {
-                        // s[::n] -> s.chars().step_by(n).collect::<String>()
-                        return Ok(IrExpr::RawCode(format!(
-                            "{}.chars().step_by({} as usize).collect::<String>()",
-                            target_str, step_val_str
-                        )));
+                        if is_reverse {
+                            // s[::-1] -> s.chars().rev().collect::<String>()
+                            return Ok(IrExpr::RawCode(format!(
+                                "{}.chars().rev().collect::<String>()",
+                                target_str
+                            )));
+                        } else {
+                            // s[::n] -> s.chars().step_by(n).collect::<String>()
+                            return Ok(IrExpr::RawCode(format!(
+                                "{}.chars().step_by({} as usize).collect::<String>()",
+                                target_str, step_val_str
+                            )));
+                        }
                     }
                 }
 

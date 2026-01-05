@@ -1713,7 +1713,7 @@ use pyo3::types::PyList;
                             self.emit_expr_internal(target),
                             self.emit_expr_internal(width)
                         )
-                    } else if method == "ljust" && args.len() >= 1 {
+                    } else if method == "ljust" && !args.is_empty() {
                         // Python s.ljust(width) -> format!("{:<width$}", s)
                         let width = &args[0];
                         format!(
@@ -1721,7 +1721,7 @@ use pyo3::types::PyList;
                             self.emit_expr_internal(target),
                             self.emit_expr_internal(width)
                         )
-                    } else if method == "rjust" && args.len() >= 1 {
+                    } else if method == "rjust" && !args.is_empty() {
                         // Python s.rjust(width) -> format!("{:>width$}", s)
                         let width = &args[0];
                         format!(
@@ -1729,7 +1729,7 @@ use pyo3::types::PyList;
                             self.emit_expr_internal(target),
                             self.emit_expr_internal(width)
                         )
-                    } else if method == "center" && args.len() >= 1 {
+                    } else if method == "center" && !args.is_empty() {
                         // Python s.center(width) -> format!("{:^width$}", s)
                         let width = &args[0];
                         format!(
