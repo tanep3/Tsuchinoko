@@ -1498,6 +1498,37 @@ use pyo3::types::PyList;
                     } else if method == "clear" {
                         // V1.5.0: Python list.clear() -> Rust list.clear()
                         format!("{}.clear()", self.emit_expr_internal(target))
+                    // V1.5.0: String is* methods (no args)
+                    } else if method == "isdigit" {
+                        format!(
+                            "!{}.is_empty() && {}.chars().all(|c| c.is_ascii_digit())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "isalpha" {
+                        format!(
+                            "!{}.is_empty() && {}.chars().all(|c| c.is_alphabetic())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "isalnum" {
+                        format!(
+                            "!{}.is_empty() && {}.chars().all(|c| c.is_alphanumeric())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "isupper" {
+                        format!(
+                            "{}.chars().any(|c| c.is_alphabetic()) && {}.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "islower" {
+                        format!(
+                            "{}.chars().any(|c| c.is_alphabetic()) && {}.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_lowercase())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
                     } else {
                         format!("{}.{}()", self.emit_expr_internal(target), method)
                     }
@@ -1538,6 +1569,124 @@ use pyo3::types::PyList;
                             "{}.extend({})",
                             self.emit_expr_internal(target),
                             self.emit_expr_internal(iter)
+                        )
+                    // V1.5.0: String method translations
+                    } else if method == "startswith" {
+                        // Python s.startswith("x") -> Rust s.starts_with("x")
+                        let arg = &args[0];
+                        format!(
+                            "{}.starts_with(&{})",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(arg)
+                        )
+                    } else if method == "endswith" {
+                        // Python s.endswith("x") -> Rust s.ends_with("x")
+                        let arg = &args[0];
+                        format!(
+                            "{}.ends_with(&{})",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(arg)
+                        )
+                    } else if method == "replace" && args.len() >= 2 {
+                        // Python s.replace(old, new) -> Rust s.replace(&old, &new)
+                        let old = &args[0];
+                        let new = &args[1];
+                        format!(
+                            "{}.replace(&{}, &{})",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(old),
+                            self.emit_expr_internal(new)
+                        )
+                    } else if method == "find" && args.len() == 1 {
+                        // Python s.find(sub) -> Rust s.find(&sub).map(|i| i as i64).unwrap_or(-1)
+                        let sub = &args[0];
+                        format!(
+                            "{}.find(&{}).map(|i| i as i64).unwrap_or(-1i64)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(sub)
+                        )
+                    } else if method == "rfind" && args.len() == 1 {
+                        // Python s.rfind(sub) -> Rust s.rfind(&sub).map(|i| i as i64).unwrap_or(-1)
+                        let sub = &args[0];
+                        format!(
+                            "{}.rfind(&{}).map(|i| i as i64).unwrap_or(-1i64)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(sub)
+                        )
+                    } else if method == "isdigit" {
+                        // Python s.isdigit() -> Rust s.chars().all(|c| c.is_ascii_digit())
+                        format!(
+                            "!{}.is_empty() && {}.chars().all(|c| c.is_ascii_digit())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "isalpha" {
+                        // Python s.isalpha() -> Rust s.chars().all(|c| c.is_alphabetic())
+                        format!(
+                            "!{}.is_empty() && {}.chars().all(|c| c.is_alphabetic())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "isalnum" {
+                        // Python s.isalnum() -> Rust s.chars().all(|c| c.is_alphanumeric())
+                        format!(
+                            "!{}.is_empty() && {}.chars().all(|c| c.is_alphanumeric())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "isupper" {
+                        // Python s.isupper() -> Rust s.chars().any(|c| c.is_alphabetic()) && s.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())
+                        format!(
+                            "{}.chars().any(|c| c.is_alphabetic()) && {}.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "islower" {
+                        // Python s.islower() -> Rust similar logic
+                        format!(
+                            "{}.chars().any(|c| c.is_alphabetic()) && {}.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_lowercase())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "count" && args.len() == 1 {
+                        // Python s.count(sub) -> Rust s.matches(&sub).count() as i64
+                        let sub = &args[0];
+                        format!(
+                            "{}.matches(&{}).count() as i64",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(sub)
+                        )
+                    } else if method == "zfill" && args.len() == 1 {
+                        // Python s.zfill(width) -> format!("{:0>width$}", s, width=width)
+                        let width = &args[0];
+                        format!(
+                            "format!(\"{{:0>width$}}\", {}, width = {} as usize)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(width)
+                        )
+                    } else if method == "ljust" && args.len() >= 1 {
+                        // Python s.ljust(width) -> format!("{:<width$}", s)
+                        let width = &args[0];
+                        format!(
+                            "format!(\"{{:<width$}}\", {}, width = {} as usize)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(width)
+                        )
+                    } else if method == "rjust" && args.len() >= 1 {
+                        // Python s.rjust(width) -> format!("{:>width$}", s)
+                        let width = &args[0];
+                        format!(
+                            "format!(\"{{:>width$}}\", {}, width = {} as usize)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(width)
+                        )
+                    } else if method == "center" && args.len() >= 1 {
+                        // Python s.center(width) -> format!("{:^width$}", s)
+                        let width = &args[0];
+                        format!(
+                            "format!(\"{{:^width$}}\", {}, width = {} as usize)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(width)
                         )
                     } else {
                         let args_str: Vec<_> =
