@@ -2,12 +2,46 @@
 
 ## 目次
 
-1. [インストール](#インストール)
-2. [基本的な使い方](#基本的な使い方)
-3. [コマンドラインオプション](#コマンドラインオプション)
-4. [対応するPythonコードの書き方](#対応するpythonコードの書き方)
-5. [型ヒントリファレンス](#型ヒントリファレンス)
-6. [制限事項](#制限事項)
+1. [クイックスタート](#クイックスタート)
+2. [インストール](#インストール)
+3. [基本的な使い方](#基本的な使い方)
+4. [コマンドラインオプション](#コマンドラインオプション)
+5. [対応するPythonコードの書き方](#対応するpythonコードの書き方)
+6. [よく使うパターン](#よく使うパターン)
+7. [型ヒントリファレンス](#型ヒントリファレンス)
+8. [制限事項](#制限事項)
+
+---
+
+## クイックスタート
+
+> **所要時間**: 5分
+
+`hello.py` を作成:
+
+```python
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+def main():
+    message: str = greet("Tsuchinoko")
+    print(message)
+
+main()
+```
+
+トランスパイルして実行:
+
+```bash
+tnk hello.py -o hello.rs
+rustc hello.rs -o hello
+./hello
+```
+
+出力:
+```
+Hello, Tsuchinoko!
+```
 
 ---
 
@@ -49,8 +83,15 @@ tnk your_file.py -o custom_output.rs
 
 ### Cargoプロジェクトの生成
 
+外部ライブラリ (NumPy, Pandas など) を使う場合:
+
 ```bash
+# まず venv を有効化
+source venv/bin/activate
+
 tnk your_file.py --project my_project
+cd my_project
+cargo run --release
 ```
 
 以下の構造のCargoプロジェクトが生成されます：
@@ -120,6 +161,73 @@ if __name__ == "__main__":
 
 ---
 
+## よく使うパターン
+
+### リスト
+
+```python
+nums: list[int] = [1, 2, 3, 4, 5]
+doubled: list[int] = [x * 2 for x in nums]
+nums.append(6)
+first: int = nums.pop(0)
+```
+
+### 辞書
+
+```python
+scores: dict[str, int] = {"Alice": 90, "Bob": 85}
+alice_score: int = scores["Alice"]
+scores["Charlie"] = 88
+for key in scores.keys():
+    print(key)
+```
+
+### セット (v1.5.0)
+
+```python
+s: set[int] = {1, 2, 3}
+s.add(4)
+s.remove(1)
+union: set[int] = s | {5, 6}
+```
+
+### Optional 値
+
+```python
+from typing import Optional
+
+def find(items: list[int], target: int) -> Optional[int]:
+    for i, item in enumerate(items):
+        if item == target:
+            return i
+    return None
+
+result: Optional[int] = find([1, 2, 3], 2)
+value: int = result or -1  # x or default パターン
+```
+
+### スライス (v1.5.0)
+
+```python
+nums: list[int] = [0, 1, 2, 3, 4, 5]
+first_three: list[int] = nums[:3]
+reversed_nums: list[int] = nums[::-1]
+every_other: list[int] = nums[::2]
+```
+
+### 例外処理 (v1.5.0)
+
+```python
+try:
+    result: int = int("abc")
+except ValueError as e:
+    print("Invalid input")
+finally:
+    print("Cleanup")
+```
+
+---
+
 ## 型ヒントリファレンス
 
 | Python型 | Rust型 |
@@ -129,7 +237,10 @@ if __name__ == "__main__":
 | `str` | `String` |
 | `bool` | `bool` |
 | `list[T]` | `Vec<T>` |
+| `dict[K, V]` | `HashMap<K, V>` |
+| `set[T]` | `HashSet<T>` |
 | `tuple[T, U]` | `(T, U)` |
+| `Optional[T]` | `Option<T>` |
 | `None` | `()` |
 
 ### 関数パラメータ
@@ -147,13 +258,13 @@ def process(data: list[int]) -> int:  # dataは &[i64] になる
 
 ### 未対応
 
-- `Optional` 型
-- スライシング (`arr[1:3]`, `arr[-1]`)
-- `break` / `continue`
-- 例外処理 (`try`/`except`)
-- クラスとOOP
+- `**kwargs` (キーワード可変長引数)
+- 複雑なクラス継承
 - ジェネレータと `yield`
 - `async`/`await`
+- カスタム例外クラス
+- `raise ... from ...` (v1.5.1 で対応予定)
+- `try/except/else` (v1.5.1 で対応予定)
 
 ### エッジケース
 
@@ -166,5 +277,13 @@ def process(data: list[int]) -> int:  # dataは &[i64] になる
 
 `examples/` ディレクトリに動作するサンプルがあります：
 
-- `bubbleSort.py` - バブルソート実装
-- `recursiveRadixSort.py` - 基数ソート実装
+- `examples/simple/` - 基本的な変換サンプル (54ファイル)
+- `examples/import/` - 外部ライブラリサンプル (8ファイル)
+- `examples/benchmarks/` - パフォーマンスベンチマーク
+
+---
+
+## 関連ドキュメント
+
+- [サポート機能一覧](supported_features_jp.md)
+- [非サポート機能一覧](unsupported_features_jp.md)
