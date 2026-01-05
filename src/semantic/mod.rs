@@ -293,7 +293,7 @@ impl SemanticAnalyzer {
                             attr.as_str(),
                             "append" | "extend" | "push" | "pop" | "insert" | "remove" | "clear"
                                 | "add" | "discard"  // V1.5.0: Set methods
-                                | "update"  // V1.5.0: Dict methods
+                                | "update" // V1.5.0: Dict methods
                         ) {
                             mutated_vars.insert(name);
                         }
@@ -404,8 +404,16 @@ impl SemanticAnalyzer {
                     if let Some(name) = extract_base_var(value.as_ref()) {
                         if matches!(
                             attr.as_str(),
-                            "append" | "extend" | "push" | "pop" | "insert" | "remove" | "clear"
-                                | "add" | "discard" | "update"
+                            "append"
+                                | "extend"
+                                | "push"
+                                | "pop"
+                                | "insert"
+                                | "remove"
+                                | "clear"
+                                | "add"
+                                | "discard"
+                                | "update"
                         ) {
                             mutated_vars.insert(name);
                         }
@@ -438,11 +446,7 @@ impl SemanticAnalyzer {
                     self.collect_expr_mutations(v, mutated_vars);
                 }
             }
-            Expr::IfExp {
-                test,
-                body,
-                orelse,
-            } => {
+            Expr::IfExp { test, body, orelse } => {
                 self.collect_expr_mutations(test, mutated_vars);
                 self.collect_expr_mutations(body, mutated_vars);
                 self.collect_expr_mutations(orelse, mutated_vars);
@@ -747,9 +751,9 @@ impl SemanticAnalyzer {
                 };
 
                 // V1.5.0: Wrap non-None values in Some() when assigning to Optional type
-                let ir_value = if matches!(ty, Type::Optional(_)) 
-                    && !matches!(value, Expr::NoneLiteral) 
-                    && !matches!(expr_ty, Type::Optional(_)) 
+                let ir_value = if matches!(ty, Type::Optional(_))
+                    && !matches!(value, Expr::NoneLiteral)
+                    && !matches!(expr_ty, Type::Optional(_))
                 {
                     // If value is StringLit, add .to_string()
                     let ir_value = if matches!(ir_value, IrExpr::StringLit(_)) {

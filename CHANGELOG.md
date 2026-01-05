@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-01-05 - Comprehensive Syntax Coverage
+
+### Added - Set Type Support
+
+- **Set Literals**: `{1, 2, 3}` → `HashSet::from([1, 2, 3])`
+- **Set Constructor**: `set([1, 2, 3])` → `HashSet`
+- **Set Methods**: `add`, `remove`, `discard`, `union`, `intersection`, `difference`
+- **Set Operators**: `|` (union), `&` (intersection), `-` (difference)
+- **Set Membership**: `x in s` → `s.contains(&x)`
+
+### Added - Collection Method Extensions
+
+- **List Methods**: `pop()`, `pop(i)`, `insert(i, x)`, `remove(x)`, `extend(iter)`, `clear()`
+- **Dict Methods**: `keys()`, `values()`, `get(k)`, `get(k, default)`, `pop(k)`, `update(other)`
+
+### Added - String Method Extensions
+
+- **Replacement**: `.replace(old, new)`
+- **Prefix/Suffix**: `.startswith()`, `.endswith()`
+- **Search**: `.find()`, `.rfind()`, `.index()`, `.count()`
+- **Predicates**: `.isdigit()`, `.isalpha()`, `.isalnum()`
+
+### Added - Built-in Functions
+
+- **User Input**: `input()`, `input(prompt)`
+- **Rounding**: `round(x)`, `round(x, n)`
+- **Character Conversion**: `chr(n)`, `ord(c)`
+- **Number Formatting**: `bin(x)`, `hex(x)`, `oct(x)`
+
+### Added - Slice Enhancements
+
+- **Step Slicing**: `arr[::2]` → `.iter().step_by(2).cloned().collect()`
+- **Reverse Slicing**: `arr[::-1]` → `.iter().rev().cloned().collect()`
+- **Range with Step**: `arr[1:10:2]`
+
+### Added - Optional/None Deep Support
+
+- **Union Type Parsing**: `str | None` → `Option<String>`
+- **Or Pattern**: `x or default` → `x.unwrap_or(default)`
+- **Ternary with None**: `x if x is not None else y` → `if x.is_some() { x.unwrap() } else { y }`
+- **Auto Some Wrapping**: Non-None values assigned to Optional types are wrapped in `Some()`
+
+### Added - Exception Handling Enhancements
+
+- **Multiple Exception Types**: `except (ValueError, TypeError):`
+- **Exception Variable**: `except ValueError as e:`
+- **Finally Block**: `try/except/finally`
+
+### Changed
+
+- **Python Syntax Coverage**: **68%** (75 features supported)
+
+### Tests
+
+- **Regression Tests**: 62/62 passed (100%)
+- **New Tests**: 7 new v1.5.0 system tests added
+  - `v1_5_set_test.py`, `v1_5_list_methods_test.py`, `v1_5_dict_methods_test.py`
+  - `v1_5_string_methods_test.py`, `v1_5_builtins_test.py`, `v1_5_slice_test.py`
+  - `v1_5_optional_test.py`
+
+---
+
 ## [1.4.0] - 2026-01-04 - External Library Enhancements
 
 ### Added - External Libraries

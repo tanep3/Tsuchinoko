@@ -1482,7 +1482,7 @@ fn parse_type_hint(type_str: &str) -> Result<TypeHint, TsuchinokoError> {
     if let Some(pipe_pos) = find_char_balanced(type_str, '|') {
         let left_str = type_str[..pipe_pos].trim();
         let right_str = type_str[pipe_pos + 1..].trim();
-        
+
         // Check if right is None -> convert to Optional[left]
         if right_str == "None" {
             let inner = parse_type_hint(left_str)?;
@@ -1499,7 +1499,7 @@ fn parse_type_hint(type_str: &str) -> Result<TypeHint, TsuchinokoError> {
                 params: vec![inner],
             });
         }
-        
+
         // For other unions (not involving None), use first type as approximation
         // Full union type support would require Type::Union variant
         return parse_type_hint(left_str);
@@ -1876,8 +1876,8 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         // V1.5.0: Check if this is a set literal (no colons) or dict literal (has colons)
         // First entry determines the type
         let first_entry = entries.first().map(|s| s.trim()).unwrap_or("");
-        let is_set_literal = !first_entry.is_empty()
-            && utils::find_char_balanced(first_entry, ':').is_none();
+        let is_set_literal =
+            !first_entry.is_empty() && utils::find_char_balanced(first_entry, ':').is_none();
 
         if is_set_literal {
             // Parse as set literal {1, 2, 3}
@@ -2260,19 +2260,20 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
                 if let Some(colon_pos) = find_char_balanced(index_part, ':') {
                     // It's a slice: target[start:end] or target[start:end:step]
                     let after_first_colon = &index_part[colon_pos + 1..];
-                    
+
                     // Check for second colon (step)
-                    let (end_str, step_str): (&str, Option<&str>) = 
-                        if let Some(second_colon_pos) = find_char_balanced(after_first_colon, ':') {
-                            // target[start:end:step]
-                            let end_part = &after_first_colon[..second_colon_pos].trim();
-                            let step_part = &after_first_colon[second_colon_pos + 1..].trim();
-                            (*end_part, Some(*step_part))
-                        } else {
-                            // target[start:end]
-                            (after_first_colon.trim(), None)
-                        };
-                    
+                    let (end_str, step_str): (&str, Option<&str>) = if let Some(second_colon_pos) =
+                        find_char_balanced(after_first_colon, ':')
+                    {
+                        // target[start:end:step]
+                        let end_part = &after_first_colon[..second_colon_pos].trim();
+                        let step_part = &after_first_colon[second_colon_pos + 1..].trim();
+                        (*end_part, Some(*step_part))
+                    } else {
+                        // target[start:end]
+                        (after_first_colon.trim(), None)
+                    };
+
                     let start_str = &index_part[..colon_pos].trim();
 
                     let start = if start_str.is_empty() {

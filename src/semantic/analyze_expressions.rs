@@ -1254,10 +1254,11 @@ impl SemanticAnalyzer {
                 // V1.5.0: If test is an Optional variable used as condition, convert to is_some()
                 let test_ty = self.infer_type(test);
                 let is_optional_test = matches!(test_ty, Type::Optional(_));
-                
+
                 // V1.5.0: Also check if test is "x is not None" for Optional x
                 let optional_var_in_test = if let Expr::BinOp { left, op, right } = test.as_ref() {
-                    if matches!(op, AstBinOp::IsNot) && matches!(right.as_ref(), Expr::NoneLiteral) {
+                    if matches!(op, AstBinOp::IsNot) && matches!(right.as_ref(), Expr::NoneLiteral)
+                    {
                         if let Expr::Ident(var_name) = left.as_ref() {
                             if matches!(self.infer_type(left), Type::Optional(_)) {
                                 Some(var_name.clone())
@@ -1273,7 +1274,7 @@ impl SemanticAnalyzer {
                 } else {
                     None
                 };
-                
+
                 let ir_test = if is_optional_test {
                     // Optional variable as condition -> x.is_some()
                     let inner = self.analyze_expr(test)?;
@@ -1301,7 +1302,9 @@ impl SemanticAnalyzer {
 
                 // V1.5.0: If body is same Optional var as test, unwrap it
                 if is_optional_test {
-                    if let (Expr::Ident(test_var), Expr::Ident(body_var)) = (test.as_ref(), body.as_ref()) {
+                    if let (Expr::Ident(test_var), Expr::Ident(body_var)) =
+                        (test.as_ref(), body.as_ref())
+                    {
                         if test_var == body_var {
                             ir_body = IrExpr::MethodCall {
                                 target: Box::new(ir_body),
@@ -1319,7 +1322,7 @@ impl SemanticAnalyzer {
                         };
                     }
                 }
-                
+
                 // V1.5.0: If test was "x is not None" and body is x, unwrap body
                 if let Some(ref opt_var) = optional_var_in_test {
                     if let Expr::Ident(body_var) = body.as_ref() {
@@ -1465,7 +1468,12 @@ impl SemanticAnalyzer {
                 // For now, just return the inner expression - the context handles spread
                 Ok(ir_inner)
             }
-            Expr::Slice { target, start, end, step } => {
+            Expr::Slice {
+                target,
+                start,
+                end,
+                step,
+            } => {
                 // Python slices: nums[:3], nums[-3:], nums[1:len(nums)-1], nums[::2], nums[::-1]
                 // Rust equivalents depend on the slice type
                 let ir_target = self.analyze_expr(target)?;
@@ -1491,10 +1499,10 @@ impl SemanticAnalyzer {
                     let target_str = self.emit_simple_ir_expr(&ir_target);
                     let step_expr = ir_step.as_ref().unwrap();
                     let step_val_str = self.emit_simple_ir_expr(step_expr);
-                    
+
                     // Check if step is -1 (reverse)
                     let is_reverse = matches!(step_expr.as_ref(), IrExpr::IntLit(-1));
-                    
+
                     if is_reverse {
                         // s[::-1] -> s.chars().rev().collect::<String>()
                         return Ok(IrExpr::RawCode(format!(

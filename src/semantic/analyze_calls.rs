@@ -544,41 +544,37 @@ impl SemanticAnalyzer {
                 }
             }
             // V1.5.0: dict.keys() -> dict.keys().cloned()
-            "keys" if args.is_empty() => {
-                match _target_ty {
-                    Type::Dict(_, _) => {
-                        let keys_call = IrExpr::MethodCall {
-                            target: Box::new(target_ir.clone()),
-                            method: "keys".to_string(),
-                            args: vec![],
-                        };
-                        Ok(Some(IrExpr::MethodCall {
-                            target: Box::new(keys_call),
-                            method: "cloned".to_string(),
-                            args: vec![],
-                        }))
-                    }
-                    _ => Ok(None),
+            "keys" if args.is_empty() => match _target_ty {
+                Type::Dict(_, _) => {
+                    let keys_call = IrExpr::MethodCall {
+                        target: Box::new(target_ir.clone()),
+                        method: "keys".to_string(),
+                        args: vec![],
+                    };
+                    Ok(Some(IrExpr::MethodCall {
+                        target: Box::new(keys_call),
+                        method: "cloned".to_string(),
+                        args: vec![],
+                    }))
                 }
-            }
+                _ => Ok(None),
+            },
             // V1.5.0: dict.values() -> dict.values().cloned()
-            "values" if args.is_empty() => {
-                match _target_ty {
-                    Type::Dict(_, _) => {
-                        let values_call = IrExpr::MethodCall {
-                            target: Box::new(target_ir.clone()),
-                            method: "values".to_string(),
-                            args: vec![],
-                        };
-                        Ok(Some(IrExpr::MethodCall {
-                            target: Box::new(values_call),
-                            method: "cloned".to_string(),
-                            args: vec![],
-                        }))
-                    }
-                    _ => Ok(None),
+            "values" if args.is_empty() => match _target_ty {
+                Type::Dict(_, _) => {
+                    let values_call = IrExpr::MethodCall {
+                        target: Box::new(target_ir.clone()),
+                        method: "values".to_string(),
+                        args: vec![],
+                    };
+                    Ok(Some(IrExpr::MethodCall {
+                        target: Box::new(values_call),
+                        method: "cloned".to_string(),
+                        args: vec![],
+                    }))
                 }
-            }
+                _ => Ok(None),
+            },
             // V1.5.0: dict.get(k) -> dict.get(&k).cloned().unwrap()
             // V1.5.0: dict.get(k, default) -> dict.get(&k).cloned().unwrap_or(default)
             "get" if !args.is_empty() => {
@@ -647,19 +643,17 @@ impl SemanticAnalyzer {
                 }
             }
             // V1.5.0: dict.update(other) -> dict.extend(other)
-            "update" if args.len() == 1 => {
-                match _target_ty {
-                    Type::Dict(_, _) => {
-                        let other = self.analyze_expr(&args[0])?;
-                        Ok(Some(IrExpr::MethodCall {
-                            target: Box::new(target_ir.clone()),
-                            method: "extend".to_string(),
-                            args: vec![other],
-                        }))
-                    }
-                    _ => Ok(None),
+            "update" if args.len() == 1 => match _target_ty {
+                Type::Dict(_, _) => {
+                    let other = self.analyze_expr(&args[0])?;
+                    Ok(Some(IrExpr::MethodCall {
+                        target: Box::new(target_ir.clone()),
+                        method: "extend".to_string(),
+                        args: vec![other],
+                    }))
                 }
-            }
+                _ => Ok(None),
+            },
             "join" if args.len() == 1 => {
                 // "sep".join(iterable) -> iterable.iter().map(|x| x.to_string()).collect().join(&sep)
                 let iterable_ast = &args[0];

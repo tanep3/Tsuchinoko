@@ -1143,7 +1143,10 @@ use pyo3::types::PyList;
                 }
             }
             // V1.5.0: Set literal
-            IrExpr::Set { elem_type, elements } => {
+            IrExpr::Set {
+                elem_type,
+                elements,
+            } => {
                 if elements.is_empty() {
                     "std::collections::HashSet::new()".to_string()
                 } else {
@@ -1411,25 +1414,32 @@ use pyo3::types::PyList;
                 }
                 format!("{}[{}]", self.emit_expr(target), self.emit_expr(index))
             }
-            IrExpr::Slice { target, start, end, step } => {
+            IrExpr::Slice {
+                target,
+                start,
+                end,
+                step,
+            } => {
                 // Handle Python-style slices: [:n], [n:], [s:e], [:], [::2], [::-1], [1:8:2]
                 // Python slices never panic on out-of-bounds, they clamp to valid range
                 let target_str = self.emit_expr(target);
-                
+
                 // V1.5.0: Handle step slices
                 if let Some(step_expr) = step {
                     let step_val = self.emit_expr(step_expr);
-                    
+
                     // Check if step is -1 (reverse) - could be IntLit(-1) or UnaryOp(Neg, IntLit(1))
-                    let is_reverse = matches!(step_expr.as_ref(), IrExpr::IntLit(-1)) 
-                        || matches!(step_expr.as_ref(), 
-                            IrExpr::UnaryOp { op: IrUnaryOp::Neg, operand } 
+                    let is_reverse = matches!(step_expr.as_ref(), IrExpr::IntLit(-1))
+                        || matches!(step_expr.as_ref(),
+                            IrExpr::UnaryOp { op: IrUnaryOp::Neg, operand }
                             if matches!(operand.as_ref(), IrExpr::IntLit(1)));
-                    
+
                     if is_reverse {
                         // [::-1] -> .iter().rev().cloned().collect()
                         return match (start, end) {
-                            (None, None) => format!("{target_str}.iter().rev().cloned().collect::<Vec<_>>()"),
+                            (None, None) => {
+                                format!("{target_str}.iter().rev().cloned().collect::<Vec<_>>()")
+                            }
                             (Some(s), None) => {
                                 // [n::-1] is Python's reverse from index n down to 0
                                 format!("({{ let v = &{target_str}; let s = ({}).min(v.len() as i64 - 1).max(0) as usize; v[..=s].iter().rev().cloned().collect::<Vec<_>>() }})", self.emit_expr(s))
@@ -1443,7 +1453,7 @@ use pyo3::types::PyList;
                             }
                         };
                     }
-                    
+
                     // Positive step: [::n] -> .iter().step_by(n).cloned().collect()
                     return match (start, end) {
                         (None, None) => format!("{target_str}.iter().step_by({step_val} as usize).cloned().collect::<Vec<_>>()"),
@@ -1452,7 +1462,7 @@ use pyo3::types::PyList;
                         (Some(s), Some(e)) => format!("({{ let v = &{target_str}; let s = ({}).max(0) as usize; let e = ({}).min(v.len() as i64).max(0) as usize; v[s.min(e)..e].iter().step_by({step_val} as usize).cloned().collect::<Vec<_>>() }})", self.emit_expr(s), self.emit_expr(e)),
                     };
                 }
-                
+
                 // Original slice handling (no step)
                 match (start, end) {
                     (None, Some(e)) => {

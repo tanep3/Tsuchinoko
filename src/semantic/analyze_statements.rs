@@ -55,7 +55,10 @@ impl SemanticAnalyzer {
                 // Dicts need to be mutable for insert(). Sets for add()/remove().
                 // V1.5.0: Also check mutable_vars (collected from pop/update/remove/etc. calls)
                 let should_be_mutable = is_reassign
-                    || matches!(ty, Type::List(_) | Type::Struct(_) | Type::Dict(_, _) | Type::Set(_))
+                    || matches!(
+                        ty,
+                        Type::List(_) | Type::Struct(_) | Type::Dict(_, _) | Type::Set(_)
+                    )
                     || self.mutable_vars.contains(target);
 
                 if !is_reassign {
@@ -89,9 +92,9 @@ impl SemanticAnalyzer {
                     };
 
                 // V1.5.0: Wrap non-None values in Some() when assigning to Optional type
-                let ir_value = if matches!(ty, Type::Optional(_)) 
-                    && !matches!(value, Expr::NoneLiteral) 
-                    && !matches!(expr_ty, Type::Optional(_)) 
+                let ir_value = if matches!(ty, Type::Optional(_))
+                    && !matches!(value, Expr::NoneLiteral)
+                    && !matches!(expr_ty, Type::Optional(_))
                 {
                     IrExpr::Call {
                         func: Box::new(IrExpr::Var("Some".to_string())),
