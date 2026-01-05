@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [VS Code Extension 0.1.0] - 2026-01-06
+
+### Added
+
+- **Rust Preview** (`Ctrl+Alt+P` / `Cmd+Alt+P`) - See transpiled Rust code in real-time
+- **Status Bar Button** - Click "🚀 Rust Preview" when editing Python files
+- **Real-time Diagnostics** - Unsupported syntax highlighted with squiggly lines on save
+- **Auto Import Detection** - Files with imports automatically use `--project` mode
+- **Configurable Settings** - `tsuchinoko.tnkPath`, `tsuchinoko.autoCheck`, `tsuchinoko.checkDelay`
+
+### Technical
+
+- Extension runs in both local and remote (WSL/SSH) environments
+- Temporary files in OS temp directory with auto-cleanup on activate/deactivate
+- Project-based preview for files with external imports (NumPy, Pandas, etc.)
+
 ## [1.5.0] - 2026-01-05 - Comprehensive Syntax Coverage
 
 ### Added - Set Type Support

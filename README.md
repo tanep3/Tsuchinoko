@@ -123,7 +123,7 @@ fn bubble_sort(lists: &[i64]) -> (Vec<i64>, i64) {
 }
 ```
 
-## VS Code Extension (Coming in V1.5.1)
+## VS Code Extension
 
 Transform Python to Rust directly in your editor!
 
@@ -131,7 +131,7 @@ Transform Python to Rust directly in your editor!
 - **Status Bar Button** - Click "🚀 Rust Preview" when editing Python files
 - **Real-time Diagnostics** - Unsupported syntax highlighted with squiggly lines
 
-📖 [Setup Guide](docs/vscode-setup.md) | [セットアップガイド](docs/vscode-setup_jp.md)
+📖 [Setup Guide](vscode-extension/docs/vscode-setup.md) | [セットアップガイド](vscode-extension/docs/vscode-setup_jp.md)
 
 ## Feature Documentation
 
