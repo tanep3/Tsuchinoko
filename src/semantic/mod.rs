@@ -288,6 +288,7 @@ impl SemanticAnalyzer {
                             attr.as_str(),
                             "append" | "extend" | "push" | "pop" | "insert" | "remove" | "clear"
                                 | "add" | "discard"  // V1.5.0: Set methods
+                                | "update"  // V1.5.0: Dict methods
                         ) {
                             mutated_vars.insert(name);
                         }
@@ -463,6 +464,10 @@ impl SemanticAnalyzer {
                 &mut seen_vars,
             );
         }
+
+        // V1.5.0: Add collected mutations to mutable_vars for this scope
+        self.mutable_vars.extend(reassigned_vars.clone());
+        self.mutable_vars.extend(mutated_vars.clone());
 
         let mut ir_nodes = Vec::new();
 

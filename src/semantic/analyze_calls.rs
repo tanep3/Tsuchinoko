@@ -543,6 +543,123 @@ impl SemanticAnalyzer {
                     }
                 }
             }
+            // V1.5.0: dict.keys() -> dict.keys().cloned()
+            "keys" if args.is_empty() => {
+                match _target_ty {
+                    Type::Dict(_, _) => {
+                        let keys_call = IrExpr::MethodCall {
+                            target: Box::new(target_ir.clone()),
+                            method: "keys".to_string(),
+                            args: vec![],
+                        };
+                        Ok(Some(IrExpr::MethodCall {
+                            target: Box::new(keys_call),
+                            method: "cloned".to_string(),
+                            args: vec![],
+                        }))
+                    }
+                    _ => Ok(None),
+                }
+            }
+            // V1.5.0: dict.values() -> dict.values().cloned()
+            "values" if args.is_empty() => {
+                match _target_ty {
+                    Type::Dict(_, _) => {
+                        let values_call = IrExpr::MethodCall {
+                            target: Box::new(target_ir.clone()),
+                            method: "values".to_string(),
+                            args: vec![],
+                        };
+                        Ok(Some(IrExpr::MethodCall {
+                            target: Box::new(values_call),
+                            method: "cloned".to_string(),
+                            args: vec![],
+                        }))
+                    }
+                    _ => Ok(None),
+                }
+            }
+            // V1.5.0: dict.get(k) -> dict.get(&k).cloned().unwrap()
+            // V1.5.0: dict.get(k, default) -> dict.get(&k).cloned().unwrap_or(default)
+            "get" if !args.is_empty() => {
+                match _target_ty {
+                    Type::Dict(_, _) => {
+                        let key = self.analyze_expr(&args[0])?;
+                        let get_call = IrExpr::MethodCall {
+                            target: Box::new(target_ir.clone()),
+                            method: "get".to_string(),
+                            args: vec![IrExpr::Reference {
+                                target: Box::new(key),
+                            }],
+                        };
+                        let cloned_call = IrExpr::MethodCall {
+                            target: Box::new(get_call),
+                            method: "cloned".to_string(),
+                            args: vec![],
+                        };
+                        if args.len() >= 2 {
+                            // get(k, default) -> get(&k).cloned().unwrap_or(default)
+                            let mut default = self.analyze_expr(&args[1])?;
+                            // Convert string literals to String for type compatibility
+                            if matches!(default, IrExpr::StringLit(_)) {
+                                default = IrExpr::MethodCall {
+                                    target: Box::new(default),
+                                    method: "to_string".to_string(),
+                                    args: vec![],
+                                };
+                            }
+                            Ok(Some(IrExpr::MethodCall {
+                                target: Box::new(cloned_call),
+                                method: "unwrap_or".to_string(),
+                                args: vec![default],
+                            }))
+                        } else {
+                            // get(k) -> get(&k).cloned().unwrap()
+                            Ok(Some(IrExpr::MethodCall {
+                                target: Box::new(cloned_call),
+                                method: "unwrap".to_string(),
+                                args: vec![],
+                            }))
+                        }
+                    }
+                    _ => Ok(None),
+                }
+            }
+            // V1.5.0: dict.pop(k) -> dict.remove(&k).unwrap()
+            "pop" if args.len() == 1 => {
+                match _target_ty {
+                    Type::Dict(_, _) => {
+                        let key = self.analyze_expr(&args[0])?;
+                        let remove_call = IrExpr::MethodCall {
+                            target: Box::new(target_ir.clone()),
+                            method: "remove".to_string(),
+                            args: vec![IrExpr::Reference {
+                                target: Box::new(key),
+                            }],
+                        };
+                        Ok(Some(IrExpr::MethodCall {
+                            target: Box::new(remove_call),
+                            method: "unwrap".to_string(),
+                            args: vec![],
+                        }))
+                    }
+                    _ => Ok(None), // list.pop is handled by emitter
+                }
+            }
+            // V1.5.0: dict.update(other) -> dict.extend(other)
+            "update" if args.len() == 1 => {
+                match _target_ty {
+                    Type::Dict(_, _) => {
+                        let other = self.analyze_expr(&args[0])?;
+                        Ok(Some(IrExpr::MethodCall {
+                            target: Box::new(target_ir.clone()),
+                            method: "extend".to_string(),
+                            args: vec![other],
+                        }))
+                    }
+                    _ => Ok(None),
+                }
+            }
             "join" if args.len() == 1 => {
                 // "sep".join(iterable) -> iterable.iter().map(|x| x.to_string()).collect().join(&sep)
                 let iterable_ast = &args[0];
