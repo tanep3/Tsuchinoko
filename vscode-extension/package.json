@@ -1,0 +1,85 @@
+{
+    "name": "tsuchinoko",
+    "displayName": "Tsuchinoko",
+    "description": "Python to Rust transpiler - Preview and diagnostics in VS Code",
+    "version": "0.1.0",
+    "publisher": "TaneChannelTechnology",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/tanep3/Tsuchinoko"
+    },
+    "license": "MIT",
+    "engines": {
+        "vscode": "^1.70.0"
+    },
+    "extensionKind": [
+        "workspace",
+        "ui"
+    ],
+    "categories": [
+        "Programming Languages",
+        "Other"
+    ],
+    "keywords": [
+        "python",
+        "rust",
+        "transpiler",
+        "converter"
+    ],
+    "activationEvents": [
+        "onLanguage:python"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "tsuchinoko.preview",
+                "title": "Tsuchinoko: Show Rust Preview"
+            },
+            {
+                "command": "tsuchinoko.transpile",
+                "title": "Tsuchinoko: Transpile to Rust"
+            }
+        ],
+        "keybindings": [
+            {
+                "command": "tsuchinoko.preview",
+                "key": "ctrl+alt+p",
+                "mac": "cmd+alt+p",
+                "when": "editorLangId == python"
+            }
+        ],
+        "configuration": {
+            "title": "Tsuchinoko",
+            "properties": {
+                "tsuchinoko.tnkPath": {
+                    "type": "string",
+                    "default": "tnk",
+                    "description": "Path to the tnk command"
+                },
+                "tsuchinoko.autoCheck": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Automatically check on save"
+                },
+                "tsuchinoko.checkDelay": {
+                    "type": "number",
+                    "default": 500,
+                    "description": "Delay before checking (ms)"
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "lint": "eslint src --ext ts"
+    },
+    "devDependencies": {
+        "@types/node": "^18.0.0",
+        "@types/vscode": "^1.70.0",
+        "@vscode/vsce": "^2.22.0",
+        "typescript": "^5.0.0"
+    }
+}

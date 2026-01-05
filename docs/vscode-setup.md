@@ -30,7 +30,7 @@ code --install-extension tsuchinoko-0.1.0.vsix
 ### Show Rust Preview
 
 1. Open a Python file (`.py`)
-2. Press `Cmd+Shift+T` (Mac) or `Ctrl+Shift+T` (Windows/Linux)
+2. Press `Ctrl+Alt+P` (or `Cmd+Alt+P` on Mac)
 3. A side panel will show the transpiled Rust code
 
 ### Real-time Diagnostics
@@ -43,7 +43,7 @@ code --install-extension tsuchinoko-0.1.0.vsix
 
 | Command | Keybinding | Description |
 |---------|------------|-------------|
-| `Tsuchinoko: Show Rust Preview` | `Cmd+Shift+T` | Open Rust preview panel |
+| `Tsuchinoko: Show Rust Preview` | `Ctrl+Alt+P` | Open Rust preview panel |
 | `Tsuchinoko: Transpile to Rust` | - | Transpile current file |
 
 ## Configuration

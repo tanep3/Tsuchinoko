@@ -48,3 +48,8 @@ old_versions/
 tmp/
 src/bin/regression_test.rs
 src/bin/test.rs
+
+# VS Code Extension
+vscode-extension/node_modules/
+vscode-extension/out/
+vscode-extension/*.vsix

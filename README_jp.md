@@ -126,9 +126,9 @@ fn bubble_sort(lists: &[i64]) -> (Vec<i64>, i64) {
 
 エディタ内で直接 Python を Rust に変換！
 
-- **Rust プレビュー** (`Cmd+Shift+T`) - リアルタイムで変換結果を表示
+- **Rust プレビュー** (`Ctrl+Alt+P`) - リアルタイムで変換結果を表示
+- **ステータスバーボタン** - Python ファイル編集時に「🚀 Rust Preview」をクリック
 - **リアルタイム診断** - 非対応構文を波線でハイライト
-- **保存時自動チェック** - 互換性について即座にフィードバック
 
 📖 [セットアップガイド](docs/vscode-setup_jp.md) | [Setup Guide](docs/vscode-setup.md)
 

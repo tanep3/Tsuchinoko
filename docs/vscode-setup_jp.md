@@ -30,7 +30,7 @@ code --install-extension tsuchinoko-0.1.0.vsix
 ### Rust プレビュー表示
 
 1. Python ファイル (`.py`) を開く
-2. `Cmd+Shift+T` (Mac) または `Ctrl+Shift+T` (Windows/Linux) を押す
+2. `Ctrl+Alt+P` (Mac: `Cmd+Alt+P`) を押す
 3. サイドパネルに変換された Rust コードが表示される
 
 ### リアルタイム診断
@@ -43,7 +43,7 @@ code --install-extension tsuchinoko-0.1.0.vsix
 
 | コマンド | キーバインド | 説明 |
 |---------|------------|------|
-| `Tsuchinoko: Show Rust Preview` | `Cmd+Shift+T` | Rust プレビューパネルを開く |
+| `Tsuchinoko: Show Rust Preview` | `Ctrl+Alt+P` | Rust プレビューパネルを開く |
 | `Tsuchinoko: Transpile to Rust` | - | 現在のファイルをトランスパイル |
 
 ## 設定
