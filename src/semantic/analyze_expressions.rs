@@ -341,6 +341,71 @@ impl SemanticAnalyzer {
                         });
                     }
 
+                    // V1.5.0: round(x) or round(x, n)
+                    if name == "round" && !args.is_empty() && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        if args.len() >= 2 {
+                            // round(x, n) -> (x * 10^n).round() / 10^n
+                            let ir_n = self.analyze_expr(&args[1])?;
+                            return Ok(IrExpr::RawCode(format!(
+                                "{{ let n = {}; let factor = 10f64.powi(n as i32); ({} * factor).round() / factor }}",
+                                self.emit_simple_ir_expr(&ir_n),
+                                self.emit_simple_ir_expr(&ir_arg)
+                            )));
+                        } else {
+                            // round(x) -> x.round() as i64
+                            return Ok(IrExpr::RawCode(format!(
+                                "{}.round() as i64",
+                                self.emit_simple_ir_expr(&ir_arg)
+                            )));
+                        }
+                    }
+
+                    // V1.5.0: chr(n) -> char::from_u32(n as u32).unwrap().to_string()
+                    if name == "chr" && args.len() == 1 && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        return Ok(IrExpr::RawCode(format!(
+                            "char::from_u32({} as u32).unwrap().to_string()",
+                            self.emit_simple_ir_expr(&ir_arg)
+                        )));
+                    }
+
+                    // V1.5.0: ord(c) -> c.chars().next().unwrap() as i64
+                    if name == "ord" && args.len() == 1 && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        return Ok(IrExpr::RawCode(format!(
+                            "{}.chars().next().unwrap() as i64",
+                            self.emit_simple_ir_expr(&ir_arg)
+                        )));
+                    }
+
+                    // V1.5.0: bin(x) -> format!("0b{:b}", x)
+                    if name == "bin" && args.len() == 1 && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        return Ok(IrExpr::RawCode(format!(
+                            "format!(\"0b{{:b}}\", {})",
+                            self.emit_simple_ir_expr(&ir_arg)
+                        )));
+                    }
+
+                    // V1.5.0: hex(x) -> format!("0x{:x}", x)
+                    if name == "hex" && args.len() == 1 && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        return Ok(IrExpr::RawCode(format!(
+                            "format!(\"0x{{:x}}\", {})",
+                            self.emit_simple_ir_expr(&ir_arg)
+                        )));
+                    }
+
+                    // V1.5.0: oct(x) -> format!("0o{:o}", x)
+                    if name == "oct" && args.len() == 1 && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        return Ok(IrExpr::RawCode(format!(
+                            "format!(\"0o{{:o}}\", {})",
+                            self.emit_simple_ir_expr(&ir_arg)
+                        )));
+                    }
+
                     // V1.3.0: list(something) - if something is map/filter, we need special handling
                     if name == "list" && args.len() == 1 && kwargs.is_empty() {
                         // Check if inner is map() or filter()

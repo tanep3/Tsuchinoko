@@ -880,6 +880,7 @@ impl SemanticAnalyzer {
             IrExpr::IntLit(n) => format!("{n}i64"),
             IrExpr::FloatLit(f) => format!("{f}"),
             IrExpr::BoolLit(b) => b.to_string(),
+            IrExpr::StringLit(s) => format!("\"{s}\".to_string()"),
             IrExpr::MethodCall {
                 target,
                 method,
