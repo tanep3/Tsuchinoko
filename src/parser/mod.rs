@@ -1477,6 +1477,34 @@ fn parse_type_hint(type_str: &str) -> Result<TypeHint, TsuchinokoError> {
         type_str
     };
 
+    // V1.5.0: Handle union types (str | None, int | float, etc.)
+    // Split by | at top level (not inside brackets)
+    if let Some(pipe_pos) = find_char_balanced(type_str, '|') {
+        let left_str = type_str[..pipe_pos].trim();
+        let right_str = type_str[pipe_pos + 1..].trim();
+        
+        // Check if right is None -> convert to Optional[left]
+        if right_str == "None" {
+            let inner = parse_type_hint(left_str)?;
+            return Ok(TypeHint {
+                name: "Optional".to_string(),
+                params: vec![inner],
+            });
+        }
+        // Check if left is None -> convert to Optional[right]
+        if left_str == "None" {
+            let inner = parse_type_hint(right_str)?;
+            return Ok(TypeHint {
+                name: "Optional".to_string(),
+                params: vec![inner],
+            });
+        }
+        
+        // For other unions (not involving None), use first type as approximation
+        // Full union type support would require Type::Union variant
+        return parse_type_hint(left_str);
+    }
+
     // Special case: [int, int] (bare list literal for Callable params)
     // This represents a tuple of types, not a list type
     if type_str.starts_with('[') && type_str.ends_with(']') {

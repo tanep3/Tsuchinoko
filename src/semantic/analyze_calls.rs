@@ -1009,7 +1009,18 @@ impl SemanticAnalyzer {
                 }))
             }
             ("len", 1) => {
+                let arg_ty = self.infer_type(&args[0]);
                 let arg = self.analyze_expr(&args[0])?;
+                // V1.5.0: If arg is Optional, unwrap first
+                let arg = if matches!(arg_ty, Type::Optional(_)) {
+                    IrExpr::MethodCall {
+                        target: Box::new(arg),
+                        method: "unwrap".to_string(),
+                        args: vec![],
+                    }
+                } else {
+                    arg
+                };
                 Ok(Some(IrExpr::MethodCall {
                     target: Box::new(arg),
                     method: "len".to_string(),

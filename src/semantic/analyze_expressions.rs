@@ -198,6 +198,48 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                // V1.5.0: 'or' with Optional type -> unwrap_or
+                // x or default -> x.unwrap_or(default)
+                if matches!(op, AstBinOp::Or) {
+                    let left_ty = self.infer_type(left);
+                    if matches!(left_ty, Type::Optional(_)) {
+                        let ir_left = self.analyze_expr(left)?;
+                        let ir_right = self.analyze_expr(right)?;
+                        // If right is StringLit, add .to_string()
+                        let ir_right = if matches!(ir_right, IrExpr::StringLit(_)) {
+                            IrExpr::MethodCall {
+                                target: Box::new(ir_right),
+                                method: "to_string".to_string(),
+                                args: vec![],
+                            }
+                        } else {
+                            ir_right
+                        };
+                        // x.unwrap_or(default)
+                        return Ok(IrExpr::MethodCall {
+                            target: Box::new(ir_left),
+                            method: "unwrap_or".to_string(),
+                            args: vec![ir_right],
+                        });
+                    }
+                }
+
+                // V1.5.0: 'or' with empty String falsy behavior
+                // x or default -> if x.is_empty() { default } else { x }
+                if matches!(op, AstBinOp::Or) {
+                    let left_ty = self.infer_type(left);
+                    if matches!(left_ty, Type::String) {
+                        let ir_left = self.analyze_expr(left)?;
+                        let ir_right = self.analyze_expr(right)?;
+                        let left_str = self.emit_simple_ir_expr(&ir_left);
+                        let right_str = self.emit_simple_ir_expr(&ir_right);
+                        // if x.is_empty() { default } else { x.clone() }
+                        return Ok(IrExpr::RawCode(format!(
+                            "if {left_str}.is_empty() {{ {right_str} }} else {{ {left_str}.clone() }}"
+                        )));
+                    }
+                }
+
                 let ir_left = self.analyze_expr(left)?;
                 let ir_right = self.analyze_expr(right)?;
                 let ir_op = self.convert_binop(op);
@@ -1209,9 +1251,96 @@ impl SemanticAnalyzer {
                 })
             }
             Expr::IfExp { test, body, orelse } => {
-                let ir_test = self.analyze_expr(test)?;
-                let ir_body = self.analyze_expr(body)?;
-                let ir_orelse = self.analyze_expr(orelse)?;
+                // V1.5.0: If test is an Optional variable used as condition, convert to is_some()
+                let test_ty = self.infer_type(test);
+                let is_optional_test = matches!(test_ty, Type::Optional(_));
+                
+                // V1.5.0: Also check if test is "x is not None" for Optional x
+                let optional_var_in_test = if let Expr::BinOp { left, op, right } = test.as_ref() {
+                    if matches!(op, AstBinOp::IsNot) && matches!(right.as_ref(), Expr::NoneLiteral) {
+                        if let Expr::Ident(var_name) = left.as_ref() {
+                            if matches!(self.infer_type(left), Type::Optional(_)) {
+                                Some(var_name.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                
+                let ir_test = if is_optional_test {
+                    // Optional variable as condition -> x.is_some()
+                    let inner = self.analyze_expr(test)?;
+                    IrExpr::MethodCall {
+                        target: Box::new(inner),
+                        method: "is_some".to_string(),
+                        args: vec![],
+                    }
+                } else if matches!(test_ty, Type::List(_)) {
+                    // List variable as condition -> !x.is_empty()
+                    let inner = self.analyze_expr(test)?;
+                    IrExpr::UnaryOp {
+                        op: IrUnaryOp::Not,
+                        operand: Box::new(IrExpr::MethodCall {
+                            target: Box::new(inner),
+                            method: "is_empty".to_string(),
+                            args: vec![],
+                        }),
+                    }
+                } else {
+                    self.analyze_expr(test)?
+                };
+                let mut ir_body = self.analyze_expr(body)?;
+                let mut ir_orelse = self.analyze_expr(orelse)?;
+
+                // V1.5.0: If body is same Optional var as test, unwrap it
+                if is_optional_test {
+                    if let (Expr::Ident(test_var), Expr::Ident(body_var)) = (test.as_ref(), body.as_ref()) {
+                        if test_var == body_var {
+                            ir_body = IrExpr::MethodCall {
+                                target: Box::new(ir_body),
+                                method: "unwrap".to_string(),
+                                args: vec![],
+                            };
+                        }
+                    }
+                    // Also if body is Optional type, unwrap it
+                    if matches!(self.infer_type(body), Type::Optional(_)) {
+                        ir_body = IrExpr::MethodCall {
+                            target: Box::new(ir_body),
+                            method: "unwrap".to_string(),
+                            args: vec![],
+                        };
+                    }
+                }
+                
+                // V1.5.0: If test was "x is not None" and body is x, unwrap body
+                if let Some(ref opt_var) = optional_var_in_test {
+                    if let Expr::Ident(body_var) = body.as_ref() {
+                        if body_var == opt_var {
+                            ir_body = IrExpr::MethodCall {
+                                target: Box::new(ir_body),
+                                method: "unwrap".to_string(),
+                                args: vec![],
+                            };
+                        }
+                    }
+                }
+
+                // V1.5.0: If orelse is StringLit, add to_string()
+                if matches!(ir_orelse, IrExpr::StringLit(_)) {
+                    ir_orelse = IrExpr::MethodCall {
+                        target: Box::new(ir_orelse),
+                        method: "to_string".to_string(),
+                        args: vec![],
+                    };
+                }
 
                 Ok(IrExpr::IfExp {
                     test: Box::new(ir_test),

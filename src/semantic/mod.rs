@@ -746,6 +746,28 @@ impl SemanticAnalyzer {
                     ir_value
                 };
 
+                // V1.5.0: Wrap non-None values in Some() when assigning to Optional type
+                let ir_value = if matches!(ty, Type::Optional(_)) 
+                    && !matches!(value, Expr::NoneLiteral) 
+                    && !matches!(expr_ty, Type::Optional(_)) 
+                {
+                    // If value is StringLit, add .to_string()
+                    let ir_value = if matches!(ir_value, IrExpr::StringLit(_)) {
+                        IrExpr::MethodCall {
+                            target: Box::new(ir_value),
+                            method: "to_string".to_string(),
+                            args: vec![],
+                        }
+                    } else {
+                        ir_value
+                    };
+                    IrExpr::Call {
+                        func: Box::new(IrExpr::Var("Some".to_string())),
+                        args: vec![ir_value],
+                    }
+                } else {
+                    ir_value
+                };
                 if is_reassign {
                     Ok(IrNode::Assign {
                         target: target.clone(),
