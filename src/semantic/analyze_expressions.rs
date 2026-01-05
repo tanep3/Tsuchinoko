@@ -341,6 +341,23 @@ impl SemanticAnalyzer {
                         });
                     }
 
+                    // V1.5.0: input() or input(prompt)
+                    if name == "input" && kwargs.is_empty() {
+                        if args.is_empty() {
+                            // input() -> { let mut line = String::new(); std::io::stdin().read_line(&mut line).unwrap(); line.trim().to_string() }
+                            return Ok(IrExpr::RawCode(
+                                "{ let mut line = String::new(); std::io::stdin().read_line(&mut line).unwrap(); line.trim().to_string() }".to_string()
+                            ));
+                        } else {
+                            // input(prompt) -> { print!("{}", prompt); flush; read_line; trim }
+                            let ir_arg = self.analyze_expr(&args[0])?;
+                            return Ok(IrExpr::RawCode(format!(
+                                "{{ print!(\"{{}}\", {}); std::io::Write::flush(&mut std::io::stdout()).unwrap(); let mut line = String::new(); std::io::stdin().read_line(&mut line).unwrap(); line.trim().to_string() }}",
+                                self.emit_simple_ir_expr(&ir_arg)
+                            )));
+                        }
+                    }
+
                     // V1.5.0: round(x) or round(x, n)
                     if name == "round" && !args.is_empty() && kwargs.is_empty() {
                         let ir_arg = self.analyze_expr(&args[0])?;
