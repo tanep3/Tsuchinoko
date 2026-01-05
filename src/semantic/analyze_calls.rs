@@ -658,6 +658,87 @@ impl SemanticAnalyzer {
                     _ => Ok(None),
                 }
             }
+            // V1.5.0: list.remove(x) -> remove by value (find position first)
+            // list.remove(x) -> { let pos = list.iter().position(|e| *e == x).unwrap(); list.remove(pos); }
+            // For now, generate: list.retain(|e| *e != x) (removes ALL occurrences - different semantics)
+            // Better: use RawCode for inline block
+            "remove" if args.len() == 1 => {
+                // Check if this is a list type (including Ref<List>)
+                let is_list = matches!(_target_ty, Type::List(_))
+                    || matches!(_target_ty, Type::Ref(inner) if matches!(inner.as_ref(), Type::List(_)));
+
+                if is_list {
+                    let search_val = self.analyze_expr(&args[0])?;
+                    // Python list.remove(x) removes FIRST occurrence only
+                    // Rust: let pos = list.iter().position(|e| *e == x).unwrap(); list.remove(pos);
+                    // Since this is a statement expression, we generate:
+                    // list.remove(list.iter().position(|e| *e == val).unwrap())
+                    let iter_call = IrExpr::MethodCall {
+                        target: Box::new(target_ir.clone()),
+                        method: "iter".to_string(),
+                        args: vec![],
+                    };
+                    let position_call = IrExpr::MethodCall {
+                        target: Box::new(iter_call),
+                        method: "position".to_string(),
+                        args: vec![IrExpr::RawCode(format!(
+                            "|e| *e == {}",
+                            self.emit_simple_expr(&search_val)
+                        ))],
+                    };
+                    let unwrap_call = IrExpr::MethodCall {
+                        target: Box::new(position_call),
+                        method: "unwrap".to_string(),
+                        args: vec![],
+                    };
+                    Ok(Some(IrExpr::MethodCall {
+                        target: Box::new(target_ir.clone()),
+                        method: "remove".to_string(),
+                        args: vec![unwrap_call],
+                    }))
+                } else {
+                    // Check if this is a set type
+                    let is_set = matches!(_target_ty, Type::Set(_))
+                        || matches!(_target_ty, Type::Ref(inner) if matches!(inner.as_ref(), Type::Set(_)));
+
+                    if is_set {
+                        // Python set.remove(x) -> Rust set.remove(&x)
+                        let search_val = self.analyze_expr(&args[0])?;
+                        Ok(Some(IrExpr::MethodCall {
+                            target: Box::new(target_ir.clone()),
+                            method: "remove".to_string(),
+                            args: vec![IrExpr::Reference {
+                                target: Box::new(search_val),
+                            }],
+                        }))
+                    } else {
+                        Ok(None) // Not a list or set, fall through to default handling
+                    }
+                }
+            }
+            // V1.5.0: list.insert(i, x) -> list.insert(i as usize, x)
+            // Only apply to list types, not dict
+            "insert" if args.len() == 2 => {
+                let is_list = matches!(_target_ty, Type::List(_))
+                    || matches!(_target_ty, Type::Ref(inner) if matches!(inner.as_ref(), Type::List(_)));
+
+                if is_list {
+                    let idx = self.analyze_expr(&args[0])?;
+                    let val = self.analyze_expr(&args[1])?;
+                    // Wrap index in cast to usize
+                    let idx_casted = IrExpr::Cast {
+                        target: Box::new(idx),
+                        ty: "usize".to_string(),
+                    };
+                    Ok(Some(IrExpr::MethodCall {
+                        target: Box::new(target_ir.clone()),
+                        method: "insert".to_string(),
+                        args: vec![idx_casted, val],
+                    }))
+                } else {
+                    Ok(None) // dict.insert handled by default
+                }
+            }
             _ => Ok(None), // Not a special method, use default handling
         }
     }

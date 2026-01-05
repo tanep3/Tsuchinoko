@@ -1492,6 +1492,12 @@ use pyo3::types::PyList;
                             "{}.collect::<std::collections::HashSet<_>>()",
                             self.emit_expr_internal(target)
                         )
+                    } else if method == "pop" {
+                        // V1.5.0: Python list.pop() -> Rust list.pop().unwrap()
+                        format!("{}.pop().unwrap()", self.emit_expr_internal(target))
+                    } else if method == "clear" {
+                        // V1.5.0: Python list.clear() -> Rust list.clear()
+                        format!("{}.clear()", self.emit_expr_internal(target))
                     } else {
                         format!("{}.{}()", self.emit_expr_internal(target), method)
                     }
@@ -1506,13 +1512,32 @@ use pyo3::types::PyList;
                             self.emit_expr_internal(target),
                             args_str.join(", ")
                         )
-                    } else if method == "remove" || method == "discard" {
-                        // Python set.remove(x) / set.discard(x) -> Rust set.remove(&x)
+                    } else if method == "discard" {
+                        // Python set.discard(x) -> Rust set.remove(&x)
+                        // Note: set.remove is also &x, but list.remove is handled differently
+                        // in semantic analysis (via try_handle_special_method)
                         let arg = &args[0];
                         format!(
                             "{}.remove(&{})",
                             self.emit_expr_internal(target),
                             self.emit_expr_internal(arg)
+                        )
+                    } else if method == "pop" && args.len() == 1 {
+                        // Python list.pop(i) -> Rust list.remove(i as usize)
+                        let idx = &args[0];
+                        format!(
+                            "{}.remove({} as usize)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(idx)
+                        )
+                    // Note: list.insert is handled in semantic analysis to distinguish from dict.insert
+                    } else if method == "extend" {
+                        // Python list.extend(iter) -> Rust list.extend(iter)
+                        let iter = &args[0];
+                        format!(
+                            "{}.extend({})",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(iter)
                         )
                     } else {
                         let args_str: Vec<_> =
