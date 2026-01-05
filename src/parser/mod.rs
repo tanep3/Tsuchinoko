@@ -2230,9 +2230,22 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
             if !target_trimmed.is_empty() && !target_trimmed.ends_with(',') {
                 // Check if this is a slice (contains ':')
                 if let Some(colon_pos) = find_char_balanced(index_part, ':') {
-                    // It's a slice: target[start:end]
+                    // It's a slice: target[start:end] or target[start:end:step]
+                    let after_first_colon = &index_part[colon_pos + 1..];
+                    
+                    // Check for second colon (step)
+                    let (end_str, step_str): (&str, Option<&str>) = 
+                        if let Some(second_colon_pos) = find_char_balanced(after_first_colon, ':') {
+                            // target[start:end:step]
+                            let end_part = &after_first_colon[..second_colon_pos].trim();
+                            let step_part = &after_first_colon[second_colon_pos + 1..].trim();
+                            (*end_part, Some(*step_part))
+                        } else {
+                            // target[start:end]
+                            (after_first_colon.trim(), None)
+                        };
+                    
                     let start_str = &index_part[..colon_pos].trim();
-                    let end_str = &index_part[colon_pos + 1..].trim();
 
                     let start = if start_str.is_empty() {
                         None
@@ -2246,10 +2259,16 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
                         Some(Box::new(parse_expr(end_str, line_num)?))
                     };
 
+                    let step = match step_str {
+                        Some(s) if !s.is_empty() => Some(Box::new(parse_expr(s, line_num)?)),
+                        _ => None,
+                    };
+
                     return Ok(Expr::Slice {
                         target: Box::new(parse_expr(target_part, line_num)?),
                         start,
                         end,
+                        step,
                     });
                 }
 

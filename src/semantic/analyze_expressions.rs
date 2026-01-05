@@ -1336,8 +1336,8 @@ impl SemanticAnalyzer {
                 // For now, just return the inner expression - the context handles spread
                 Ok(ir_inner)
             }
-            Expr::Slice { target, start, end } => {
-                // Python slices: nums[:3], nums[-3:], nums[1:len(nums)-1]
+            Expr::Slice { target, start, end, step } => {
+                // Python slices: nums[:3], nums[-3:], nums[1:len(nums)-1], nums[::2], nums[::-1]
                 // Rust equivalents depend on the slice type
                 let ir_target = self.analyze_expr(target)?;
 
@@ -1351,10 +1351,16 @@ impl SemanticAnalyzer {
                     None => None,
                 };
 
+                let ir_step = match step {
+                    Some(s) => Some(Box::new(self.analyze_expr(s)?)),
+                    None => None,
+                };
+
                 Ok(IrExpr::Slice {
                     target: Box::new(ir_target),
                     start: ir_start,
                     end: ir_end,
+                    step: ir_step,
                 })
             }
             Expr::Attribute { value, attr } => {

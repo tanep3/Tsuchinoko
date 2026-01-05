@@ -106,11 +106,12 @@ pub enum IrExpr {
         target: Box<IrExpr>,
         index: Box<IrExpr>,
     },
-    /// スライスアクセス (target[start..end])
+    /// スライスアクセス (target[start..end:step])
     Slice {
         target: Box<IrExpr>,
         start: Option<Box<IrExpr>>,
         end: Option<Box<IrExpr>>,
+        step: Option<Box<IrExpr>>,  // V1.5.0: step for arr[::2], arr[::-1]
     },
     /// Range (forループ用)
     Range {

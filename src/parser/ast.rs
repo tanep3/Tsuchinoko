@@ -63,11 +63,12 @@ pub enum Expr {
     Tuple(Vec<Expr>),
     /// Index access
     Index { target: Box<Expr>, index: Box<Expr> },
-    /// Slice access (target[start:end])
+    /// Slice access (target[start:end:step])
     Slice {
         target: Box<Expr>,
         start: Option<Box<Expr>>,
         end: Option<Box<Expr>>,
+        step: Option<Box<Expr>>,  // V1.5.0: step for arr[::2], arr[::-1], arr[1:8:2]
     },
     /// Attribute access (obj.attr)
     Attribute { value: Box<Expr>, attr: String },
