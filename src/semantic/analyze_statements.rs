@@ -52,10 +52,14 @@ impl SemanticAnalyzer {
                 // In Python, lists are always mutable. In Rust, we should make them mutable by default
                 // to allow modification (like push, index assign).
                 // Structs should also be mutable to allow &mut self method calls.
-                // Dicts need to be mutable for insert().
-                // Also respect re-assignment.
-                let should_be_mutable =
-                    is_reassign || matches!(ty, Type::List(_) | Type::Struct(_) | Type::Dict(_, _));
+                // Dicts need to be mutable for insert(). Sets for add()/remove().
+                // V1.5.0: Also check mutable_vars (collected from pop/update/remove/etc. calls)
+                let should_be_mutable = is_reassign
+                    || matches!(
+                        ty,
+                        Type::List(_) | Type::Struct(_) | Type::Dict(_, _) | Type::Set(_)
+                    )
+                    || self.mutable_vars.contains(target);
 
                 if !is_reassign {
                     self.scope.define(target, ty.clone(), false);
@@ -86,6 +90,19 @@ impl SemanticAnalyzer {
                     } else {
                         ir_value
                     };
+
+                // V1.5.0: Wrap non-None values in Some() when assigning to Optional type
+                let ir_value = if matches!(ty, Type::Optional(_))
+                    && !matches!(value, Expr::NoneLiteral)
+                    && !matches!(expr_ty, Type::Optional(_))
+                {
+                    IrExpr::Call {
+                        func: Box::new(IrExpr::Var("Some".to_string())),
+                        args: vec![ir_value],
+                    }
+                } else {
+                    ir_value
+                };
 
                 if is_reassign {
                     Ok(IrNode::Assign {
@@ -237,6 +254,7 @@ impl SemanticAnalyzer {
                                         target: Box::new(ir_value.clone()),
                                         start: Some(Box::new(IrExpr::IntLit(start_idx as i64))),
                                         end: None,
+                                        step: None,
                                     }),
                                     method: "to_vec".to_string(),
                                     args: vec![],
@@ -259,6 +277,7 @@ impl SemanticAnalyzer {
                                         target: Box::new(ir_value.clone()),
                                         start: Some(Box::new(IrExpr::IntLit(start_idx as i64))),
                                         end: Some(Box::new(end_expr)),
+                                        step: None,
                                     }),
                                     method: "to_vec".to_string(),
                                     args: vec![],
@@ -952,24 +971,42 @@ impl SemanticAnalyzer {
             }
             Stmt::TryExcept {
                 try_body,
-                except_type: _,
-                except_body,
+                except_clauses,
+                finally_body,
             } => {
-                // Analyze try body
-                let ir_try_body: Vec<IrNode> = try_body
-                    .iter()
-                    .map(|s| self.analyze_stmt(s))
-                    .collect::<Result<Vec<_>, _>>()?;
+                // Use analyze_stmts to properly detect mutable variables in try/except blocks
+                let ir_try_body = self.analyze_stmts(try_body)?;
 
-                // Analyze except body
-                let ir_except_body: Vec<IrNode> = except_body
-                    .iter()
-                    .map(|s| self.analyze_stmt(s))
-                    .collect::<Result<Vec<_>, _>>()?;
+                // Collect all except bodies into one (Rust doesn't have typed exceptions)
+                // For now, we merge all except clauses into a single except block
+                // TODO: V1.5.0+ could add support for exception variable (as e)
+                let mut ir_except_body = Vec::new();
+                for clause in except_clauses {
+                    // If clause has a name (as e), define the variable
+                    if let Some(ref name) = clause.name {
+                        self.scope.push();
+                        self.scope.define(name, Type::String, false);
+                    }
+
+                    let clause_body = self.analyze_stmts(&clause.body)?;
+                    ir_except_body.extend(clause_body);
+
+                    if clause.name.is_some() {
+                        self.scope.pop();
+                    }
+                }
+
+                // Analyze finally body if present
+                let ir_finally_body = if let Some(fb) = finally_body {
+                    Some(self.analyze_stmts(fb)?)
+                } else {
+                    None
+                };
 
                 Ok(IrNode::TryBlock {
                     try_body: ir_try_body,
                     except_body: ir_except_body,
+                    finally_body: ir_finally_body,
                 })
             }
             Stmt::Break => Ok(IrNode::Break),

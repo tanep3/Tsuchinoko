@@ -77,6 +77,11 @@ pub enum IrExpr {
         value_type: Type,
         entries: Vec<(IrExpr, IrExpr)>,
     },
+    /// セット/HashSet リテラル (V1.5.0)
+    Set {
+        elem_type: Type,
+        elements: Vec<IrExpr>,
+    },
 
     // --- 内包表記 ---
     /// リスト内包表記 [elt for target in iter if condition]
@@ -101,11 +106,12 @@ pub enum IrExpr {
         target: Box<IrExpr>,
         index: Box<IrExpr>,
     },
-    /// スライスアクセス (target[start..end])
+    /// スライスアクセス (target[start..end:step])
     Slice {
         target: Box<IrExpr>,
         start: Option<Box<IrExpr>>,
         end: Option<Box<IrExpr>>,
+        step: Option<Box<IrExpr>>, // V1.5.0: step for arr[::2], arr[::-1]
     },
     /// Range (forループ用)
     Range {

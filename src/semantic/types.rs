@@ -8,6 +8,7 @@ pub enum Type {
     String,                     // String
     Bool,                       // bool
     List(Box<Type>),            // Vec<T>
+    Set(Box<Type>),             // HashSet<T> (V1.5.0)
     Tuple(Vec<Type>),           // (T, U, ...)
     Dict(Box<Type>, Box<Type>), // HashMap<K, V>
     Optional(Box<Type>),        // Option<T>
@@ -47,6 +48,10 @@ impl Type {
                 let key = params.first().cloned().unwrap_or(Type::Unknown);
                 let val = params.get(1).cloned().unwrap_or(Type::Unknown);
                 Type::Dict(Box::new(key), Box::new(val))
+            }
+            "set" | "Set" => {
+                let inner = params.first().cloned().unwrap_or(Type::Unknown);
+                Type::Set(Box::new(inner))
             }
             "Optional" => {
                 let inner = params.first().cloned().unwrap_or(Type::Unknown);
@@ -109,6 +114,9 @@ impl Type {
                     k.to_rust_string(),
                     v.to_rust_string()
                 )
+            }
+            Type::Set(inner) => {
+                format!("std::collections::HashSet<{}>", inner.to_rust_string())
             }
             Type::Optional(inner) => {
                 // For struct types, use Box to avoid infinite size
@@ -191,6 +199,7 @@ impl Type {
             (Type::Dict(k1, v1), Type::Dict(k2, v2)) => {
                 k1.is_compatible_with(k2) && v1.is_compatible_with(v2)
             }
+            (Type::Set(a), Type::Set(b)) => a.is_compatible_with(b),
             (Type::Optional(a), Type::Optional(b)) => a.is_compatible_with(b),
             (Type::Ref(a), Type::Ref(b)) => a.is_compatible_with(b),
             (
@@ -224,6 +233,7 @@ impl Type {
             Type::List(inner) => inner.contains_unknown(),
             Type::Tuple(types) => types.iter().any(|t| t.contains_unknown()),
             Type::Dict(k, v) => k.contains_unknown() || v.contains_unknown(),
+            Type::Set(inner) => inner.contains_unknown(),
             Type::Optional(inner) => inner.contains_unknown(),
             Type::Ref(inner) => inner.contains_unknown(),
             Type::MutRef(inner) => inner.contains_unknown(),

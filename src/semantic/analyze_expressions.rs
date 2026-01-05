@@ -156,6 +156,90 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                // V1.5.0: Set operations - |, &, - on set types
+                // a | b -> a.union(&b).cloned().collect()
+                // a & b -> a.intersection(&b).cloned().collect()
+                // a - b -> a.difference(&b).cloned().collect()
+                if matches!(op, AstBinOp::BitOr | AstBinOp::BitAnd | AstBinOp::Sub) {
+                    let left_ty = self.infer_type(left);
+                    let right_ty = self.infer_type(right);
+
+                    // Check if both operands are set types
+                    if matches!(left_ty, Type::Set(_)) && matches!(right_ty, Type::Set(_)) {
+                        let ir_left = self.analyze_expr(left)?;
+                        let ir_right = self.analyze_expr(right)?;
+
+                        let method = match op {
+                            AstBinOp::BitOr => "union",
+                            AstBinOp::BitAnd => "intersection",
+                            AstBinOp::Sub => "difference",
+                            _ => unreachable!(),
+                        };
+
+                        // Generate: left.method(&right).cloned().collect()
+                        let method_call = IrExpr::MethodCall {
+                            target: Box::new(ir_left),
+                            method: method.to_string(),
+                            args: vec![IrExpr::Reference {
+                                target: Box::new(ir_right),
+                            }],
+                        };
+                        let cloned_call = IrExpr::MethodCall {
+                            target: Box::new(method_call),
+                            method: "cloned".to_string(),
+                            args: vec![],
+                        };
+                        // Use collect_hashset marker for type inference
+                        return Ok(IrExpr::MethodCall {
+                            target: Box::new(cloned_call),
+                            method: "collect_hashset".to_string(),
+                            args: vec![],
+                        });
+                    }
+                }
+
+                // V1.5.0: 'or' with Optional type -> unwrap_or
+                // x or default -> x.unwrap_or(default)
+                if matches!(op, AstBinOp::Or) {
+                    let left_ty = self.infer_type(left);
+                    if matches!(left_ty, Type::Optional(_)) {
+                        let ir_left = self.analyze_expr(left)?;
+                        let ir_right = self.analyze_expr(right)?;
+                        // If right is StringLit, add .to_string()
+                        let ir_right = if matches!(ir_right, IrExpr::StringLit(_)) {
+                            IrExpr::MethodCall {
+                                target: Box::new(ir_right),
+                                method: "to_string".to_string(),
+                                args: vec![],
+                            }
+                        } else {
+                            ir_right
+                        };
+                        // x.unwrap_or(default)
+                        return Ok(IrExpr::MethodCall {
+                            target: Box::new(ir_left),
+                            method: "unwrap_or".to_string(),
+                            args: vec![ir_right],
+                        });
+                    }
+                }
+
+                // V1.5.0: 'or' with empty String falsy behavior
+                // x or default -> if x.is_empty() { default } else { x }
+                if matches!(op, AstBinOp::Or) {
+                    let left_ty = self.infer_type(left);
+                    if matches!(left_ty, Type::String) {
+                        let ir_left = self.analyze_expr(left)?;
+                        let ir_right = self.analyze_expr(right)?;
+                        let left_str = self.emit_simple_ir_expr(&ir_left);
+                        let right_str = self.emit_simple_ir_expr(&ir_right);
+                        // if x.is_empty() { default } else { x.clone() }
+                        return Ok(IrExpr::RawCode(format!(
+                            "if {left_str}.is_empty() {{ {right_str} }} else {{ {left_str}.clone() }}"
+                        )));
+                    }
+                }
+
                 let ir_left = self.analyze_expr(left)?;
                 let ir_right = self.analyze_expr(right)?;
                 let ir_op = self.convert_binop(op);
@@ -299,6 +383,88 @@ impl SemanticAnalyzer {
                         });
                     }
 
+                    // V1.5.0: input() or input(prompt)
+                    if name == "input" && kwargs.is_empty() {
+                        if args.is_empty() {
+                            // input() -> { let mut line = String::new(); std::io::stdin().read_line(&mut line).unwrap(); line.trim().to_string() }
+                            return Ok(IrExpr::RawCode(
+                                "{ let mut line = String::new(); std::io::stdin().read_line(&mut line).unwrap(); line.trim().to_string() }".to_string()
+                            ));
+                        } else {
+                            // input(prompt) -> { print!("{}", prompt); flush; read_line; trim }
+                            let ir_arg = self.analyze_expr(&args[0])?;
+                            return Ok(IrExpr::RawCode(format!(
+                                "{{ print!(\"{{}}\", {}); std::io::Write::flush(&mut std::io::stdout()).unwrap(); let mut line = String::new(); std::io::stdin().read_line(&mut line).unwrap(); line.trim().to_string() }}",
+                                self.emit_simple_ir_expr(&ir_arg)
+                            )));
+                        }
+                    }
+
+                    // V1.5.0: round(x) or round(x, n)
+                    if name == "round" && !args.is_empty() && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        if args.len() >= 2 {
+                            // round(x, n) -> (x * 10^n).round() / 10^n
+                            let ir_n = self.analyze_expr(&args[1])?;
+                            return Ok(IrExpr::RawCode(format!(
+                                "{{ let n = {}; let factor = 10f64.powi(n as i32); ({} * factor).round() / factor }}",
+                                self.emit_simple_ir_expr(&ir_n),
+                                self.emit_simple_ir_expr(&ir_arg)
+                            )));
+                        } else {
+                            // round(x) -> x.round() as i64
+                            return Ok(IrExpr::RawCode(format!(
+                                "{}.round() as i64",
+                                self.emit_simple_ir_expr(&ir_arg)
+                            )));
+                        }
+                    }
+
+                    // V1.5.0: chr(n) -> char::from_u32(n as u32).unwrap().to_string()
+                    if name == "chr" && args.len() == 1 && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        return Ok(IrExpr::RawCode(format!(
+                            "char::from_u32({} as u32).unwrap().to_string()",
+                            self.emit_simple_ir_expr(&ir_arg)
+                        )));
+                    }
+
+                    // V1.5.0: ord(c) -> c.chars().next().unwrap() as i64
+                    if name == "ord" && args.len() == 1 && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        return Ok(IrExpr::RawCode(format!(
+                            "{}.chars().next().unwrap() as i64",
+                            self.emit_simple_ir_expr(&ir_arg)
+                        )));
+                    }
+
+                    // V1.5.0: bin(x) -> format!("0b{:b}", x)
+                    if name == "bin" && args.len() == 1 && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        return Ok(IrExpr::RawCode(format!(
+                            "format!(\"0b{{:b}}\", {})",
+                            self.emit_simple_ir_expr(&ir_arg)
+                        )));
+                    }
+
+                    // V1.5.0: hex(x) -> format!("0x{:x}", x)
+                    if name == "hex" && args.len() == 1 && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        return Ok(IrExpr::RawCode(format!(
+                            "format!(\"0x{{:x}}\", {})",
+                            self.emit_simple_ir_expr(&ir_arg)
+                        )));
+                    }
+
+                    // V1.5.0: oct(x) -> format!("0o{:o}", x)
+                    if name == "oct" && args.len() == 1 && kwargs.is_empty() {
+                        let ir_arg = self.analyze_expr(&args[0])?;
+                        return Ok(IrExpr::RawCode(format!(
+                            "format!(\"0o{{:o}}\", {})",
+                            self.emit_simple_ir_expr(&ir_arg)
+                        )));
+                    }
+
                     // V1.3.0: list(something) - if something is map/filter, we need special handling
                     if name == "list" && args.len() == 1 && kwargs.is_empty() {
                         // Check if inner is map() or filter()
@@ -387,6 +553,31 @@ impl SemanticAnalyzer {
                                 }
                             }
                         }
+                    }
+
+                    // V1.5.0: set(iterable) -> iterable.iter().cloned().collect::<HashSet<_>>()
+                    if name == "set" && args.len() == 1 && kwargs.is_empty() {
+                        let arg = &args[0];
+                        let ir_arg = self.analyze_expr(arg)?;
+
+                        // Build: arg.iter().cloned().collect()
+                        // Use MethodCall chain, emitter will handle turbofish
+                        let iter_call = IrExpr::MethodCall {
+                            target: Box::new(ir_arg),
+                            method: "iter".to_string(),
+                            args: vec![],
+                        };
+                        let cloned_call = IrExpr::MethodCall {
+                            target: Box::new(iter_call),
+                            method: "cloned".to_string(),
+                            args: vec![],
+                        };
+                        // Special marker for set collect - emitter will add turbofish
+                        return Ok(IrExpr::MethodCall {
+                            target: Box::new(cloned_call),
+                            method: "collect_hashset".to_string(), // Special marker
+                            args: vec![],
+                        });
                     }
                 }
 
@@ -690,7 +881,7 @@ impl SemanticAnalyzer {
                         )?;
 
                         let final_func = if name == "main" {
-                            Box::new(IrExpr::Var("user_main".to_string()))
+                            Box::new(IrExpr::Var("main_py".to_string()))
                         } else {
                             Box::new(IrExpr::Var(name.clone()))
                         };
@@ -1060,9 +1251,99 @@ impl SemanticAnalyzer {
                 })
             }
             Expr::IfExp { test, body, orelse } => {
-                let ir_test = self.analyze_expr(test)?;
-                let ir_body = self.analyze_expr(body)?;
-                let ir_orelse = self.analyze_expr(orelse)?;
+                // V1.5.0: If test is an Optional variable used as condition, convert to is_some()
+                let test_ty = self.infer_type(test);
+                let is_optional_test = matches!(test_ty, Type::Optional(_));
+
+                // V1.5.0: Also check if test is "x is not None" for Optional x
+                let optional_var_in_test = if let Expr::BinOp { left, op, right } = test.as_ref() {
+                    if matches!(op, AstBinOp::IsNot) && matches!(right.as_ref(), Expr::NoneLiteral)
+                    {
+                        if let Expr::Ident(var_name) = left.as_ref() {
+                            if matches!(self.infer_type(left), Type::Optional(_)) {
+                                Some(var_name.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let ir_test = if is_optional_test {
+                    // Optional variable as condition -> x.is_some()
+                    let inner = self.analyze_expr(test)?;
+                    IrExpr::MethodCall {
+                        target: Box::new(inner),
+                        method: "is_some".to_string(),
+                        args: vec![],
+                    }
+                } else if matches!(test_ty, Type::List(_)) {
+                    // List variable as condition -> !x.is_empty()
+                    let inner = self.analyze_expr(test)?;
+                    IrExpr::UnaryOp {
+                        op: IrUnaryOp::Not,
+                        operand: Box::new(IrExpr::MethodCall {
+                            target: Box::new(inner),
+                            method: "is_empty".to_string(),
+                            args: vec![],
+                        }),
+                    }
+                } else {
+                    self.analyze_expr(test)?
+                };
+                let mut ir_body = self.analyze_expr(body)?;
+                let mut ir_orelse = self.analyze_expr(orelse)?;
+
+                // V1.5.0: If body is same Optional var as test, unwrap it
+                if is_optional_test {
+                    if let (Expr::Ident(test_var), Expr::Ident(body_var)) =
+                        (test.as_ref(), body.as_ref())
+                    {
+                        if test_var == body_var {
+                            ir_body = IrExpr::MethodCall {
+                                target: Box::new(ir_body),
+                                method: "unwrap".to_string(),
+                                args: vec![],
+                            };
+                        }
+                    }
+                    // Also if body is Optional type, unwrap it
+                    if matches!(self.infer_type(body), Type::Optional(_)) {
+                        ir_body = IrExpr::MethodCall {
+                            target: Box::new(ir_body),
+                            method: "unwrap".to_string(),
+                            args: vec![],
+                        };
+                    }
+                }
+
+                // V1.5.0: If test was "x is not None" and body is x, unwrap body
+                if let Some(ref opt_var) = optional_var_in_test {
+                    if let Expr::Ident(body_var) = body.as_ref() {
+                        if body_var == opt_var {
+                            ir_body = IrExpr::MethodCall {
+                                target: Box::new(ir_body),
+                                method: "unwrap".to_string(),
+                                args: vec![],
+                            };
+                        }
+                    }
+                }
+
+                // V1.5.0: If orelse is StringLit, add to_string()
+                if matches!(ir_orelse, IrExpr::StringLit(_)) {
+                    ir_orelse = IrExpr::MethodCall {
+                        target: Box::new(ir_orelse),
+                        method: "to_string".to_string(),
+                        args: vec![],
+                    };
+                }
 
                 Ok(IrExpr::IfExp {
                     test: Box::new(ir_test),
@@ -1127,6 +1408,28 @@ impl SemanticAnalyzer {
                     entries: ir_entries,
                 })
             }
+            // V1.5.0: Set literal
+            Expr::Set(elements) => {
+                let mut ir_elements = Vec::new();
+                let mut elem_type = Type::Unknown;
+
+                for (i, e) in elements.iter().enumerate() {
+                    let ir_elem = self.analyze_expr(e)?;
+                    ir_elements.push(ir_elem);
+
+                    let et = self.infer_type(e);
+                    if i == 0 {
+                        elem_type = et;
+                    } else if et != elem_type {
+                        elem_type = Type::Any;
+                    }
+                }
+
+                Ok(IrExpr::Set {
+                    elem_type,
+                    elements: ir_elements,
+                })
+            }
             Expr::FString { parts, values } => {
                 let ir_values: Vec<IrExpr> = values
                     .iter()
@@ -1165,10 +1468,16 @@ impl SemanticAnalyzer {
                 // For now, just return the inner expression - the context handles spread
                 Ok(ir_inner)
             }
-            Expr::Slice { target, start, end } => {
-                // Python slices: nums[:3], nums[-3:], nums[1:len(nums)-1]
+            Expr::Slice {
+                target,
+                start,
+                end,
+                step,
+            } => {
+                // Python slices: nums[:3], nums[-3:], nums[1:len(nums)-1], nums[::2], nums[::-1]
                 // Rust equivalents depend on the slice type
                 let ir_target = self.analyze_expr(target)?;
+                let target_type = self.infer_type(target);
 
                 let ir_start = match start {
                     Some(s) => Some(Box::new(self.analyze_expr(s)?)),
@@ -1180,10 +1489,40 @@ impl SemanticAnalyzer {
                     None => None,
                 };
 
+                let ir_step = match step {
+                    Some(s) => Some(Box::new(self.analyze_expr(s)?)),
+                    None => None,
+                };
+
+                // V1.5.0: Special handling for String step slices (use chars() instead of iter())
+                if matches!(target_type, Type::String) && ir_step.is_some() {
+                    let target_str = self.emit_simple_ir_expr(&ir_target);
+                    let step_expr = ir_step.as_ref().unwrap();
+                    let step_val_str = self.emit_simple_ir_expr(step_expr);
+
+                    // Check if step is -1 (reverse)
+                    let is_reverse = matches!(step_expr.as_ref(), IrExpr::IntLit(-1));
+
+                    if is_reverse {
+                        // s[::-1] -> s.chars().rev().collect::<String>()
+                        return Ok(IrExpr::RawCode(format!(
+                            "{}.chars().rev().collect::<String>()",
+                            target_str
+                        )));
+                    } else {
+                        // s[::n] -> s.chars().step_by(n).collect::<String>()
+                        return Ok(IrExpr::RawCode(format!(
+                            "{}.chars().step_by({} as usize).collect::<String>()",
+                            target_str, step_val_str
+                        )));
+                    }
+                }
+
                 Ok(IrExpr::Slice {
                     target: Box::new(ir_target),
                     start: ir_start,
                     end: ir_end,
+                    step: ir_step,
                 })
             }
             Expr::Attribute { value, attr } => {

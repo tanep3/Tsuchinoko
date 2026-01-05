@@ -15,9 +15,9 @@ Tsuchinokoトランスパイラが現在サポートしていないPython機能�
 
 ## 例外処理
 
-- **try/except/finally** による特定の例外型捕捉
-- **カスタム例外クラス**
-- **例外連鎖** (`raise ... from ...`)
+- **カスタム例外クラス** (独自の例外型定義)
+- **例外連鎖** (`raise ... from ...`) → V1.5.1 で対応予定
+- **try/except/else** ブロック → V1.5.1 で対応予定
 
 ## クラス機能
 
@@ -30,7 +30,6 @@ Tsuchinokoトランスパイラが現在サポートしていないPython機能�
 
 ## 組み込み型
 
-- **Set型** (`set[T]`)
 - **Frozenset**
 - **複素数**
 - **Bytes/Bytearray**
@@ -71,7 +70,6 @@ Tsuchinokoトランスパイラが現在サポートしていないPython機能�
 
 ## 高度な機能
 
-- **セット内包表記** (`{x for x in ...}`)
 - **Global/Nonlocal** 文
 
 ## ノート

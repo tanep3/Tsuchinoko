@@ -4,8 +4,8 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.4.0-green.svg)](Cargo.toml)
-[![Coverage](https://img.shields.io/badge/Python_Syntax_Coverage-73%25-blue.svg)](#feature-documentation)
+[![Version](https://img.shields.io/badge/Version-1.5.0-green.svg)](Cargo.toml)
+[![Coverage](https://img.shields.io/badge/Python_Syntax_Coverage-68%25-blue.svg)](#feature-documentation)
 [![Changelog](https://img.shields.io/badge/History-Changelog-blue.svg)](CHANGELOG.md)
 
 [🇯🇵 日本語版はこちら](README_jp.md)
@@ -16,7 +16,7 @@ Tsuchinoko is a transpiler that converts type-hinted Python code to Rust.
 Write algorithmic logic in Python's readable syntax and gain Rust's safety and performance.  
 Tsuchinoko (ツチノコ) is a legendary snake-like cryptid from Japanese folklore. Like its namesake, this tool transforms one thing (Python) into something unexpected (Rust!).
 
-> **Coverage**: Supports 73% of Python syntax features (78 features), covering essential constructs for algorithmic programming: variables, operators, control flow, functions, classes, data structures, and error handling.
+> **Coverage**: Supports 68% of Python syntax features (75 features), covering essential constructs for algorithmic programming: variables, operators, control flow, functions, classes, data structures, collections (list/dict/set), string methods, and error handling.
 
 ## Design Philosophy
 
@@ -33,6 +33,11 @@ Tsuchinoko is **not** a general-purpose Python compiler. It is designed to:
 - **Lambda Expressions** - `lambda x: x + 1` → `|x| x + 1`
 - **Basic Class Support** - Struct-like classes with `__init__` and methods
 - **List Comprehensions** - `[x*2 for x in nums if x > 0]`
+- **Set Literals** (V1.5.0) - `{1, 2, 3}` → `HashSet`
+- **Collection Methods** (V1.5.0) - list/dict/set operations (pop, insert, keys, values, union, etc.)
+- **String Methods** (V1.5.0) - replace, startswith, endswith, find, count, isdigit, etc.
+- **Optional Patterns** (V1.5.0) - `x or default`, None check with ternary
+- **Step Slicing** (V1.5.0) - `arr[::2]`, `arr[::-1]`
 - **Smart Type Inference** - Auto-Ref, Auto-Deref, minimal `mut`
 - **Resident Python Worker** - Supports `numpy` / `pandas` via persistent IPC worker
 
@@ -127,18 +132,6 @@ For detailed feature lists, see:
 
 ## Future Roadmap
 
-- [x] Named arguments support (`func(name="value")`)
-- [x] Default argument values (`def func(x=10)`)
-- [x] Exception handling (`try-except` → `catch_unwind`)
-- [x] Variable-length arguments (`*args` via spread operator)
-- [x] NumPy/Pandas support via Resident Python Worker
-- [x] Bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`) (V1.3.0)
-- [x] Built-in functions (`enumerate`, `zip`, `sorted`, `sum`, `all`, `any`, `map`, `filter`) (V1.3.0)
-- [x] Dict comprehensions (`{k: v for k, v in items}`) (V1.3.0)
-- [x] `assert` statement (V1.3.0)
-- [x] `from module import func` syntax (V1.4.0)
-- [x] `math.pi`, `math.e`, `math.tau`, `math.inf`, `math.nan` constants (V1.4.0)
-- [x] Automatic external library detection (V1.4.0)
 - [ ] Full `**kwargs` support
 - [ ] Full class inheritance support
 - [ ] More standard library mappings

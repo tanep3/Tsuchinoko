@@ -288,7 +288,7 @@ pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
     Ok(Program { statements })
 }
 
-/// Parse a try-except statement
+/// Parse a try-except statement (V1.5.0: supports multiple except clauses & finally)
 fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), TsuchinokoError> {
     // First line should be "try:"
     let line_num = start + 1;
@@ -296,49 +296,101 @@ fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchin
     // Parse try body
     let (try_body, try_consumed) = parse_block(lines, start + 1)?;
 
-    // Find except clause
-    let except_start = start + 1 + try_consumed;
-    if except_start >= lines.len() {
+    let mut except_clauses = Vec::new();
+    let mut finally_body = None;
+    let mut current = start + 1 + try_consumed;
+
+    // Parse except clauses (can be multiple)
+    while current < lines.len() {
+        let line = lines[current].trim();
+
+        if line.starts_with("except") {
+            let clause = parse_except_clause(lines, current)?;
+            except_clauses.push(clause.0);
+            current += clause.1;
+        } else if line.starts_with("finally:") || line == "finally:" {
+            // Parse finally block
+            let (fb, consumed) = parse_block(lines, current + 1)?;
+            finally_body = Some(fb);
+            current += 1 + consumed;
+            break; // finally is always last
+        } else {
+            break; // End of try-except statement
+        }
+    }
+
+    if except_clauses.is_empty() && finally_body.is_none() {
         return Err(TsuchinokoError::ParseError {
             line: line_num,
-            message: "Expected 'except' after try block".to_string(),
+            message: "Expected 'except' or 'finally' after try block".to_string(),
         });
     }
 
-    let except_line = lines[except_start].trim();
-    if !except_line.starts_with("except") {
-        return Err(TsuchinokoError::ParseError {
-            line: except_start + 1,
-            message: format!("Expected 'except', got: {except_line}"),
-        });
-    }
-
-    // Parse exception type (optional)
-    let except_type = if except_line.starts_with("except ") && except_line.contains(':') {
-        let colon_pos = except_line.find(':').unwrap();
-        let type_str = except_line[7..colon_pos].trim();
-        if type_str.is_empty() {
-            None
-        } else {
-            Some(type_str.to_string())
-        }
-    } else {
-        None
-    };
-
-    // Parse except body
-    let (except_body, except_consumed) = parse_block(lines, except_start + 1)?;
-
-    let total_consumed = 1 + try_consumed + 1 + except_consumed;
+    let total_consumed = current - start;
 
     Ok((
         Stmt::TryExcept {
             try_body,
-            except_type,
-            except_body,
+            except_clauses,
+            finally_body,
         },
         total_consumed,
     ))
+}
+
+/// Parse a single except clause: except [Type | (T1, T2)] [as name]:
+fn parse_except_clause(
+    lines: &[&str],
+    start: usize,
+) -> Result<(ExceptClause, usize), TsuchinokoError> {
+    let line = lines[start].trim();
+
+    // Remove "except" prefix and trailing ":"
+    let content = line
+        .strip_prefix("except")
+        .unwrap_or("")
+        .trim()
+        .strip_suffix(':')
+        .unwrap_or(line.strip_prefix("except").unwrap_or("").trim())
+        .trim();
+
+    let (types, name) = if content.is_empty() {
+        // Bare except:
+        (vec![], None)
+    } else if let Some(as_pos) = content.find(" as ") {
+        // except Type as e: OR except (T1, T2) as e:
+        let type_part = content[..as_pos].trim();
+        let name_part = content[as_pos + 4..].trim().to_string();
+        let types = parse_exception_types(type_part);
+        (types, Some(name_part))
+    } else {
+        // except Type: OR except (T1, T2):
+        let types = parse_exception_types(content);
+        (types, None)
+    };
+
+    // Parse except body
+    let (body, consumed) = parse_block(lines, start + 1)?;
+
+    Ok((ExceptClause { types, name, body }, 1 + consumed))
+}
+
+/// Parse exception types: "ValueError" or "(TypeError, ValueError)"
+fn parse_exception_types(s: &str) -> Vec<String> {
+    let s = s.trim();
+    if s.starts_with('(') && s.ends_with(')') {
+        // Tuple of types
+        s[1..s.len() - 1]
+            .split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect()
+    } else if s.is_empty() {
+        vec![]
+    } else {
+        // Single type
+        vec![s.to_string()]
+    }
 }
 
 /// Parse a class definition (@dataclass class Name: ...)
@@ -1425,6 +1477,34 @@ fn parse_type_hint(type_str: &str) -> Result<TypeHint, TsuchinokoError> {
         type_str
     };
 
+    // V1.5.0: Handle union types (str | None, int | float, etc.)
+    // Split by | at top level (not inside brackets)
+    if let Some(pipe_pos) = find_char_balanced(type_str, '|') {
+        let left_str = type_str[..pipe_pos].trim();
+        let right_str = type_str[pipe_pos + 1..].trim();
+
+        // Check if right is None -> convert to Optional[left]
+        if right_str == "None" {
+            let inner = parse_type_hint(left_str)?;
+            return Ok(TypeHint {
+                name: "Optional".to_string(),
+                params: vec![inner],
+            });
+        }
+        // Check if left is None -> convert to Optional[right]
+        if left_str == "None" {
+            let inner = parse_type_hint(right_str)?;
+            return Ok(TypeHint {
+                name: "Optional".to_string(),
+                params: vec![inner],
+            });
+        }
+
+        // For other unions (not involving None), use first type as approximation
+        // Full union type support would require Type::Union variant
+        return parse_type_hint(left_str);
+    }
+
     // Special case: [int, int] (bare list literal for Callable params)
     // This represents a tuple of types, not a list type
     if type_str.starts_with('[') && type_str.ends_with(']') {
@@ -1792,10 +1872,30 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
 
         let entries = split_by_comma_balanced(inner);
         let mut parsed_entries = Vec::new();
+
+        // V1.5.0: Check if this is a set literal (no colons) or dict literal (has colons)
+        // First entry determines the type
+        let first_entry = entries.first().map(|s| s.trim()).unwrap_or("");
+        let is_set_literal =
+            !first_entry.is_empty() && utils::find_char_balanced(first_entry, ':').is_none();
+
+        if is_set_literal {
+            // Parse as set literal {1, 2, 3}
+            let mut set_elements = Vec::new();
+            for entry in entries {
+                let entry = entry.trim();
+                if !entry.is_empty() {
+                    set_elements.push(parse_expr(entry, line_num)?);
+                }
+            }
+            return Ok(Expr::Set(set_elements));
+        }
+
+        // Parse as dict literal {k: v, ...}
         for entry in entries {
             let entry = entry.trim();
             // Find the colon that separates key: value
-            if let Some(colon_pos) = entry.find(':') {
+            if let Some(colon_pos) = utils::find_char_balanced(entry, ':') {
                 let key = parse_expr(entry[..colon_pos].trim(), line_num)?;
                 let value = parse_expr(entry[colon_pos + 1..].trim(), line_num)?;
                 parsed_entries.push((key, value));
@@ -2158,9 +2258,23 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
             if !target_trimmed.is_empty() && !target_trimmed.ends_with(',') {
                 // Check if this is a slice (contains ':')
                 if let Some(colon_pos) = find_char_balanced(index_part, ':') {
-                    // It's a slice: target[start:end]
+                    // It's a slice: target[start:end] or target[start:end:step]
+                    let after_first_colon = &index_part[colon_pos + 1..];
+
+                    // Check for second colon (step)
+                    let (end_str, step_str): (&str, Option<&str>) = if let Some(second_colon_pos) =
+                        find_char_balanced(after_first_colon, ':')
+                    {
+                        // target[start:end:step]
+                        let end_part = &after_first_colon[..second_colon_pos].trim();
+                        let step_part = &after_first_colon[second_colon_pos + 1..].trim();
+                        (*end_part, Some(*step_part))
+                    } else {
+                        // target[start:end]
+                        (after_first_colon.trim(), None)
+                    };
+
                     let start_str = &index_part[..colon_pos].trim();
-                    let end_str = &index_part[colon_pos + 1..].trim();
 
                     let start = if start_str.is_empty() {
                         None
@@ -2174,10 +2288,16 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
                         Some(Box::new(parse_expr(end_str, line_num)?))
                     };
 
+                    let step = match step_str {
+                        Some(s) if !s.is_empty() => Some(Box::new(parse_expr(s, line_num)?)),
+                        _ => None,
+                    };
+
                     return Ok(Expr::Slice {
                         target: Box::new(parse_expr(target_part, line_num)?),
                         start,
                         end,
+                        step,
                     });
                 }
 

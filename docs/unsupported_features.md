@@ -15,9 +15,9 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 
 ## Exception Handling
 
-- **try/except/finally** with specific exception types
-- **Custom exception classes**
-- **Exception chaining** (`raise ... from ...`)
+- **Custom exception classes** (defining your own exception types)
+- **Exception chaining** (`raise ... from ...`) → Planned for V1.5.1
+- **try/except/else** blocks → Planned for V1.5.1
 
 ## Class Features
 
@@ -30,7 +30,6 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 
 ## Built-in Types
 
-- **Set type** (`set[T]`)
 - **Frozenset**
 - **Complex numbers**
 - **Bytes/Bytearray**
@@ -72,7 +71,6 @@ Even if a library is supported via Resident Worker, some Python syntax cannot be
 
 ## Advanced Features
 
-- **Set comprehensions** (`{x for x in ...}`)
 - **Global/Nonlocal** statements
 
 ## Notes

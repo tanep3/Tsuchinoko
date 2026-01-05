@@ -1,8 +1,8 @@
 # Tsuchinoko 要件定義書
 
 > **著者**: Tane Channel Technology  
-> **バージョン**: 1.4.0  
-> **最終更新**: 2026-01-04
+> **バージョン**: 1.5.0  
+> **最終更新**: 2026-01-05
 
 ---
 
@@ -112,6 +112,14 @@ flowchart LR
 | F-035 | 外部ライブラリ自動検出 | ハードコード削除、汎用検出 | 高 | 1.4 | ✅ V1.4.0 |
 | F-036 | math 定数 | `math.pi`, `math.e`, `math.tau` 等 | 中 | 1.4 | ✅ V1.4.0 |
 | F-037 | --project 強制 | 外部ライブラリ使用時にエラーメッセージ | 高 | 1.4 | ✅ V1.4.0 |
+| F-038 | set 型 | `{1,2,3}` → `HashSet`, add/remove/union等 | 高 | 1.5 | ✅ V1.5.0 |
+| F-039 | list メソッド拡張 | pop, insert, remove, extend, clear | 高 | 1.5 | ✅ V1.5.0 |
+| F-040 | dict メソッド拡張 | keys, values, get, pop, update | 高 | 1.5 | ✅ V1.5.0 |
+| F-041 | 文字列メソッド拡張 | replace, startswith, endswith, find, count 等 | 高 | 1.5 | ✅ V1.5.0 |
+| F-042 | 組み込み関数拡張 | input, round, chr, ord, bin, hex, oct | 中 | 1.5 | ✅ V1.5.0 |
+| F-043 | スライス完全対応 | step指定 `[::2]`, 逆順 `[::-1]` | 高 | 1.5 | ✅ V1.5.0 |
+| F-044 | Optional 深い対応 | `x or default`, 三項演算子連携, union type | 高 | 1.5 | ✅ V1.5.0 |
+| F-045 | 例外処理強化 | 複数例外, as e, finally | 中 | 1.5 | ✅ V1.5.0 |
 
 ### 3.2 サポート対象外
 

@@ -403,6 +403,7 @@ fn test_emit_slice() {
         target: Box::new(IrExpr::Var("arr".to_string())),
         start: Some(Box::new(IrExpr::IntLit(1))),
         end: Some(Box::new(IrExpr::IntLit(5))),
+        step: None,
     };
     let result = emitter.emit_expr(&expr);
     assert!(result.contains("arr"));
@@ -972,6 +973,7 @@ fn test_emit_slice_no_end() {
         target: Box::new(IrExpr::Var("arr".to_string())),
         start: Some(Box::new(IrExpr::IntLit(2))),
         end: None,
+        step: None,
     };
     let result = emitter.emit_expr(&expr);
     assert!(result.contains(".."));
@@ -1199,6 +1201,7 @@ fn test_emit_slice_no_start() {
         target: Box::new(IrExpr::Var("arr".to_string())),
         start: None,
         end: Some(Box::new(IrExpr::IntLit(5))),
+        step: None,
     };
     let result = emitter.emit_expr(&expr);
     assert!(result.contains(".."));
@@ -1550,6 +1553,7 @@ fn test_emit_slice_full() {
         target: Box::new(IrExpr::Var("arr".to_string())),
         start: None,
         end: None,
+        step: None,
     };
     let result = emitter.emit_expr(&expr);
     assert!(result.contains("..") || result.contains("arr"));
@@ -1975,6 +1979,7 @@ fn test_emit_try_block() {
     let node = IrNode::TryBlock {
         try_body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(42))))],
         except_body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(0))))],
+        finally_body: None,
     };
     let result = emit(&[node]);
     assert!(result.contains("catch_unwind") || result.contains("panic"));

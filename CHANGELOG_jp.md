@@ -2,6 +2,68 @@
 
 本プロジェクトの主要な変更点をここに記録します。
 
+## [1.5.0] - 2026-01-05 - 構文網羅的サポート
+
+### 追加 - Set型サポート
+
+- **Setリテラル**: `{1, 2, 3}` → `HashSet::from([1, 2, 3])`
+- **Setコンストラクタ**: `set([1, 2, 3])` → `HashSet`
+- **Setメソッド**: `add`, `remove`, `discard`, `union`, `intersection`, `difference`
+- **Set演算子**: `|` (和集合), `&` (積集合), `-` (差集合)
+- **Set包含判定**: `x in s` → `s.contains(&x)`
+
+### 追加 - コレクションメソッド拡張
+
+- **Listメソッド**: `pop()`, `pop(i)`, `insert(i, x)`, `remove(x)`, `extend(iter)`, `clear()`
+- **Dictメソッド**: `keys()`, `values()`, `get(k)`, `get(k, default)`, `pop(k)`, `update(other)`
+
+### 追加 - 文字列メソッド拡張
+
+- **置換**: `.replace(old, new)`
+- **前後判定**: `.startswith()`, `.endswith()`
+- **検索**: `.find()`, `.rfind()`, `.index()`, `.count()`
+- **文字種判定**: `.isdigit()`, `.isalpha()`, `.isalnum()`
+
+### 追加 - 組み込み関数
+
+- **ユーザー入力**: `input()`, `input(prompt)`
+- **四捨五入**: `round(x)`, `round(x, n)`
+- **文字変換**: `chr(n)`, `ord(c)`
+- **数値フォーマット**: `bin(x)`, `hex(x)`, `oct(x)`
+
+### 追加 - スライス拡張
+
+- **ステップスライス**: `arr[::2]` → `.iter().step_by(2).cloned().collect()`
+- **逆順スライス**: `arr[::-1]` → `.iter().rev().cloned().collect()`
+- **範囲+ステップ**: `arr[1:10:2]`
+
+### 追加 - Optional/None 深い対応
+
+- **Union型パース**: `str | None` → `Option<String>`
+- **Orパターン**: `x or default` → `x.unwrap_or(default)`
+- **三項演算子+None**: `x if x is not None else y` → `if x.is_some() { x.unwrap() } else { y }`
+- **自動Someラップ**: Optional型への非None値代入時に自動的に `Some()` でラップ
+
+### 追加 - 例外処理強化
+
+- **複数例外型**: `except (ValueError, TypeError):`
+- **例外変数**: `except ValueError as e:`
+- **finallyブロック**: `try/except/finally`
+
+### 変更
+
+- **Python構文カバレッジ**: **68%** (75機能サポート)
+
+### テスト
+
+- **リグレッションテスト**: 62/62 パス (100%)
+- **新規テスト**: v1.5.0 システムテスト 7件追加
+  - `v1_5_set_test.py`, `v1_5_list_methods_test.py`, `v1_5_dict_methods_test.py`
+  - `v1_5_string_methods_test.py`, `v1_5_builtins_test.py`, `v1_5_slice_test.py`
+  - `v1_5_optional_test.py`
+
+---
+
 ## [1.4.0] - 2026-01-04 - 外部ライブラリ機能強化
 
 ### 追加 - 外部ライブラリ

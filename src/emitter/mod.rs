@@ -594,6 +594,7 @@ use pyo3::types::PyList;
             IrNode::TryBlock {
                 try_body,
                 except_body,
+                finally_body,
             } => {
                 // Use std::panic::catch_unwind to catch panics (like division by zero)
                 // and fall back to except_body
@@ -652,6 +653,16 @@ use pyo3::types::PyList;
                 self.indent -= 2;
                 result.push_str(&format!("{indent}    }}\n"));
                 result.push_str(&format!("{indent}}}\n"));
+
+                // V1.5.0: Emit finally block after the match
+                if let Some(finally_nodes) = finally_body {
+                    result.push_str(&format!("{indent}// finally block\n"));
+                    for node in finally_nodes {
+                        result.push_str(&self.emit_node(node));
+                        result.push('\n');
+                    }
+                }
+
                 result
             }
             IrNode::ImplBlock {
@@ -1131,6 +1142,31 @@ use pyo3::types::PyList;
                     }
                 }
             }
+            // V1.5.0: Set literal
+            IrExpr::Set {
+                elem_type,
+                elements,
+            } => {
+                if elements.is_empty() {
+                    "std::collections::HashSet::new()".to_string()
+                } else {
+                    let elems: Vec<_> = elements
+                        .iter()
+                        .map(|e| {
+                            let mut s = self.emit_expr_no_outer_parens(e);
+                            // For String type, add .to_string() to literals
+                            if matches!(elem_type, Type::String)
+                                && s.starts_with('"')
+                                && !s.contains(".to_string()")
+                            {
+                                s = format!("{s}.to_string()");
+                            }
+                            s
+                        })
+                        .collect();
+                    format!("std::collections::HashSet::from([{}])", elems.join(", "))
+                }
+            }
             IrExpr::FString { parts, values } => {
                 // Generate format string: "{:?}{:?}{:?}" from parts
                 // Use {:?} (Debug) instead of {} (Display) to support Vec and other types
@@ -1378,10 +1414,56 @@ use pyo3::types::PyList;
                 }
                 format!("{}[{}]", self.emit_expr(target), self.emit_expr(index))
             }
-            IrExpr::Slice { target, start, end } => {
-                // Handle Python-style slices: [:n], [n:], [s:e], [:]
+            IrExpr::Slice {
+                target,
+                start,
+                end,
+                step,
+            } => {
+                // Handle Python-style slices: [:n], [n:], [s:e], [:], [::2], [::-1], [1:8:2]
                 // Python slices never panic on out-of-bounds, they clamp to valid range
                 let target_str = self.emit_expr(target);
+
+                // V1.5.0: Handle step slices
+                if let Some(step_expr) = step {
+                    let step_val = self.emit_expr(step_expr);
+
+                    // Check if step is -1 (reverse) - could be IntLit(-1) or UnaryOp(Neg, IntLit(1))
+                    let is_reverse = matches!(step_expr.as_ref(), IrExpr::IntLit(-1))
+                        || matches!(step_expr.as_ref(),
+                            IrExpr::UnaryOp { op: IrUnaryOp::Neg, operand }
+                            if matches!(operand.as_ref(), IrExpr::IntLit(1)));
+
+                    if is_reverse {
+                        // [::-1] -> .iter().rev().cloned().collect()
+                        return match (start, end) {
+                            (None, None) => {
+                                format!("{target_str}.iter().rev().cloned().collect::<Vec<_>>()")
+                            }
+                            (Some(s), None) => {
+                                // [n::-1] is Python's reverse from index n down to 0
+                                format!("({{ let v = &{target_str}; let s = ({}).min(v.len() as i64 - 1).max(0) as usize; v[..=s].iter().rev().cloned().collect::<Vec<_>>() }})", self.emit_expr(s))
+                            }
+                            (None, Some(e)) => {
+                                // [:n:-1] - reverse ending at index n (exclusive)
+                                format!("({{ let v = &{target_str}; let e = ({}).max(0) as usize; v[e..].iter().rev().cloned().collect::<Vec<_>>() }})", self.emit_expr(e))
+                            }
+                            (Some(s), Some(e)) => {
+                                format!("({{ let v = &{target_str}; let s = ({}).max(0) as usize; let e = ({}).min(v.len() as i64).max(0) as usize; v[s.min(e)..e].iter().rev().cloned().collect::<Vec<_>>() }})", self.emit_expr(s), self.emit_expr(e))
+                            }
+                        };
+                    }
+
+                    // Positive step: [::n] -> .iter().step_by(n).cloned().collect()
+                    return match (start, end) {
+                        (None, None) => format!("{target_str}.iter().step_by({step_val} as usize).cloned().collect::<Vec<_>>()"),
+                        (Some(s), None) => format!("({{ let v = &{target_str}; let s = ({}).max(0) as usize; v[s..].iter().step_by({step_val} as usize).cloned().collect::<Vec<_>>() }})", self.emit_expr(s)),
+                        (None, Some(e)) => format!("({{ let v = &{target_str}; let e = ({}).min(v.len() as i64).max(0) as usize; v[..e].iter().step_by({step_val} as usize).cloned().collect::<Vec<_>>() }})", self.emit_expr(e)),
+                        (Some(s), Some(e)) => format!("({{ let v = &{target_str}; let s = ({}).max(0) as usize; let e = ({}).min(v.len() as i64).max(0) as usize; v[s.min(e)..e].iter().step_by({step_val} as usize).cloned().collect::<Vec<_>>() }})", self.emit_expr(s), self.emit_expr(e)),
+                    };
+                }
+
+                // Original slice handling (no step)
                 match (start, end) {
                     (None, Some(e)) => {
                         // [:n] -> [..(n as usize).min(len)].to_vec()
@@ -1453,18 +1535,218 @@ use pyo3::types::PyList;
                     } else if method == "copy" {
                         // Python list.copy() -> Rust .to_vec()
                         format!("{}.to_vec()", self.emit_expr_internal(target))
+                    } else if method == "collect_hashset" {
+                        // V1.5.0: set() constructor -> .collect::<HashSet<_>>()
+                        format!(
+                            "{}.collect::<std::collections::HashSet<_>>()",
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "pop" {
+                        // V1.5.0: Python list.pop() -> Rust list.pop().unwrap()
+                        format!("{}.pop().unwrap()", self.emit_expr_internal(target))
+                    } else if method == "clear" {
+                        // V1.5.0: Python list.clear() -> Rust list.clear()
+                        format!("{}.clear()", self.emit_expr_internal(target))
+                    // V1.5.0: String is* methods (no args)
+                    } else if method == "isdigit" {
+                        format!(
+                            "!{}.is_empty() && {}.chars().all(|c| c.is_ascii_digit())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "isalpha" {
+                        format!(
+                            "!{}.is_empty() && {}.chars().all(|c| c.is_alphabetic())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "isalnum" {
+                        format!(
+                            "!{}.is_empty() && {}.chars().all(|c| c.is_alphanumeric())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "isupper" {
+                        format!(
+                            "{}.chars().any(|c| c.is_alphabetic()) && {}.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "islower" {
+                        format!(
+                            "{}.chars().any(|c| c.is_alphabetic()) && {}.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_lowercase())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
                     } else {
                         format!("{}.{}()", self.emit_expr_internal(target), method)
                     }
                 } else {
-                    let args_str: Vec<_> =
-                        args.iter().map(|a| self.emit_expr_internal(a)).collect();
-                    format!(
-                        "{}.{}({})",
-                        self.emit_expr_internal(target),
-                        method,
-                        args_str.join(", ")
-                    )
+                    // V1.5.0: Set method translations
+                    if method == "add" {
+                        // Python set.add(x) -> Rust set.insert(x)
+                        let args_str: Vec<_> =
+                            args.iter().map(|a| self.emit_expr_internal(a)).collect();
+                        format!(
+                            "{}.insert({})",
+                            self.emit_expr_internal(target),
+                            args_str.join(", ")
+                        )
+                    } else if method == "discard" {
+                        // Python set.discard(x) -> Rust set.remove(&x)
+                        // Note: set.remove is also &x, but list.remove is handled differently
+                        // in semantic analysis (via try_handle_special_method)
+                        let arg = &args[0];
+                        format!(
+                            "{}.remove(&{})",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(arg)
+                        )
+                    } else if method == "pop" && args.len() == 1 {
+                        // Python list.pop(i) -> Rust list.remove(i as usize)
+                        let idx = &args[0];
+                        format!(
+                            "{}.remove({} as usize)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(idx)
+                        )
+                    // Note: list.insert is handled in semantic analysis to distinguish from dict.insert
+                    } else if method == "extend" {
+                        // Python list.extend(iter) -> Rust list.extend(iter)
+                        let iter = &args[0];
+                        format!(
+                            "{}.extend({})",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(iter)
+                        )
+                    // V1.5.0: String method translations
+                    } else if method == "startswith" {
+                        // Python s.startswith("x") -> Rust s.starts_with("x")
+                        let arg = &args[0];
+                        format!(
+                            "{}.starts_with(&{})",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(arg)
+                        )
+                    } else if method == "endswith" {
+                        // Python s.endswith("x") -> Rust s.ends_with("x")
+                        let arg = &args[0];
+                        format!(
+                            "{}.ends_with(&{})",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(arg)
+                        )
+                    } else if method == "replace" && args.len() >= 2 {
+                        // Python s.replace(old, new) -> Rust s.replace(&old, &new)
+                        let old = &args[0];
+                        let new = &args[1];
+                        format!(
+                            "{}.replace(&{}, &{})",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(old),
+                            self.emit_expr_internal(new)
+                        )
+                    } else if method == "find" && args.len() == 1 {
+                        // Python s.find(sub) -> Rust s.find(&sub).map(|i| i as i64).unwrap_or(-1)
+                        let sub = &args[0];
+                        format!(
+                            "{}.find(&{}).map(|i| i as i64).unwrap_or(-1i64)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(sub)
+                        )
+                    } else if method == "rfind" && args.len() == 1 {
+                        // Python s.rfind(sub) -> Rust s.rfind(&sub).map(|i| i as i64).unwrap_or(-1)
+                        let sub = &args[0];
+                        format!(
+                            "{}.rfind(&{}).map(|i| i as i64).unwrap_or(-1i64)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(sub)
+                        )
+                    } else if method == "isdigit" {
+                        // Python s.isdigit() -> Rust s.chars().all(|c| c.is_ascii_digit())
+                        format!(
+                            "!{}.is_empty() && {}.chars().all(|c| c.is_ascii_digit())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "isalpha" {
+                        // Python s.isalpha() -> Rust s.chars().all(|c| c.is_alphabetic())
+                        format!(
+                            "!{}.is_empty() && {}.chars().all(|c| c.is_alphabetic())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "isalnum" {
+                        // Python s.isalnum() -> Rust s.chars().all(|c| c.is_alphanumeric())
+                        format!(
+                            "!{}.is_empty() && {}.chars().all(|c| c.is_alphanumeric())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "isupper" {
+                        // Python s.isupper() -> Rust s.chars().any(|c| c.is_alphabetic()) && s.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())
+                        format!(
+                            "{}.chars().any(|c| c.is_alphabetic()) && {}.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "islower" {
+                        // Python s.islower() -> Rust similar logic
+                        format!(
+                            "{}.chars().any(|c| c.is_alphabetic()) && {}.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_lowercase())",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(target)
+                        )
+                    } else if method == "count" && args.len() == 1 {
+                        // Python s.count(sub) -> Rust s.matches(&sub).count() as i64
+                        let sub = &args[0];
+                        format!(
+                            "{}.matches(&{}).count() as i64",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(sub)
+                        )
+                    } else if method == "zfill" && args.len() == 1 {
+                        // Python s.zfill(width) -> format!("{:0>width$}", s, width=width)
+                        let width = &args[0];
+                        format!(
+                            "format!(\"{{:0>width$}}\", {}, width = {} as usize)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(width)
+                        )
+                    } else if method == "ljust" && args.len() >= 1 {
+                        // Python s.ljust(width) -> format!("{:<width$}", s)
+                        let width = &args[0];
+                        format!(
+                            "format!(\"{{:<width$}}\", {}, width = {} as usize)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(width)
+                        )
+                    } else if method == "rjust" && args.len() >= 1 {
+                        // Python s.rjust(width) -> format!("{:>width$}", s)
+                        let width = &args[0];
+                        format!(
+                            "format!(\"{{:>width$}}\", {}, width = {} as usize)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(width)
+                        )
+                    } else if method == "center" && args.len() >= 1 {
+                        // Python s.center(width) -> format!("{:^width$}", s)
+                        let width = &args[0];
+                        format!(
+                            "format!(\"{{:^width$}}\", {}, width = {} as usize)",
+                            self.emit_expr_internal(target),
+                            self.emit_expr_internal(width)
+                        )
+                    } else {
+                        let args_str: Vec<_> =
+                            args.iter().map(|a| self.emit_expr_internal(a)).collect();
+                        format!(
+                            "{}.{}({})",
+                            self.emit_expr_internal(target),
+                            method,
+                            args_str.join(", ")
+                        )
+                    }
                 }
             }
             IrExpr::PyO3MethodCall {

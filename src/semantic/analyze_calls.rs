@@ -543,6 +543,117 @@ impl SemanticAnalyzer {
                     }
                 }
             }
+            // V1.5.0: dict.keys() -> dict.keys().cloned()
+            "keys" if args.is_empty() => match _target_ty {
+                Type::Dict(_, _) => {
+                    let keys_call = IrExpr::MethodCall {
+                        target: Box::new(target_ir.clone()),
+                        method: "keys".to_string(),
+                        args: vec![],
+                    };
+                    Ok(Some(IrExpr::MethodCall {
+                        target: Box::new(keys_call),
+                        method: "cloned".to_string(),
+                        args: vec![],
+                    }))
+                }
+                _ => Ok(None),
+            },
+            // V1.5.0: dict.values() -> dict.values().cloned()
+            "values" if args.is_empty() => match _target_ty {
+                Type::Dict(_, _) => {
+                    let values_call = IrExpr::MethodCall {
+                        target: Box::new(target_ir.clone()),
+                        method: "values".to_string(),
+                        args: vec![],
+                    };
+                    Ok(Some(IrExpr::MethodCall {
+                        target: Box::new(values_call),
+                        method: "cloned".to_string(),
+                        args: vec![],
+                    }))
+                }
+                _ => Ok(None),
+            },
+            // V1.5.0: dict.get(k) -> dict.get(&k).cloned().unwrap()
+            // V1.5.0: dict.get(k, default) -> dict.get(&k).cloned().unwrap_or(default)
+            "get" if !args.is_empty() => {
+                match _target_ty {
+                    Type::Dict(_, _) => {
+                        let key = self.analyze_expr(&args[0])?;
+                        let get_call = IrExpr::MethodCall {
+                            target: Box::new(target_ir.clone()),
+                            method: "get".to_string(),
+                            args: vec![IrExpr::Reference {
+                                target: Box::new(key),
+                            }],
+                        };
+                        let cloned_call = IrExpr::MethodCall {
+                            target: Box::new(get_call),
+                            method: "cloned".to_string(),
+                            args: vec![],
+                        };
+                        if args.len() >= 2 {
+                            // get(k, default) -> get(&k).cloned().unwrap_or(default)
+                            let mut default = self.analyze_expr(&args[1])?;
+                            // Convert string literals to String for type compatibility
+                            if matches!(default, IrExpr::StringLit(_)) {
+                                default = IrExpr::MethodCall {
+                                    target: Box::new(default),
+                                    method: "to_string".to_string(),
+                                    args: vec![],
+                                };
+                            }
+                            Ok(Some(IrExpr::MethodCall {
+                                target: Box::new(cloned_call),
+                                method: "unwrap_or".to_string(),
+                                args: vec![default],
+                            }))
+                        } else {
+                            // get(k) -> get(&k).cloned().unwrap()
+                            Ok(Some(IrExpr::MethodCall {
+                                target: Box::new(cloned_call),
+                                method: "unwrap".to_string(),
+                                args: vec![],
+                            }))
+                        }
+                    }
+                    _ => Ok(None),
+                }
+            }
+            // V1.5.0: dict.pop(k) -> dict.remove(&k).unwrap()
+            "pop" if args.len() == 1 => {
+                match _target_ty {
+                    Type::Dict(_, _) => {
+                        let key = self.analyze_expr(&args[0])?;
+                        let remove_call = IrExpr::MethodCall {
+                            target: Box::new(target_ir.clone()),
+                            method: "remove".to_string(),
+                            args: vec![IrExpr::Reference {
+                                target: Box::new(key),
+                            }],
+                        };
+                        Ok(Some(IrExpr::MethodCall {
+                            target: Box::new(remove_call),
+                            method: "unwrap".to_string(),
+                            args: vec![],
+                        }))
+                    }
+                    _ => Ok(None), // list.pop is handled by emitter
+                }
+            }
+            // V1.5.0: dict.update(other) -> dict.extend(other)
+            "update" if args.len() == 1 => match _target_ty {
+                Type::Dict(_, _) => {
+                    let other = self.analyze_expr(&args[0])?;
+                    Ok(Some(IrExpr::MethodCall {
+                        target: Box::new(target_ir.clone()),
+                        method: "extend".to_string(),
+                        args: vec![other],
+                    }))
+                }
+                _ => Ok(None),
+            },
             "join" if args.len() == 1 => {
                 // "sep".join(iterable) -> iterable.iter().map(|x| x.to_string()).collect().join(&sep)
                 let iterable_ast = &args[0];
@@ -658,6 +769,87 @@ impl SemanticAnalyzer {
                     _ => Ok(None),
                 }
             }
+            // V1.5.0: list.remove(x) -> remove by value (find position first)
+            // list.remove(x) -> { let pos = list.iter().position(|e| *e == x).unwrap(); list.remove(pos); }
+            // For now, generate: list.retain(|e| *e != x) (removes ALL occurrences - different semantics)
+            // Better: use RawCode for inline block
+            "remove" if args.len() == 1 => {
+                // Check if this is a list type (including Ref<List>)
+                let is_list = matches!(_target_ty, Type::List(_))
+                    || matches!(_target_ty, Type::Ref(inner) if matches!(inner.as_ref(), Type::List(_)));
+
+                if is_list {
+                    let search_val = self.analyze_expr(&args[0])?;
+                    // Python list.remove(x) removes FIRST occurrence only
+                    // Rust: let pos = list.iter().position(|e| *e == x).unwrap(); list.remove(pos);
+                    // Since this is a statement expression, we generate:
+                    // list.remove(list.iter().position(|e| *e == val).unwrap())
+                    let iter_call = IrExpr::MethodCall {
+                        target: Box::new(target_ir.clone()),
+                        method: "iter".to_string(),
+                        args: vec![],
+                    };
+                    let position_call = IrExpr::MethodCall {
+                        target: Box::new(iter_call),
+                        method: "position".to_string(),
+                        args: vec![IrExpr::RawCode(format!(
+                            "|e| *e == {}",
+                            self.emit_simple_expr(&search_val)
+                        ))],
+                    };
+                    let unwrap_call = IrExpr::MethodCall {
+                        target: Box::new(position_call),
+                        method: "unwrap".to_string(),
+                        args: vec![],
+                    };
+                    Ok(Some(IrExpr::MethodCall {
+                        target: Box::new(target_ir.clone()),
+                        method: "remove".to_string(),
+                        args: vec![unwrap_call],
+                    }))
+                } else {
+                    // Check if this is a set type
+                    let is_set = matches!(_target_ty, Type::Set(_))
+                        || matches!(_target_ty, Type::Ref(inner) if matches!(inner.as_ref(), Type::Set(_)));
+
+                    if is_set {
+                        // Python set.remove(x) -> Rust set.remove(&x)
+                        let search_val = self.analyze_expr(&args[0])?;
+                        Ok(Some(IrExpr::MethodCall {
+                            target: Box::new(target_ir.clone()),
+                            method: "remove".to_string(),
+                            args: vec![IrExpr::Reference {
+                                target: Box::new(search_val),
+                            }],
+                        }))
+                    } else {
+                        Ok(None) // Not a list or set, fall through to default handling
+                    }
+                }
+            }
+            // V1.5.0: list.insert(i, x) -> list.insert(i as usize, x)
+            // Only apply to list types, not dict
+            "insert" if args.len() == 2 => {
+                let is_list = matches!(_target_ty, Type::List(_))
+                    || matches!(_target_ty, Type::Ref(inner) if matches!(inner.as_ref(), Type::List(_)));
+
+                if is_list {
+                    let idx = self.analyze_expr(&args[0])?;
+                    let val = self.analyze_expr(&args[1])?;
+                    // Wrap index in cast to usize
+                    let idx_casted = IrExpr::Cast {
+                        target: Box::new(idx),
+                        ty: "usize".to_string(),
+                    };
+                    Ok(Some(IrExpr::MethodCall {
+                        target: Box::new(target_ir.clone()),
+                        method: "insert".to_string(),
+                        args: vec![idx_casted, val],
+                    }))
+                } else {
+                    Ok(None) // dict.insert handled by default
+                }
+            }
             _ => Ok(None), // Not a special method, use default handling
         }
     }
@@ -682,6 +874,7 @@ impl SemanticAnalyzer {
             IrExpr::IntLit(n) => format!("{n}i64"),
             IrExpr::FloatLit(f) => format!("{f}"),
             IrExpr::BoolLit(b) => b.to_string(),
+            IrExpr::StringLit(s) => format!("\"{s}\".to_string()"),
             IrExpr::MethodCall {
                 target,
                 method,
@@ -810,7 +1003,18 @@ impl SemanticAnalyzer {
                 }))
             }
             ("len", 1) => {
+                let arg_ty = self.infer_type(&args[0]);
                 let arg = self.analyze_expr(&args[0])?;
+                // V1.5.0: If arg is Optional, unwrap first
+                let arg = if matches!(arg_ty, Type::Optional(_)) {
+                    IrExpr::MethodCall {
+                        target: Box::new(arg),
+                        method: "unwrap".to_string(),
+                        args: vec![],
+                    }
+                } else {
+                    arg
+                };
                 Ok(Some(IrExpr::MethodCall {
                     target: Box::new(arg),
                     method: "len".to_string(),

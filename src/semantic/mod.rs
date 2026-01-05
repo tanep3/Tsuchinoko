@@ -265,7 +265,8 @@ impl SemanticAnalyzer {
 
         match stmt {
             // Check for reassignment (x = ... where x already exists)
-            Stmt::Assign { target, .. } => {
+            // V1.5.0: Also check if value contains mutating method calls
+            Stmt::Assign { target, value, .. } => {
                 let exists_in_scope = self.scope.lookup(target).is_some();
                 let seen_in_current_pass = seen_vars.contains(target);
 
@@ -273,6 +274,10 @@ impl SemanticAnalyzer {
                     reassigned_vars.insert(target.clone());
                 }
                 seen_vars.insert(target.clone());
+
+                // V1.5.0: Check for mutating method calls in the value expression
+                // e.g., val = d.pop(2) - d needs to be mutable
+                self.collect_expr_mutations(value, mutated_vars);
             }
             // Check for index assignment (x[i] = ...)
             Stmt::IndexAssign { target, .. } => {
@@ -287,6 +292,8 @@ impl SemanticAnalyzer {
                         if matches!(
                             attr.as_str(),
                             "append" | "extend" | "push" | "pop" | "insert" | "remove" | "clear"
+                                | "add" | "discard"  // V1.5.0: Set methods
+                                | "update" // V1.5.0: Dict methods
                         ) {
                             mutated_vars.insert(name);
                         }
@@ -350,6 +357,99 @@ impl SemanticAnalyzer {
                     // Always add to seen_vars for future reference
                     seen_vars.insert(target.clone());
                 }
+            }
+            // V1.5.0: Recurse into TryExcept bodies to detect mutations
+            Stmt::TryExcept {
+                try_body,
+                except_clauses,
+                finally_body,
+            } => {
+                for s in try_body {
+                    self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
+                }
+                for clause in except_clauses {
+                    for s in &clause.body {
+                        self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
+                    }
+                }
+                if let Some(fb) = finally_body {
+                    for s in fb {
+                        self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// V1.5.0: Recursively check expression for mutating method calls
+    /// Used to detect mutations in assignment values, e.g., val = d.pop(2)
+    fn collect_expr_mutations(
+        &self,
+        expr: &Expr,
+        mutated_vars: &mut std::collections::HashSet<String>,
+    ) {
+        fn extract_base_var(expr: &Expr) -> Option<String> {
+            match expr {
+                Expr::Ident(name) => Some(name.clone()),
+                Expr::Index { target, .. } => extract_base_var(target),
+                _ => None,
+            }
+        }
+
+        match expr {
+            // d.pop(2) - check if method is mutating
+            Expr::Call { func, args, .. } => {
+                if let Expr::Attribute { value, attr } = func.as_ref() {
+                    if let Some(name) = extract_base_var(value.as_ref()) {
+                        if matches!(
+                            attr.as_str(),
+                            "append"
+                                | "extend"
+                                | "push"
+                                | "pop"
+                                | "insert"
+                                | "remove"
+                                | "clear"
+                                | "add"
+                                | "discard"
+                                | "update"
+                        ) {
+                            mutated_vars.insert(name);
+                        }
+                    }
+                    // Recurse into target
+                    self.collect_expr_mutations(value, mutated_vars);
+                }
+                // Recurse into func and args
+                self.collect_expr_mutations(func, mutated_vars);
+                for arg in args {
+                    self.collect_expr_mutations(arg, mutated_vars);
+                }
+            }
+            // Recurse into sub-expressions
+            Expr::BinOp { left, right, .. } => {
+                self.collect_expr_mutations(left, mutated_vars);
+                self.collect_expr_mutations(right, mutated_vars);
+            }
+            Expr::UnaryOp { operand, .. } => {
+                self.collect_expr_mutations(operand, mutated_vars);
+            }
+            Expr::Tuple(elems) | Expr::List(elems) | Expr::Set(elems) => {
+                for e in elems {
+                    self.collect_expr_mutations(e, mutated_vars);
+                }
+            }
+            Expr::Dict(pairs) => {
+                for (k, v) in pairs {
+                    self.collect_expr_mutations(k, mutated_vars);
+                    self.collect_expr_mutations(v, mutated_vars);
+                }
+            }
+            Expr::IfExp { test, body, orelse } => {
+                self.collect_expr_mutations(test, mutated_vars);
+                self.collect_expr_mutations(body, mutated_vars);
+                self.collect_expr_mutations(orelse, mutated_vars);
             }
             _ => {}
         }
@@ -442,6 +542,10 @@ impl SemanticAnalyzer {
                 &mut seen_vars,
             );
         }
+
+        // V1.5.0: Add collected mutations to mutable_vars for this scope
+        self.mutable_vars.extend(reassigned_vars.clone());
+        self.mutable_vars.extend(mutated_vars.clone());
 
         let mut ir_nodes = Vec::new();
 
@@ -646,6 +750,28 @@ impl SemanticAnalyzer {
                     ir_value
                 };
 
+                // V1.5.0: Wrap non-None values in Some() when assigning to Optional type
+                let ir_value = if matches!(ty, Type::Optional(_))
+                    && !matches!(value, Expr::NoneLiteral)
+                    && !matches!(expr_ty, Type::Optional(_))
+                {
+                    // If value is StringLit, add .to_string()
+                    let ir_value = if matches!(ir_value, IrExpr::StringLit(_)) {
+                        IrExpr::MethodCall {
+                            target: Box::new(ir_value),
+                            method: "to_string".to_string(),
+                            args: vec![],
+                        }
+                    } else {
+                        ir_value
+                    };
+                    IrExpr::Call {
+                        func: Box::new(IrExpr::Var("Some".to_string())),
+                        args: vec![ir_value],
+                    }
+                } else {
+                    ir_value
+                };
                 if is_reassign {
                     Ok(IrNode::Assign {
                         target: target.clone(),
