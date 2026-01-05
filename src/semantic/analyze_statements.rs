@@ -52,10 +52,11 @@ impl SemanticAnalyzer {
                 // In Python, lists are always mutable. In Rust, we should make them mutable by default
                 // to allow modification (like push, index assign).
                 // Structs should also be mutable to allow &mut self method calls.
-                // Dicts need to be mutable for insert().
-                // Also respect re-assignment.
-                let should_be_mutable =
-                    is_reassign || matches!(ty, Type::List(_) | Type::Struct(_) | Type::Dict(_, _));
+                // Dicts need to be mutable for insert(). Sets for add()/remove().
+                // V1.5.0: Also check mutable_vars (collected from pop/update/remove/etc. calls)
+                let should_be_mutable = is_reassign
+                    || matches!(ty, Type::List(_) | Type::Struct(_) | Type::Dict(_, _) | Type::Set(_))
+                    || self.mutable_vars.contains(target);
 
                 if !is_reassign {
                     self.scope.define(target, ty.clone(), false);

@@ -1,6 +1,4 @@
-# v1.5.0 Phase 2-C Tests - Dict Methods
-# Tests for dict keys, values, get, pop, update
-# Note: pop has mutability tracking issue, temporarily skipped
+# v1.5.0 Phase 2-C Tests - Dict Methods (Full)
 
 def test_dict_keys() -> int:
     """DCT-001: .keys() - returns iterable of keys"""
@@ -30,11 +28,11 @@ def test_dict_get_default() -> str:
     return val  # Expected: "default"
 
 
-# def test_dict_pop() -> str:
-#     """DCT-005: .pop(k) - requires mutable tracking fix"""
-#     d: dict[int, str] = {1: "a", 2: "b", 3: "c"}
-#     val: str = d.pop(2)
-#     return val  # Expected: "b"
+def test_dict_pop() -> str:
+    """DCT-005: .pop(k) - removes and returns value"""
+    d: dict[int, str] = {1: "a", 2: "b", 3: "c"}
+    val: str = d.pop(2)
+    return val  # Expected: "b"
 
 
 def test_dict_update() -> int:
@@ -49,7 +47,7 @@ def main() -> None:
     print(test_dict_values())      # Expected: 3
     print(test_dict_get())         # Expected: a
     print(test_dict_get_default()) # Expected: default
-    # print(test_dict_pop())       # Expected: b
+    print(test_dict_pop())         # Expected: b
     print(test_dict_update())      # Expected: 4
 
 
