@@ -8,6 +8,7 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Basic types**: `int`, `float`, `str`, `bool`, `None`
 - **Collection types**: `list[T]`, `dict[K, V]`, `tuple[...]`
 - **Optional types**: `Optional[T]`, `T | None`
+- **Optional patterns**: `x or default` → `unwrap_or`, ternary with None check (V1.5.0)
 - **Arithmetic operators**: `+`, `-`, `*`, `/`, `//`, `%`, `**`, `@` (V1.3.0)
 - **Comparison operators**: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - **Logical operators**: `and`, `or`, `not`
@@ -44,12 +45,17 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Dict comprehensions** (`{k: v for k, v in items}`) (V1.3.0)
 - **Dictionary literals** and operations
 - **Tuple literals** and unpacking
+- **Set literals** (`{1, 2, 3}` → `HashSet`) (V1.5.0)
 - **Struct definitions** (via class syntax)
 - **Negative indexing** (`nums[-1]`)
 - **Slice notation** (`[:3]`, `[-3:]`, `[1:n-1]`)
+- **Step slicing** (`[::2]`, `[::-1]`) (V1.5.0)
 - **Index swap** (`a[i], a[j] = a[j], a[i]` → `a.swap()`)
 - **List copy** (`l.copy()` → `l.to_vec()`) (V1.2.0)
 - **Multi-assignment** (`a, b, c = 1, 2, 3`) (V1.3.0)
+- **List methods**: `pop`, `insert`, `remove`, `extend`, `clear` (V1.5.0)
+- **Dict methods**: `keys`, `values`, `get`, `pop`, `update` (V1.5.0)
+- **Set methods**: `add`, `remove`, `discard`, `union`, `intersection` (V1.5.0)
 
 ## Classes & Objects
 
@@ -99,6 +105,10 @@ Tsuchinoko now supports persisting Python objects across bridge calls. This allo
 - `all()`, `any()` - boolean check (V1.3.0)
 - `map()`, `filter()` - functional transformation (V1.3.0)
 - `assert` - assertion statement (V1.3.0)
+- `input()` - user input with optional prompt (V1.5.0)
+- `round()` - rounding with precision (V1.5.0)
+- `chr()`, `ord()` - character/code point conversion (V1.5.0)
+- `bin()`, `hex()`, `oct()` - number format conversion (V1.5.0)
 
 ## Math Module (V1.3.0 / V1.4.0)
 
@@ -111,10 +121,15 @@ Tsuchinoko now supports persisting Python objects across bridge calls. This allo
 - **F-strings** (`f"Hello {name}"`)
   - Debug format `"{x=}"` / `"{:?}"` supported (V1.2.0)
 - **String methods**: `.upper()`, `.lower()`, `.strip()`, `.split()`, `.join()`, etc.
+- **String methods (V1.5.0)**: `.replace()`, `.startswith()`, `.endswith()`, `.find()`, `.rfind()`, `.index()`, `.count()`
+- **String predicates (V1.5.0)**: `.isdigit()`, `.isalpha()`, `.isalnum()`
 
 ## Error Handling
 
 - **try/except** blocks (converted to `catch_unwind`)
+- **try/except with multiple exception types** (`except (ValueError, TypeError):`) (V1.5.0)
+- **except with variable** (`except ValueError as e:`) (V1.5.0)
+- **try/except/finally** blocks (V1.5.0)
 - **raise** statements (converted to `panic!`)
 - **ValueError**, **TypeError** (converted to `panic!`)
 

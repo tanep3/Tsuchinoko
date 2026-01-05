@@ -127,18 +127,6 @@ For detailed feature lists, see:
 
 ## Future Roadmap
 
-- [x] Named arguments support (`func(name="value")`)
-- [x] Default argument values (`def func(x=10)`)
-- [x] Exception handling (`try-except` → `catch_unwind`)
-- [x] Variable-length arguments (`*args` via spread operator)
-- [x] NumPy/Pandas support via Resident Python Worker
-- [x] Bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`) (V1.3.0)
-- [x] Built-in functions (`enumerate`, `zip`, `sorted`, `sum`, `all`, `any`, `map`, `filter`) (V1.3.0)
-- [x] Dict comprehensions (`{k: v for k, v in items}`) (V1.3.0)
-- [x] `assert` statement (V1.3.0)
-- [x] `from module import func` syntax (V1.4.0)
-- [x] `math.pi`, `math.e`, `math.tau`, `math.inf`, `math.nan` constants (V1.4.0)
-- [x] Automatic external library detection (V1.4.0)
 - [ ] Full `**kwargs` support
 - [ ] Full class inheritance support
 - [ ] More standard library mappings

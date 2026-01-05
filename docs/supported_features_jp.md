@@ -8,6 +8,7 @@ Tsuchinokoトランスパイラが現在サポートしているPython機能の�
 - **基本型**: `int`, `float`, `str`, `bool`, `None`
 - **コレクション型**: `list[T]`, `dict[K, V]`, `tuple[...]`
 - **Optional型**: `Optional[T]`, `T | None`
+- **Optionalパターン**: `x or default` → `unwrap_or`, 三項演算子+Noneチェック (V1.5.0)
 - **算術演算子**: `+`, `-`, `*`, `/`, `//`, `%`, `**`, `@` (V1.3.0)
 - **比較演算子**: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - **論理演算子**: `and`, `or`, `not`
@@ -44,12 +45,17 @@ Tsuchinokoトランスパイラが現在サポートしているPython機能の�
 - **辞書内包表記** (`{k: v for k, v in items}`) (V1.3.0)
 - **辞書リテラル** と操作
 - **タプルリテラル** とアンパック
+- **Setリテラル** (`{1, 2, 3}` → `HashSet`) (V1.5.0)
 - **構造体定義** (クラス構文経由)
 - **負のインデックス** (`nums[-1]`)
 - **スライス記法** (`[:3]`, `[-3:]`, `[1:n-1]`)
+- **ステップスライス** (`[::2]`, `[::-1]`) (V1.5.0)
 - **インデックススワップ** (`a[i], a[j] = a[j], a[i]` → `a.swap()`)
 - **リストのコピー** (`l.copy()` → `l.to_vec()`) (V1.2.0)
 - **多重代入** (`a, b, c = 1, 2, 3`) (V1.3.0)
+- **Listメソッド**: `pop`, `insert`, `remove`, `extend`, `clear` (V1.5.0)
+- **Dictメソッド**: `keys`, `values`, `get`, `pop`, `update` (V1.5.0)
+- **Setメソッド**: `add`, `remove`, `discard`, `union`, `intersection` (V1.5.0)
 
 ## クラス & オブジェクト
 
@@ -99,6 +105,10 @@ Python オブジェクトをブリッジ呼び出しをまたいで保持でき�
 - `all()`, `any()` - 全要素/任意要素の真偽判定 (V1.3.0)
 - `map()`, `filter()` - 関数型イテレータ変換 (V1.3.0)
 - `assert` - アサーション文 (V1.3.0)
+- `input()` - ユーザー入力（プロンプト付き） (V1.5.0)
+- `round()` - 四捨五入（精度指定可） (V1.5.0)
+- `chr()`, `ord()` - 文字・コードポイント変換 (V1.5.0)
+- `bin()`, `hex()`, `oct()` - 数値フォーマット変換 (V1.5.0)
 
 ## Mathモジュール (V1.3.0 / V1.4.0)
 
@@ -111,10 +121,15 @@ Python オブジェクトをブリッジ呼び出しをまたいで保持でき�
 - **F文字列** (`f"Hello {name}"`)
   - デバッグフォーマット `"{x=}"` / `"{:?}"` 対応 (V1.2.0)
 - **文字列メソッド**: `.upper()`, `.lower()`, `.strip()`, `.split()`, `.join()` など
+- **文字列メソッド (V1.5.0)**: `.replace()`, `.startswith()`, `.endswith()`, `.find()`, `.rfind()`, `.index()`, `.count()`
+- **文字列判定 (V1.5.0)**: `.isdigit()`, `.isalpha()`, `.isalnum()`
 
 ## エラー処理
 
 - **try/except** ブロック (`catch_unwind`に変換)
+- **複数例外型** (`except (ValueError, TypeError):`) (V1.5.0)
+- **例外変数** (`except ValueError as e:`) (V1.5.0)
+- **try/except/finally** ブロック (V1.5.0)
 - **raise** 文 (`panic!`に変換)
 - **ValueError**, **TypeError** (`panic!`に変換)
 
