@@ -65,6 +65,7 @@ pub enum IrNode {
         ret: Type,
         body: Vec<IrNode>,
         hoisted_vars: Vec<HoistedVar>,  // 関数スコープにホイストが必要な変数
+        may_raise: bool,                // 例外を発生しうる関数か（Result化が必要）
     },
     /// メソッド宣言 (implブロック内)
     MethodDecl {

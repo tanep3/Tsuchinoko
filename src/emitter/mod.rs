@@ -48,6 +48,10 @@ pub struct RustEmitter {
     current_hoisted_vars: Vec<HoistedVar>,
     /// Variables hoisted in current TryBlock that need unwrap() in else body
     try_hoisted_vars: Vec<String>,
+    /// V1.5.2: Whether TsuchinokoError type is needed (any may_raise=true function)
+    uses_tsuchinoko_error: bool,
+    /// V1.5.2: Whether current function may raise (for Ok() wrapping)
+    current_func_may_raise: bool,
 }
 
 /// Convert camelCase/PascalCase to snake_case
@@ -84,6 +88,8 @@ impl RustEmitter {
             is_inside_resident_func: false,
             current_hoisted_vars: Vec::new(),
             try_hoisted_vars: Vec::new(),
+            uses_tsuchinoko_error: false,
+            current_func_may_raise: false,
         }
     }
 
@@ -127,15 +133,28 @@ impl RustEmitter {
 
         // Only add wrapper at top level
         if is_top_level {
+            // V1.5.2: Prepend TsuchinokoError if needed
+            let error_def = if self.uses_tsuchinoko_error {
+                crate::bridge::tsuchinoko_error::TSUCHINOKO_ERROR_DEFINITION
+            } else {
+                ""
+            };
+            
+            let final_body = if !error_def.is_empty() {
+                format!("{}\n{}", error_def, body)
+            } else {
+                body
+            };
+            
             if self.needs_resident {
                 // py_bridge ランタイムを挿入（常駐プロセス方式）
-                self.emit_resident_wrapped(&body)
+                self.emit_resident_wrapped(&final_body)
             } else if self.uses_pyo3 {
                 // Native で全て対応できたが import があった場合
                 // → PyO3 不要、シンプルな Rust コード
-                body
+                final_body
             } else {
-                body
+                final_body
             }
         } else {
             body
@@ -419,7 +438,8 @@ use pyo3::types::PyList;
                 params,
                 ret,
                 body,
-                hoisted_vars,  // 将来使用
+                hoisted_vars,
+                may_raise,
             } => {
                 // Check if this is the auto-generated top-level function -> "fn main"
                 if name == "__top_level__" {
@@ -476,11 +496,16 @@ use pyo3::types::PyList;
                         String::new()
                     };
                     
+                    // V1.5.2: Set may_raise flag for return statement wrapping
+                    let old_may_raise = self.current_func_may_raise;
+                    self.current_func_may_raise = *may_raise;
+                    
                     let body_str = self.emit_nodes(body);
                     self.indent -= 1;
                     
-                    // Restore previous hoisted vars
+                    // Restore previous hoisted vars and may_raise
                     self.current_hoisted_vars = old_hoisted;
+                    self.current_func_may_raise = old_may_raise;
 
                     let func_needs_resident = self.needs_resident;
 
@@ -530,7 +555,16 @@ use pyo3::types::PyList;
                         final_body_str
                     };
 
-                    let ret_str = effective_ret.to_rust_string();
+                    // V1.5.2: Determine return type string based on may_raise
+                    let ret_str = if *may_raise {
+                        // Mark that TsuchinokoError type is needed
+                        self.uses_tsuchinoko_error = true;
+                        // Result<T, TsuchinokoError> for functions that may raise
+                        let inner_type = effective_ret.to_rust_string();
+                        format!("Result<{}, TsuchinokoError>", inner_type)
+                    } else {
+                        effective_ret.to_rust_string()
+                    };
 
                     if func_needs_resident {
                         params_str.insert(
@@ -622,10 +656,20 @@ use pyo3::types::PyList;
                     indent
                 )
             }
-            IrNode::Return(expr) => match expr {
-                Some(e) => format!("{}return {};", indent, self.emit_expr(e)),
-                None => format!("{indent}return;"),
-            },
+            IrNode::Return(expr) => {
+                // V1.5.2: Wrap in Ok() if current function may raise
+                if self.current_func_may_raise {
+                    match expr {
+                        Some(e) => format!("{}return Ok({});", indent, self.emit_expr(e)),
+                        None => format!("{indent}return Ok(());"),
+                    }
+                } else {
+                    match expr {
+                        Some(e) => format!("{}return {};", indent, self.emit_expr(e)),
+                        None => format!("{indent}return;"),
+                    }
+                }
+            }
             IrNode::TypeAlias { name, ty } => {
                 format!("{}type {} = {};", indent, name, ty.to_rust_string())
             }
@@ -888,21 +932,25 @@ use pyo3::types::PyList;
                 result
             }
             IrNode::Raise { exc_type, message, cause } => {
-                // V1.5.2: Generate panic! with exception info
+                // V1.5.2: Generate Err(TsuchinokoError::new(...))
                 let msg_str = self.emit_expr(message);
                 match cause {
                     Some(cause_expr) => {
-                        // With cause: print cause first, then panic
+                        // With cause: Err(TsuchinokoError::new("Type", "msg", Some(cause)))
                         format!(
-                            "{indent}eprintln!(\"Caused by: {{:?}}\", {});\n{indent}panic!(\"{}: {{}}\", {});",
-                            self.emit_expr(cause_expr),
+                            "{indent}return Err(TsuchinokoError::new(\"{}\", &format!(\"{{}}\", {}), Some({})));",
                             exc_type,
-                            msg_str
+                            msg_str,
+                            self.emit_expr(cause_expr)
                         )
                     }
                     None => {
-                        // Without cause: simple panic
-                        format!("{indent}panic!(\"{}: {{}}\", {});", exc_type, msg_str)
+                        // Without cause: Err(TsuchinokoError::new("Type", "msg", None))
+                        format!(
+                            "{indent}return Err(TsuchinokoError::new(\"{}\", &format!(\"{{}}\", {}), None));",
+                            exc_type,
+                            msg_str
+                        )
                     }
                 }
             }

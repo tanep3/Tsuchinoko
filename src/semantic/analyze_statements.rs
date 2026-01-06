@@ -583,6 +583,10 @@ impl SemanticAnalyzer {
                 // Clear hoisted_var_candidates for this function scope
                 self.hoisted_var_candidates.clear();
                 self.func_base_depth = self.scope.depth();
+                
+                // V1.5.2: Save and reset may_raise flag for this function scope
+                let old_may_raise = self.current_func_may_raise;
+                self.current_func_may_raise = false;
 
                 // Add parameters to scope
                 let mut ir_params = Vec::new();
@@ -609,6 +613,10 @@ impl SemanticAnalyzer {
                     .map(|(name, (ty, _, _))| HoistedVar { name, ty })
                     .collect();
 
+                // V1.5.2: Capture may_raise from this function, then restore parent's flag
+                let func_may_raise = self.current_func_may_raise;
+                self.current_func_may_raise = old_may_raise;
+
                 let ir_name = name.clone();
                 Ok(IrNode::FuncDecl {
                     name: ir_name,
@@ -616,6 +624,7 @@ impl SemanticAnalyzer {
                     ret: ret_type,
                     body: ir_body,
                     hoisted_vars,
+                    may_raise: func_may_raise,
                 })
             }
 
@@ -643,7 +652,8 @@ impl SemanticAnalyzer {
                                 params: vec![],
                                 ret: Type::Unit,
                                 body: ir_body,
-                                hoisted_vars: vec![],  // main 関数用
+                                hoisted_vars: vec![],
+                                may_raise: false,
                             });
                         }
                     }
@@ -973,6 +983,9 @@ impl SemanticAnalyzer {
                 message,
                 cause,
             } => {
+                // V1.5.2: Mark current function as may raise
+                self.current_func_may_raise = true;
+                
                 let msg_ir = self.analyze_expr(message)?;
                 // V1.5.2: Analyze cause expression if present
                 let cause_ir = match cause {
@@ -1114,7 +1127,7 @@ def add(a: int, b: int) -> int:
             params,
             ret,
             body,
-            hoisted_vars: _,
+            ..
         } = &ir[0]
         {
             assert_eq!(name, "add");

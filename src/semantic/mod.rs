@@ -62,6 +62,8 @@ pub struct SemanticAnalyzer {
     hoisted_var_candidates: std::collections::HashMap<String, (Type, usize, usize)>,
     /// Current function's base scope depth (for relative depth calculation)
     func_base_depth: usize,
+    /// V1.5.2: Current function may raise an exception (Result化が必要)
+    current_func_may_raise: bool,
 }
 
 impl Default for SemanticAnalyzer {
@@ -81,6 +83,7 @@ impl SemanticAnalyzer {
             external_imports: Vec::new(),
             hoisted_var_candidates: std::collections::HashMap::new(),
             func_base_depth: 0,
+            current_func_may_raise: false,
         }
     }
 
@@ -214,6 +217,7 @@ impl SemanticAnalyzer {
                     ret,
                     body,
                     hoisted_vars,
+                    may_raise,
                 } = other_decls.remove(pos)
                 {
                     other_decls.push(IrNode::FuncDecl {
@@ -222,6 +226,7 @@ impl SemanticAnalyzer {
                         ret,
                         body,
                         hoisted_vars,
+                        may_raise,
                     });
                 }
             }
@@ -232,6 +237,7 @@ impl SemanticAnalyzer {
                 ret: Type::Unit,
                 body: main_body,
                 hoisted_vars: vec![],
+                may_raise: false,
             });
         }
 

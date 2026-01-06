@@ -29,6 +29,7 @@ fn test_emit_function() {
             right: Box::new(IrExpr::Var("b".to_string())),
         })))],
         hoisted_vars: vec![],
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("fn add(a: i64, b: i64) -> i64"));
@@ -1021,6 +1022,7 @@ fn test_emit_func_decl_simple() {
         ret: Type::Int,
         body: vec![IrNode::Return(Some(Box::new(IrExpr::Var("a".to_string()))))],
         hoisted_vars: vec![],
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("fn my_func("));
@@ -1036,6 +1038,7 @@ fn test_emit_func_unit_return() {
         ret: Type::Unit,
         body: vec![],
         hoisted_vars: vec![],
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("fn do_nothing()"));
@@ -1831,6 +1834,7 @@ fn test_emit_func_decl_multi_params() {
             "name".to_string(),
         ))))],
         hoisted_vars: vec![],
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("name: String"));
