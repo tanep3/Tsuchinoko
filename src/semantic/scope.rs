@@ -88,9 +88,25 @@ impl ScopeStack {
         self.scopes.push(Scope::new());
     }
 
+    /// Pop the current scope and promote variables to parent scope.
+    /// This implements Python's scope semantics where variables defined
+    /// in if/for/while/try blocks are accessible after the block.
     pub fn pop(&mut self) {
         if self.scopes.len() > 1 {
-            self.scopes.pop();
+            if let Some(popped) = self.scopes.pop() {
+                // Promote variables from popped scope to parent scope
+                // This is Python's scope semantics: block-level variables
+                // become accessible in the parent scope
+                if let Some(parent) = self.scopes.last_mut() {
+                    for (name, var_info) in popped.variables {
+                        // Only promote if not already defined in parent
+                        // (avoid shadowing parent's definition)
+                        if parent.lookup(&name).is_none() {
+                            parent.variables.insert(name, var_info);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -156,8 +172,10 @@ mod tests {
         assert!(stack.lookup("global_var").is_some());
         assert!(stack.lookup("local_var").is_some());
 
+        // After pop, local_var is PROMOTED to parent scope (Python semantics)
+        // Variables defined in inner blocks are accessible in outer scope
         stack.pop();
         assert!(stack.lookup("global_var").is_some());
-        assert!(stack.lookup("local_var").is_none());
+        assert!(stack.lookup("local_var").is_some()); // Python: still accessible!
     }
 }

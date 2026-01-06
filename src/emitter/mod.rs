@@ -301,12 +301,28 @@ use pyo3::types::PyList;
                 }
             }
             IrNode::Assign { target, value } => {
-                format!(
-                    "{}{} = {};",
-                    indent,
-                    to_snake_case(target),
-                    self.emit_expr(value)
-                )
+                let snake_name = to_snake_case(target);
+                
+                // Check if this target is a hoisted variable (needs Some() wrapper)
+                let is_func_hoisted = self.current_hoisted_vars.iter().any(|v| to_snake_case(&v.name) == snake_name);
+                let is_try_hoisted = self.try_hoisted_vars.contains(&snake_name);
+                
+                if is_func_hoisted || is_try_hoisted {
+                    // Hoisted variable: wrap value in Some()
+                    format!(
+                        "{}{} = Some({});",
+                        indent,
+                        snake_name,
+                        self.emit_expr(value)
+                    )
+                } else {
+                    format!(
+                        "{}{} = {};",
+                        indent,
+                        snake_name,
+                        self.emit_expr(value)
+                    )
+                }
             }
             IrNode::FieldAssign {
                 target,
