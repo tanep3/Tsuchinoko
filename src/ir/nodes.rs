@@ -108,10 +108,11 @@ pub enum IrNode {
     TypeAlias { name: String, ty: Type },
 
     // --- 例外・アサート ---
-    /// try-exceptブロック (V1.5.0: finally support)
+    /// try-exceptブロック (V1.5.2: except_var 追加)
     TryBlock {
         try_body: Vec<IrNode>,
         except_body: Vec<IrNode>,
+        except_var: Option<String>,  // V1.5.2: except ... as e の変数名
         finally_body: Option<Vec<IrNode>>,
     },
     /// アサート文 (V1.3.0)
@@ -119,8 +120,13 @@ pub enum IrNode {
         test: Box<IrExpr>,
         msg: Option<Box<IrExpr>>,
     },
-    /// パニック (raise由来)
-    Panic(String),
+    /// Raise 文 (V1.5.2: cause 対応)
+    /// raise ValueError("message") from original_error
+    Raise {
+        exc_type: String,
+        message: Box<IrExpr>,
+        cause: Option<Box<IrExpr>>,  // V1.5.2: from 句
+    },
 
     // --- その他 ---
     /// 式文

@@ -957,29 +957,38 @@ impl SemanticAnalyzer {
                 }
             }
             Stmt::Raise {
-                exception_type: _,
+                exception_type,
                 message,
+                cause,
             } => {
                 let msg_ir = self.analyze_expr(message)?;
-                // Extract string from message
-                let msg = if let IrExpr::StringLit(s) = msg_ir {
-                    s
-                } else {
-                    "Error".to_string()
+                // V1.5.2: Analyze cause expression if present
+                let cause_ir = match cause {
+                    Some(c) => Some(Box::new(self.analyze_expr(c)?)),
+                    None => None,
                 };
-                Ok(IrNode::Panic(msg))
+                Ok(IrNode::Raise {
+                    exc_type: exception_type.clone(),
+                    message: Box::new(msg_ir),
+                    cause: cause_ir,
+                })
             }
             Stmt::TryExcept {
                 try_body,
                 except_clauses,
+                else_body: _,  // V1.5.2: TODO - Phase 2 で対応
                 finally_body,
             } => {
                 // Use analyze_stmts to properly detect mutable variables in try/except blocks
                 let ir_try_body = self.analyze_stmts(try_body)?;
 
+                // V1.5.2: Collect the first except clause's variable name for IR
+                let except_var = except_clauses
+                    .iter()
+                    .find_map(|c| c.name.clone());
+
                 // Collect all except bodies into one (Rust doesn't have typed exceptions)
                 // For now, we merge all except clauses into a single except block
-                // TODO: V1.5.0+ could add support for exception variable (as e)
                 let mut ir_except_body = Vec::new();
                 for clause in except_clauses {
                     // If clause has a name (as e), define the variable
@@ -1006,6 +1015,7 @@ impl SemanticAnalyzer {
                 Ok(IrNode::TryBlock {
                     try_body: ir_try_body,
                     except_body: ir_except_body,
+                    except_var,  // V1.5.2: 例外変数名
                     finally_body: ir_finally_body,
                 })
             }

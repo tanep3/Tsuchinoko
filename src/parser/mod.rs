@@ -332,6 +332,7 @@ fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchin
         Stmt::TryExcept {
             try_body,
             except_clauses,
+            else_body: None,  // V1.5.2: TODO - Phase 2 で対応
             finally_body,
         },
         total_consumed,
@@ -1263,6 +1264,50 @@ fn parse_line(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoErr
         } else {
             let test = parse_expr(rest, line_num)?;
             return Ok(Some(Stmt::Assert { test, msg: None }));
+        }
+    }
+
+    // V1.5.2: Try to parse as raise statement
+    // Supports: raise ValueError("msg") and raise ValueError("msg") from e
+    if line.starts_with("raise ") {
+        let rest = line.strip_prefix("raise ").unwrap().trim();
+        
+        // Check for "from" clause: raise ExType("msg") from cause_expr
+        // Search for "from" keyword (not " from " because find_keyword_balanced checks word boundaries)
+        let (raise_part, cause) = if let Some(from_pos) = utils::find_keyword_balanced(rest, "from") {
+            // from_pos points to start of "from", so we take everything before it
+            let raise_str = rest[..from_pos].trim();
+            // Skip "from" (4 chars) to get cause expression
+            let cause_str = rest[from_pos + 4..].trim();
+            let cause_expr = parse_expr(cause_str, line_num)?;
+            (raise_str, Some(Box::new(cause_expr)))
+        } else {
+            (rest, None)
+        };
+        
+        // Parse exception: ExType("message") or ExType(message_expr)
+        if let Some(paren_start) = raise_part.find('(') {
+            let exception_type = raise_part[..paren_start].trim().to_string();
+            let paren_end = find_closing_paren(raise_part, paren_start)?;
+            let msg_str = raise_part[paren_start + 1..paren_end].trim();
+            let message = if msg_str.is_empty() {
+                Expr::StringLiteral(String::new())
+            } else {
+                parse_expr(msg_str, line_num)?
+            };
+            return Ok(Some(Stmt::Raise {
+                exception_type,
+                message,
+                cause,
+            }));
+        } else {
+            // Simple raise without arguments: raise Exception
+            // Treat as raise with empty message
+            return Ok(Some(Stmt::Raise {
+                exception_type: raise_part.to_string(),
+                message: Expr::StringLiteral(String::new()),
+                cause,
+            }));
         }
     }
 

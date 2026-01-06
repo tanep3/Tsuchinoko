@@ -1979,6 +1979,7 @@ fn test_emit_try_block() {
     let node = IrNode::TryBlock {
         try_body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(42))))],
         except_body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(0))))],
+        except_var: None,  // V1.5.2
         finally_body: None,
     };
     let result = emit(&[node]);

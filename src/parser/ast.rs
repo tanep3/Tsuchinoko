@@ -216,16 +216,18 @@ pub enum Stmt {
         fields: Vec<Field>,
         methods: Vec<MethodDef>,
     },
-    /// Try-except statement (V1.5.0: supports multiple except clauses and finally)
+    /// Try-except statement (V1.5.2: supports else block)
     TryExcept {
         try_body: Vec<Stmt>,
         except_clauses: Vec<ExceptClause>,
+        else_body: Option<Vec<Stmt>>,    // V1.5.2: else ブロック
         finally_body: Option<Vec<Stmt>>,
     },
-    /// Raise statement
+    /// Raise statement (V1.5.2: supports raise ... from ...)
     Raise {
         exception_type: String,
         message: Expr,
+        cause: Option<Box<Expr>>,  // V1.5.2: from 句
     },
     /// Import statement (import x as y, from x import y)
     Import {

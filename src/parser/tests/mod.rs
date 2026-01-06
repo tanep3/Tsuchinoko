@@ -567,12 +567,32 @@ else:
 }
 
 // --- parse: Raise ---
-// 注: raise文はparse_lineでは「raise」キーワードだけ見るため、parse経由でテスト
+// V1.5.2: raise文のパースをテスト
 #[test]
 fn test_parse_raise() {
-    // parseではなくparse_lineでraiseをテスト（実装確認要）
-    // 現在の実装ではparse_lineでraiseがサポートされていない可能性
-    // このテストはスキップまたは別実装待ち
+    let result = parse_line("raise ValueError(\"invalid input\")", 1).unwrap();
+    if let Some(Stmt::Raise { exception_type, message, cause }) = result {
+        assert_eq!(exception_type, "ValueError");
+        assert!(matches!(message, Expr::StringLiteral(_)));
+        assert!(cause.is_none());
+    } else {
+        panic!("Expected Stmt::Raise");
+    }
+}
+
+#[test]
+fn test_parse_raise_from() {
+    let result = parse_line("raise RuntimeError(\"failed\") from e", 1).unwrap();
+    if let Some(Stmt::Raise { exception_type, message, cause }) = result {
+        assert_eq!(exception_type, "RuntimeError");
+        assert!(matches!(message, Expr::StringLiteral(_)));
+        assert!(cause.is_some());
+        if let Some(cause_expr) = cause {
+            assert!(matches!(*cause_expr, Expr::Ident(_)));
+        }
+    } else {
+        panic!("Expected Stmt::Raise with cause");
+    }
 }
 
 // --- parse: Assert ---

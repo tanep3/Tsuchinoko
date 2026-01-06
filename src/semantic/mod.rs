@@ -362,6 +362,7 @@ impl SemanticAnalyzer {
             Stmt::TryExcept {
                 try_body,
                 except_clauses,
+                else_body,  // V1.5.2
                 finally_body,
             } => {
                 for s in try_body {
@@ -369,6 +370,12 @@ impl SemanticAnalyzer {
                 }
                 for clause in except_clauses {
                     for s in &clause.body {
+                        self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
+                    }
+                }
+                // V1.5.2: Check else_body
+                if let Some(eb) = else_body {
+                    for s in eb {
                         self.collect_mutations(s, reassigned_vars, mutated_vars, seen_vars);
                     }
                 }

@@ -594,6 +594,7 @@ use pyo3::types::PyList;
             IrNode::TryBlock {
                 try_body,
                 except_body,
+                except_var,  // V1.5.2
                 finally_body,
             } => {
                 // Use std::panic::catch_unwind to catch panics (like division by zero)
@@ -634,8 +635,15 @@ use pyo3::types::PyList;
                 // Ok case - return the value
                 result.push_str(&format!("{indent}    Ok(__val) => __val,\n"));
 
-                // Err case - execute except body
-                result.push_str(&format!("{indent}    Err(_) => {{\n"));
+                // V1.5.2: Err case - if except_var is defined, bind panic info to it
+                if let Some(var_name) = except_var {
+                    result.push_str(&format!("{indent}    Err(__exc) => {{\n"));
+                    // Bind the panic info to the variable name as a String
+                    result.push_str(&format!("{indent}        let {} = format!(\"{{:?}}\", __exc);\n", to_snake_case(var_name)));
+                } else {
+                    result.push_str(&format!("{indent}    Err(_) => {{\n"));
+                }
+                
                 self.indent += 2;
                 for node in except_body {
                     // Convert return to just the expression for except body too
@@ -725,8 +733,24 @@ use pyo3::types::PyList;
                 result.push_str(&format!("{inner_indent}}}"));
                 result
             }
-            IrNode::Panic(msg) => {
-                format!("{indent}panic!(\"{msg}\");")
+            IrNode::Raise { exc_type, message, cause } => {
+                // V1.5.2: Generate panic! with exception info
+                let msg_str = self.emit_expr(message);
+                match cause {
+                    Some(cause_expr) => {
+                        // With cause: print cause first, then panic
+                        format!(
+                            "{indent}eprintln!(\"Caused by: {{:?}}\", {});\n{indent}panic!(\"{}: {{}}\", {});",
+                            self.emit_expr(cause_expr),
+                            exc_type,
+                            msg_str
+                        )
+                    }
+                    None => {
+                        // Without cause: simple panic
+                        format!("{indent}panic!(\"{}: {{}}\", {});", exc_type, msg_str)
+                    }
+                }
             }
             IrNode::Break => {
                 format!("{indent}break;")
