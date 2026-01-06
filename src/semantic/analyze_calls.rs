@@ -1162,3 +1162,98 @@ impl SemanticAnalyzer {
         }
     }
 }
+
+// =============================================================================
+// V1.5.2 Tests
+// =============================================================================
+
+#[cfg(test)]
+mod v1_5_2_tests {
+    use super::*;
+    use crate::parser::*;
+    use crate::semantic::SemanticAnalyzer;
+
+    // Test int(Any) generates JsonConversion
+    #[test]
+    fn test_int_any_generates_json_conversion() {
+        // Create a variable of Type::Any and call int() on it
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define("json_value", Type::Any, false);
+        
+        // Parse: int(json_value)
+        let call_expr = Expr::Call {
+            func: Box::new(Expr::Ident("int".to_string())),
+            args: vec![Expr::Ident("json_value".to_string())],
+            kwargs: vec![],
+        };
+        
+        let result = analyzer.analyze_expr(&call_expr);
+        assert!(result.is_ok());
+        let ir = result.unwrap();
+        
+        // Should generate JsonConversion, not Cast
+        match ir {
+            IrExpr::JsonConversion { convert_to, .. } => {
+                assert_eq!(convert_to, "i64");
+            }
+            IrExpr::Cast { .. } => {
+                panic!("Expected JsonConversion for int(Any), got Cast");
+            }
+            _ => {
+                panic!("Expected JsonConversion, got {:?}", ir);
+            }
+        }
+    }
+
+    // Test int(i64) generates Cast (not JsonConversion)
+    #[test]
+    fn test_int_i64_generates_cast() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define("int_value", Type::Int, false);
+        
+        let call_expr = Expr::Call {
+            func: Box::new(Expr::Ident("int".to_string())),
+            args: vec![Expr::Ident("int_value".to_string())],
+            kwargs: vec![],
+        };
+        
+        let result = analyzer.analyze_expr(&call_expr);
+        assert!(result.is_ok());
+        let ir = result.unwrap();
+        
+        match ir {
+            IrExpr::Cast { ty, .. } => {
+                assert_eq!(ty, "i64");
+            }
+            _ => {
+                panic!("Expected Cast for int(i64), got {:?}", ir);
+            }
+        }
+    }
+
+    // Test float(Any) generates JsonConversion
+    #[test]
+    fn test_float_any_generates_json_conversion() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define("json_value", Type::Any, false);
+        
+        let call_expr = Expr::Call {
+            func: Box::new(Expr::Ident("float".to_string())),
+            args: vec![Expr::Ident("json_value".to_string())],
+            kwargs: vec![],
+        };
+        
+        let result = analyzer.analyze_expr(&call_expr);
+        assert!(result.is_ok());
+        let ir = result.unwrap();
+        
+        match ir {
+            IrExpr::JsonConversion { convert_to, .. } => {
+                assert_eq!(convert_to, "f64");
+            }
+            _ => {
+                panic!("Expected JsonConversion for float(Any), got {:?}", ir);
+            }
+        }
+    }
+}

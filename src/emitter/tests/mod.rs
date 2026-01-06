@@ -2173,3 +2173,139 @@ fn test_emit_method_call_reverse() {
     let result = emitter.emit_expr(&expr);
     assert!(result.contains(".reverse()"));
 }
+// =============================================================================
+// V1.5.2 Tests
+// =============================================================================
+
+// --- IrExpr::Call with callee_may_raise ---
+#[test]
+fn test_emit_call_callee_may_raise_false() {
+    let mut emitter = RustEmitter::new();
+    let expr = IrExpr::Call { callee_may_raise: false,
+        func: Box::new(IrExpr::Var("some_func".to_string())),
+        args: vec![IrExpr::IntLit(42)],
+    };
+    let result = emitter.emit_expr(&expr);
+    assert_eq!(result, "some_func(42i64)");
+    assert!(!result.contains(".unwrap()"));
+    assert!(!result.contains("?"));
+}
+
+#[test]
+fn test_emit_call_callee_may_raise_true_in_normal_context() {
+    let mut emitter = RustEmitter::new();
+    // current_func_may_raise is false by default
+    let expr = IrExpr::Call { callee_may_raise: true,
+        func: Box::new(IrExpr::Var("risky_func".to_string())),
+        args: vec![],
+    };
+    let result = emitter.emit_expr(&expr);
+    assert!(result.contains(".unwrap()"), "Expected .unwrap() in: {}", result);
+}
+
+#[test]
+fn test_emit_call_callee_may_raise_true_in_may_raise_context() {
+    let mut emitter = RustEmitter::new();
+    emitter.current_func_may_raise = true; // Simulate being inside a may_raise function
+    let expr = IrExpr::Call { callee_may_raise: true,
+        func: Box::new(IrExpr::Var("risky_func".to_string())),
+        args: vec![],
+    };
+    let result = emitter.emit_expr(&expr);
+    assert!(result.contains("?"), "Expected ? operator in: {}", result);
+    assert!(!result.contains(".unwrap()"));
+}
+
+// --- FuncDecl with may_raise ---
+#[test]
+fn test_emit_func_decl_with_may_raise() {
+    let mut emitter = RustEmitter::new();
+    let node = IrNode::FuncDecl {
+        name: "risky_operation".to_string(),
+        params: vec![],
+        ret: Type::Int,
+        body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(42))))],
+        hoisted_vars: vec![],
+        may_raise: true,
+    };
+    let result = emitter.emit_nodes(&[node]);
+    assert!(result.contains("Result<i64, TsuchinokoError>"), "Expected Result return type in: {}", result);
+    assert!(result.contains("Ok(42i64)"), "Expected Ok() wrapping in: {}", result);
+}
+
+#[test]
+fn test_emit_func_decl_without_may_raise() {
+    let mut emitter = RustEmitter::new();
+    let node = IrNode::FuncDecl {
+        name: "safe_operation".to_string(),
+        params: vec![],
+        ret: Type::Int,
+        body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(42))))],
+        hoisted_vars: vec![],
+        may_raise: false,
+    };
+    let result = emitter.emit_nodes(&[node]);
+    assert!(!result.contains("Result<"), "Should not have Result in: {}", result);
+    assert!(result.contains("-> i64"), "Expected i64 return in: {}", result);
+}
+
+// --- Raise node ---
+#[test]
+fn test_emit_raise_node() {
+    let mut emitter = RustEmitter::new();
+    let node = IrNode::Raise {
+        exc_type: "ValueError".to_string(),
+        message: Box::new(IrExpr::StringLit("invalid input".to_string())),
+        cause: None,
+    };
+    let result = emitter.emit_nodes(&[node]);
+    assert!(result.contains("return Err(TsuchinokoError::new"), "Expected Err in: {}", result);
+    assert!(result.contains("ValueError"), "Expected ValueError in: {}", result);
+}
+
+#[test]
+fn test_emit_raise_from_node() {
+    let mut emitter = RustEmitter::new();
+    let node = IrNode::Raise {
+        exc_type: "RuntimeError".to_string(),
+        message: Box::new(IrExpr::StringLit("operation failed".to_string())),
+        cause: Some(Box::new(IrExpr::Var("original_error".to_string()))),
+    };
+    let result = emitter.emit_nodes(&[node]);
+    assert!(result.contains("RuntimeError"), "Expected RuntimeError in: {}", result);
+    assert!(result.contains("Some("), "Expected Some for cause in: {}", result);
+}
+
+// --- TryBlock with else ---
+#[test]
+fn test_emit_try_block_with_else() {
+    let mut emitter = RustEmitter::new();
+    let node = IrNode::TryBlock {
+        try_body: vec![IrNode::Expr(IrExpr::IntLit(1))],
+        except_body: vec![IrNode::Expr(IrExpr::IntLit(-1))],
+        else_body: Some(vec![IrNode::Expr(IrExpr::IntLit(100))]),
+        finally_body: None,
+        except_var: None,
+    };
+    let result = emitter.emit_nodes(&[node]);
+    // Should generate match with Ok branch for else
+    assert!(result.contains("match") || result.contains("Ok") || result.contains("Err"), 
+            "Expected try pattern in: {}", result);
+}
+
+// --- Unit return with may_raise should add Ok(()) ---
+#[test]
+fn test_emit_func_decl_unit_return_with_may_raise() {
+    let mut emitter = RustEmitter::new();
+    let node = IrNode::FuncDecl {
+        name: "do_something".to_string(),
+        params: vec![],
+        ret: Type::Unit,
+        body: vec![],  // Empty body
+        hoisted_vars: vec![],
+        may_raise: true,
+    };
+    let result = emitter.emit_nodes(&[node]);
+    assert!(result.contains("Result<(), TsuchinokoError>"), "Expected Result<()> in: {}", result);
+    assert!(result.contains("Ok(())"), "Expected implicit Ok(()) in: {}", result);
+}
