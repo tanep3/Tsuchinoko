@@ -579,6 +579,10 @@ impl SemanticAnalyzer {
                 }
 
                 self.scope.push();
+                
+                // Clear hoisted_var_candidates for this function scope
+                self.hoisted_var_candidates.clear();
+                self.func_base_depth = self.scope.depth();
 
                 // Add parameters to scope
                 let mut ir_params = Vec::new();
@@ -599,13 +603,19 @@ impl SemanticAnalyzer {
 
                 self.scope.pop();
 
+                // Collect hoisted variables: those used at shallower depth than defined
+                let hoisted_vars: Vec<HoistedVar> = self.hoisted_var_candidates
+                    .drain()
+                    .map(|(name, (ty, _, _))| HoistedVar { name, ty })
+                    .collect();
+
                 let ir_name = name.clone();
                 Ok(IrNode::FuncDecl {
                     name: ir_name,
                     params: ir_params,
                     ret: ret_type,
                     body: ir_body,
-                    hoisted_vars: vec![],  // TODO: ホイスト解析で設定
+                    hoisted_vars,
                 })
             }
 

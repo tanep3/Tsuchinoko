@@ -33,7 +33,7 @@ pub use type_infer::TypeInference;
 pub use types::*;
 
 use crate::error::TsuchinokoError;
-use crate::ir::{IrAugAssignOp, IrBinOp, IrExpr, IrNode, IrUnaryOp};
+use crate::ir::{HoistedVar, IrAugAssignOp, IrBinOp, IrExpr, IrNode, IrUnaryOp};
 use crate::parser::{
     AugAssignOp, BinOp as AstBinOp, Expr, Program, Stmt, TypeHint, UnaryOp as AstUnaryOp,
 };
@@ -57,6 +57,11 @@ pub struct SemanticAnalyzer {
     func_param_info: std::collections::HashMap<String, Vec<(String, Type, Option<Expr>, bool)>>,
     /// External imports: (module, alias) - e.g., ("numpy", "np")
     external_imports: Vec<(String, String)>,
+    /// Variables that need hoisting: (name, type, defined_depth, used_depth)
+    /// Collected during analysis, variables where used_depth < defined_depth need hoisting
+    hoisted_var_candidates: std::collections::HashMap<String, (Type, usize, usize)>,
+    /// Current function's base scope depth (for relative depth calculation)
+    func_base_depth: usize,
 }
 
 impl Default for SemanticAnalyzer {
@@ -74,6 +79,8 @@ impl SemanticAnalyzer {
             mutable_vars: std::collections::HashSet::new(),
             func_param_info: std::collections::HashMap::new(),
             external_imports: Vec::new(),
+            hoisted_var_candidates: std::collections::HashMap::new(),
+            func_base_depth: 0,
         }
     }
 

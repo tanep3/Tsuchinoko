@@ -13,6 +13,27 @@ impl SemanticAnalyzer {
             Expr::BoolLiteral(b) => Ok(IrExpr::BoolLit(*b)),
             Expr::NoneLiteral => Ok(IrExpr::NoneLit),
             Expr::Ident(name) => {
+                // Check for scope-crossing variable usage (for hoisting detection)
+                let current_depth = self.scope.depth();
+                if let Some(var_info) = self.scope.lookup(name) {
+                    let defined_depth = var_info.defined_at_depth;
+                    let var_ty = var_info.ty.clone();
+                    
+                    // If variable is used at a shallower depth than where it was defined,
+                    // it needs to be hoisted (defined in inner block, used in outer scope)
+                    if current_depth < defined_depth {
+                        self.hoisted_var_candidates
+                            .entry(name.clone())
+                            .and_modify(|(_, _, used)| {
+                                // Keep track of the shallowest usage depth
+                                if current_depth < *used {
+                                    *used = current_depth;
+                                }
+                            })
+                            .or_insert((var_ty.clone(), defined_depth, current_depth));
+                    }
+                }
+                
                 // Check if this variable has a narrowed type
                 // If the original type is Optional<T> but it's narrowed to T, we need to unwrap
                 if let Some(original_info) = self.scope.lookup(name) {

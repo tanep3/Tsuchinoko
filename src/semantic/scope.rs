@@ -9,6 +9,8 @@ pub struct VarInfo {
     pub name: String,
     pub ty: Type,
     pub mutable: bool,
+    /// Scope depth at which this variable was defined (0 = global/function level)
+    pub defined_at_depth: usize,
 }
 
 /// Scope for variable tracking
@@ -34,13 +36,14 @@ impl Scope {
         }
     }
 
-    pub fn define(&mut self, name: &str, ty: Type, mutable: bool) {
+    pub fn define(&mut self, name: &str, ty: Type, mutable: bool, depth: usize) {
         self.variables.insert(
             name.to_string(),
             VarInfo {
                 name: name.to_string(),
                 ty,
                 mutable,
+                defined_at_depth: depth,
             },
         );
     }
@@ -92,8 +95,9 @@ impl ScopeStack {
     }
 
     pub fn define(&mut self, name: &str, ty: Type, mutable: bool) {
+        let depth = self.depth();
         if let Some(scope) = self.scopes.last_mut() {
-            scope.define(name, ty, mutable);
+            scope.define(name, ty, mutable, depth);
         }
     }
 
@@ -133,11 +137,12 @@ mod tests {
     #[test]
     fn test_scope_define_and_lookup() {
         let mut scope = Scope::new();
-        scope.define("x", Type::Int, false);
+        scope.define("x", Type::Int, false, 0);
 
         let info = scope.lookup("x").unwrap();
         assert_eq!(info.name, "x");
         assert_eq!(info.ty, Type::Int);
+        assert_eq!(info.defined_at_depth, 0);
     }
 
     #[test]
