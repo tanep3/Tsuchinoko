@@ -656,6 +656,7 @@ impl SemanticAnalyzer {
                                         "{class_name}::{attr}"
                                     ))),
                                     args: ir_args,
+                                    callee_may_raise: false,
                                 });
                             };
                             return Ok(IrExpr::RawCode(format!(
@@ -910,6 +911,7 @@ impl SemanticAnalyzer {
                         Ok(IrExpr::Call {
                             func: final_func,
                             args: ir_args,
+                            callee_may_raise: false,
                         })
                     }
                     Expr::Attribute { value, attr } => {
@@ -945,6 +947,7 @@ impl SemanticAnalyzer {
                                                 field: stripped_attr.to_string(),
                                             }),
                                             args: ir_args,
+                                            callee_may_raise: false,
                                         });
                                     }
                                 }
@@ -1001,6 +1004,7 @@ impl SemanticAnalyzer {
                         Ok(IrExpr::Call {
                             func: Box::new(ir_func),
                             args: ir_args,
+                            callee_may_raise: false,
                         })
                     }
                 }

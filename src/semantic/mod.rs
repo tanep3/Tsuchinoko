@@ -791,6 +791,7 @@ impl SemanticAnalyzer {
                     IrExpr::Call {
                         func: Box::new(IrExpr::Var("Some".to_string())),
                         args: vec![ir_value],
+                        callee_may_raise: false,
                     }
                 } else {
                     ir_value

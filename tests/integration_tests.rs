@@ -94,7 +94,7 @@ fn test_for_loop_to_rust() {
             start: Box::new(IrExpr::IntLit(0)),
             end: Box::new(IrExpr::IntLit(10)),
         }),
-        body: vec![IrNode::Expr(IrExpr::Call {
+        body: vec![IrNode::Expr(IrExpr::Call { callee_may_raise: false,
             func: Box::new(IrExpr::Var("println".to_string())),
             args: vec![IrExpr::Var("i".to_string())],
         })],

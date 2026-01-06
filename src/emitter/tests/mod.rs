@@ -678,7 +678,7 @@ fn test_emit_binop_contains() {
 #[test]
 fn test_emit_call_simple() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call {
+    let expr = IrExpr::Call { callee_may_raise: false,
         func: Box::new(IrExpr::Var("my_func".to_string())),
         args: vec![IrExpr::IntLit(42)],
     };
@@ -1090,7 +1090,7 @@ fn test_emit_impl_block() {
 #[test]
 fn test_emit_call_some() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call {
+    let expr = IrExpr::Call { callee_may_raise: false,
         func: Box::new(IrExpr::Var("Some".to_string())),
         args: vec![IrExpr::IntLit(42)],
     };
@@ -1101,7 +1101,7 @@ fn test_emit_call_some() {
 #[test]
 fn test_emit_call_with_path() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call {
+    let expr = IrExpr::Call { callee_may_raise: false,
         func: Box::new(IrExpr::Var("std::cmp::max".to_string())),
         args: vec![IrExpr::IntLit(1), IrExpr::IntLit(2)],
     };
@@ -1253,7 +1253,7 @@ fn test_emit_binop_not_contains() {
 #[test]
 fn test_emit_call_field_func() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call {
+    let expr = IrExpr::Call { callee_may_raise: false,
         func: Box::new(IrExpr::FieldAccess {
             target: Box::new(IrExpr::Var("obj".to_string())),
             field: "callback".to_string(),
@@ -1281,7 +1281,7 @@ fn test_emit_binop_is() {
 #[test]
 fn test_emit_call_print_string_literal() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call {
+    let expr = IrExpr::Call { callee_may_raise: false,
         func: Box::new(IrExpr::Var("print".to_string())),
         args: vec![IrExpr::StringLit("hello".to_string())],
     };
@@ -1293,7 +1293,7 @@ fn test_emit_call_print_string_literal() {
 #[test]
 fn test_emit_call_print_with_clone() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call {
+    let expr = IrExpr::Call { callee_may_raise: false,
         func: Box::new(IrExpr::Var("print".to_string())),
         args: vec![IrExpr::MethodCall {
             target: Box::new(IrExpr::Var("s".to_string())),
@@ -1426,7 +1426,7 @@ fn test_emit_aug_assign_mod() {
 #[test]
 fn test_emit_call_print_variable() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call {
+    let expr = IrExpr::Call { callee_may_raise: false,
         func: Box::new(IrExpr::Var("print".to_string())),
         args: vec![IrExpr::Var("x".to_string())],
     };
@@ -1439,7 +1439,7 @@ fn test_emit_call_print_variable() {
 #[test]
 fn test_emit_call_main() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call {
+    let expr = IrExpr::Call { callee_may_raise: false,
         func: Box::new(IrExpr::Var("main".to_string())),
         args: vec![],
     };
@@ -1527,7 +1527,7 @@ fn test_emit_binop_is_not() {
 #[test]
 fn test_emit_call_print_empty() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call {
+    let expr = IrExpr::Call { callee_may_raise: false,
         func: Box::new(IrExpr::Var("print".to_string())),
         args: vec![],
     };

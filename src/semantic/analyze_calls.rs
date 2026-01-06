@@ -72,6 +72,7 @@ impl SemanticAnalyzer {
                 return IrExpr::Call {
                     func: Box::new(IrExpr::Var("Some".to_string())),
                     args: vec![wrapped_arg],
+                    callee_may_raise: false,
                 };
             }
             // If actual is also Optional or None, use as-is

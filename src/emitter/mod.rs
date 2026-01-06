@@ -52,8 +52,6 @@ pub struct RustEmitter {
     uses_tsuchinoko_error: bool,
     /// V1.5.2: Whether current function may raise (for Ok() wrapping)
     current_func_may_raise: bool,
-    /// V1.5.2: Functions that return Result (may_raise=true or has external calls)
-    may_raise_functions: std::collections::HashSet<String>,
 }
 
 /// Convert camelCase/PascalCase to snake_case
@@ -92,7 +90,6 @@ impl RustEmitter {
             try_hoisted_vars: Vec::new(),
             uses_tsuchinoko_error: false,
             current_func_may_raise: false,
-            may_raise_functions: std::collections::HashSet::new(),
         }
     }
 
@@ -600,11 +597,6 @@ use pyo3::types::PyList;
                         );
                         // 関数を resident_functions セットに登録
                         self.resident_functions.insert(snake_name.clone());
-                    }
-                    
-                    // V1.5.2: Register may_raise functions for call-site unwrapping
-                    if effective_may_raise {
-                        self.may_raise_functions.insert(snake_name.clone());
                     }
                     
                     // V1.5.2: Add implicit Ok(()) for may_raise functions that return Unit
@@ -1176,7 +1168,7 @@ use pyo3::types::PyList;
                 };
                 format!("({}{})", op_str, self.emit_expr(operand))
             }
-            IrExpr::Call { func, args } => {
+            IrExpr::Call { func, args, callee_may_raise } => {
                 let is_print = if let IrExpr::Var(name) = func.as_ref() {
                     name == "print"
                 } else {
@@ -1314,9 +1306,10 @@ use pyo3::types::PyList;
                             let call_str = format!("{}({})", func_name, args_str.join(", "));
                             
                             // V1.5.2: If calling a may_raise function from a non-may_raise context, add .unwrap()
-                            if self.may_raise_functions.contains(&func_name) && !self.current_func_may_raise {
+                            // Use IR's callee_may_raise instead of tracking in emitter
+                            if *callee_may_raise && !self.current_func_may_raise {
                                 format!("{}.unwrap()", call_str)
-                            } else if self.may_raise_functions.contains(&func_name) && self.current_func_may_raise {
+                            } else if *callee_may_raise && self.current_func_may_raise {
                                 // Both caller and callee may raise - use ?
                                 format!("{}?", call_str)
                             } else {

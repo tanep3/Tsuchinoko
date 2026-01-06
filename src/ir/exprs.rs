@@ -43,6 +43,8 @@ pub enum IrExpr {
     Call {
         func: Box<IrExpr>,
         args: Vec<IrExpr>,
+        /// V1.5.2: 呼び出し先が may_raise (Result を返す) かどうか
+        callee_may_raise: bool,
     },
     /// メソッド呼び出し (e.g., arr.len())
     MethodCall {
