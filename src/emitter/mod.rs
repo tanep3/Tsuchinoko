@@ -651,23 +651,23 @@ use pyo3::types::PyList;
             } => {
                 let mut result = String::new();
                 
-                // V1.5.2: If else_body exists, collect VarDecl from try_body for hoisting
-                let need_hoisting = else_body.is_some();
+                // V1.5.2: Always hoist variables from try_body
+                // Variables defined in try may be used in except/else/finally
                 let mut hoisted_vars: Vec<(String, Type)> = Vec::new();
                 
-                if need_hoisting {
-                    // Collect variable declarations from try_body
-                    for node in try_body.iter() {
-                        if let IrNode::VarDecl { name, ty, .. } = node {
-                            hoisted_vars.push((name.clone(), ty.clone()));
-                        }
+                // Collect variable declarations from try_body
+                for node in try_body.iter() {
+                    if let IrNode::VarDecl { name, ty, .. } = node {
+                        hoisted_vars.push((name.clone(), ty.clone()));
                     }
-                    
-                    // Emit hoisted variable declarations as Option<T>
-                    for (name, ty) in &hoisted_vars {
-                        let snake_name = to_snake_case(name);
-                        result.push_str(&format!("{indent}let mut {}: Option<{}> = None;\n", snake_name, ty.to_rust_string()));
-                    }
+                }
+                
+                let need_hoisting = !hoisted_vars.is_empty();
+                
+                // Emit hoisted variable declarations as Option<T>
+                for (name, ty) in &hoisted_vars {
+                    let snake_name = to_snake_case(name);
+                    result.push_str(&format!("{indent}let mut {}: Option<{}> = None;\n", snake_name, ty.to_rust_string()));
                 }
                 
                 // Use std::panic::catch_unwind to catch panics (like division by zero)
@@ -676,6 +676,12 @@ use pyo3::types::PyList;
                     "{indent}match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{\n"
                 ));
                 self.indent += 1;
+                
+                // Set hoisted vars for unwrap() in try body (for return statements)
+                let old_try_hoisted_try = std::mem::replace(
+                    &mut self.try_hoisted_vars,
+                    hoisted_vars.iter().map(|(name, _)| to_snake_case(name)).collect()
+                );
 
                 // Emit try body - convert VarDecl to assignments if hoisting
                 for (i, node) in try_body.iter().enumerate() {
@@ -757,13 +763,19 @@ use pyo3::types::PyList;
                     result.push_str(&format!("{indent}    Err(_) => {{\n"));
                 }
                 
+                // Set hoisted vars for unwrap() in except body
+                let old_try_hoisted_except = std::mem::replace(
+                    &mut self.try_hoisted_vars,
+                    hoisted_vars.iter().map(|(name, _)| to_snake_case(name)).collect()
+                );
+                
                 self.indent += 2;
                 for node in except_body {
-                    // Convert return to just the expression for except body too
+                    // Emit return as proper return statement in except body
                     match node {
                         IrNode::Return(Some(expr)) => {
                             let inner_indent = "    ".repeat(self.indent);
-                            result.push_str(&format!("{}{}\n", inner_indent, self.emit_expr(expr)));
+                            result.push_str(&format!("{}return {};\n", inner_indent, self.emit_expr(expr)));
                         }
                         _ => {
                             result.push_str(&self.emit_node(node));
@@ -772,6 +784,10 @@ use pyo3::types::PyList;
                     }
                 }
                 self.indent -= 2;
+                
+                // Restore old try_hoisted_vars
+                self.try_hoisted_vars = old_try_hoisted_except;
+                
                 result.push_str(&format!("{indent}    }}\n"));
                 result.push_str(&format!("{indent}}}\n"));
 
@@ -781,6 +797,15 @@ use pyo3::types::PyList;
                     for node in finally_nodes {
                         result.push_str(&self.emit_node(node));
                         result.push('\n');
+                    }
+                }
+                
+                // V1.5.2: Add hoisted vars to try_hoisted_vars for rest of function
+                // Variables defined in try need unwrap() even after the try block
+                for (name, _) in &hoisted_vars {
+                    let snake_name = to_snake_case(name);
+                    if !self.try_hoisted_vars.contains(&snake_name) {
+                        self.try_hoisted_vars.push(snake_name);
                     }
                 }
 
@@ -935,8 +960,17 @@ use pyo3::types::PyList;
                     to_snake_case(name)
                 };
                 
-                // If this variable is in try_hoisted_vars, add .unwrap()
-                if self.try_hoisted_vars.contains(&var_name) {
+                // Check if this variable needs unwrap() due to hoisting
+                // 1. try_hoisted_vars: variables from try block (need clone due to closure)
+                // 2. current_hoisted_vars: variables hoisted at function level (if/for etc.)
+                let is_try_hoisted = self.try_hoisted_vars.contains(&var_name);
+                let is_func_hoisted = self.current_hoisted_vars.iter().any(|v| to_snake_case(&v.name) == var_name);
+                
+                if is_try_hoisted {
+                    // Try block hoisting needs clone due to catch_unwind closure
+                    format!("{}.clone().unwrap()", var_name)
+                } else if is_func_hoisted {
+                    // Function-level hoisting (if/for blocks) - no clone needed
                     format!("{}.unwrap()", var_name)
                 } else {
                     var_name
