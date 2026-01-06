@@ -963,25 +963,27 @@ use pyo3::types::PyList;
                 result.push_str(&format!("{inner_indent}}}"));
                 result
             }
-            IrNode::Raise { exc_type, message, cause } => {
-                // V1.5.2: Generate Err(TsuchinokoError::new(...))
+            IrNode::Raise { exc_type, message, cause, line } => {
+                // V1.5.2: Generate Err(TsuchinokoError::with_line(...)) with line number
                 let msg_str = self.emit_expr(message);
                 match cause {
                     Some(cause_expr) => {
-                        // With cause: Err(TsuchinokoError::new("Type", "msg", Some(cause)))
+                        // With cause: Err(TsuchinokoError::with_line("Type", "msg", line, Some(cause)))
                         format!(
-                            "{indent}return Err(TsuchinokoError::new(\"{}\", &format!(\"{{}}\", {}), Some({})));",
+                            "{indent}return Err(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, Some({})));",
                             exc_type,
                             msg_str,
+                            line,
                             self.emit_expr(cause_expr)
                         )
                     }
                     None => {
-                        // Without cause: Err(TsuchinokoError::new("Type", "msg", None))
+                        // Without cause: Err(TsuchinokoError::with_line("Type", "msg", line, None))
                         format!(
-                            "{indent}return Err(TsuchinokoError::new(\"{}\", &format!(\"{{}}\", {}), None));",
+                            "{indent}return Err(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, None));",
                             exc_type,
-                            msg_str
+                            msg_str,
+                            line
                         )
                     }
                 }

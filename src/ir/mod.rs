@@ -6,8 +6,10 @@
 //! - `ops` - 演算子定義 (IrBinOp, IrUnaryOp, IrAugAssignOp)
 //! - `exprs` - 式定義 (IrExpr)
 //! - `nodes` - ステートメント定義 (IrNode)
+//! - `location` - ソースコード位置情報 (SourceLocation)
 
 pub mod exprs;
+pub mod location;
 pub mod nodes;
 pub mod ops;
 
@@ -17,3 +19,5 @@ pub use ops::*;
 pub use exprs::*;
 // ノードをre-export
 pub use nodes::*;
+// 位置情報をre-export
+pub use location::*;

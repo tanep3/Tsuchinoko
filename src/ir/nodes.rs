@@ -131,12 +131,13 @@ pub enum IrNode {
         test: Box<IrExpr>,
         msg: Option<Box<IrExpr>>,
     },
-    /// Raise 文 (V1.5.2: cause 対応)
+    /// Raise 文 (V1.5.2: cause 対応, 行番号対応)
     /// raise ValueError("message") from original_error
     Raise {
         exc_type: String,
         message: Box<IrExpr>,
         cause: Option<Box<IrExpr>>,  // V1.5.2: from 句
+        line: usize,  // V1.5.2: ソースコード行番号（0 = 不明）
     },
 
     // --- その他 ---

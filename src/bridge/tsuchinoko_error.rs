@@ -14,6 +14,8 @@ pub struct TsuchinokoError {
     pub message: String,
     /// 原因となった例外（raise from 用）
     pub cause: Option<Box<TsuchinokoError>>,
+    /// ソースコード行番号（0 = 不明）
+    pub line: usize,
 }
 
 impl TsuchinokoError {
@@ -23,6 +25,17 @@ impl TsuchinokoError {
             kind: kind.to_string(),
             message: message.to_string(),
             cause: cause.map(Box::new),
+            line: 0,
+        }
+    }
+    
+    /// 行番号付きでエラーを作成
+    pub fn with_line(kind: &str, message: &str, line: usize, cause: Option<TsuchinokoError>) -> Self {
+        Self {
+            kind: kind.to_string(),
+            message: message.to_string(),
+            cause: cause.map(Box::new),
+            line,
         }
     }
     
@@ -34,9 +47,13 @@ impl TsuchinokoError {
 
 impl std::fmt::Display for TsuchinokoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 行番号があれば表示
+        if self.line > 0 {
+            write!(f, "[line {}] ", self.line)?;
+        }
         write!(f, "{}: {}", self.kind, self.message)?;
         if let Some(cause) = &self.cause {
-            write!(f, "\nCaused by: {}", cause)?;
+            write!(f, "\n  Caused by: {}", cause)?;
         }
         Ok(())
     }

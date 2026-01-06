@@ -2257,9 +2257,10 @@ fn test_emit_raise_node() {
         exc_type: "ValueError".to_string(),
         message: Box::new(IrExpr::StringLit("invalid input".to_string())),
         cause: None,
+        line: 0,
     };
     let result = emitter.emit_nodes(&[node]);
-    assert!(result.contains("return Err(TsuchinokoError::new"), "Expected Err in: {}", result);
+    assert!(result.contains("return Err(TsuchinokoError::with_line"), "Expected Err in: {}", result);
     assert!(result.contains("ValueError"), "Expected ValueError in: {}", result);
 }
 
@@ -2270,6 +2271,7 @@ fn test_emit_raise_from_node() {
         exc_type: "RuntimeError".to_string(),
         message: Box::new(IrExpr::StringLit("operation failed".to_string())),
         cause: Some(Box::new(IrExpr::Var("original_error".to_string()))),
+        line: 0,
     };
     let result = emitter.emit_nodes(&[node]);
     assert!(result.contains("RuntimeError"), "Expected RuntimeError in: {}", result);

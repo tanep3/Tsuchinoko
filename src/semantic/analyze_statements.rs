@@ -998,6 +998,7 @@ impl SemanticAnalyzer {
                     exc_type: exception_type.clone(),
                     message: Box::new(msg_ir),
                     cause: cause_ir,
+                    line: 0,  // TODO: AST から行番号を取得
                 })
             }
             Stmt::TryExcept {
