@@ -463,10 +463,25 @@ use pyo3::types::PyList;
                         // self.needs_resident is global state (might be set by previous nodes)
                         self.emit_resident_main(&body_str)
                     } else {
-                        // Regular main (no resident needed)
-                        // Even if no resident features are used, if we are in a mode where resident is required by others, or simply default main?
-                        // If this comes from semantic top level wrap, it's our entry point.
-                        format!("fn main() {{\n{body_str}\n}}")
+                        // V1.5.2: Wrap main in catch_unwind for panic diagnosis
+                        format!(
+                            r#"fn main() {{
+    let result = std::panic::catch_unwind(|| {{
+{body_str}
+    }});
+    if let Err(e) = result {{
+        let msg = if let Some(s) = e.downcast_ref::<&str>() {{
+            s.to_string()
+        }} else if let Some(s) = e.downcast_ref::<String>() {{
+            s.clone()
+        }} else {{
+            "Unknown panic".to_string()
+        }};
+        eprintln!("InternalError: {{}}", msg);
+        std::process::exit(1);
+    }}
+}}"#
+                        )
                     }
                 } else {
                     let snake_name = if name == "main" {
