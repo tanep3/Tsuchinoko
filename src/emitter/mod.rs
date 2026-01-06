@@ -570,8 +570,10 @@ use pyo3::types::PyList;
                         final_body_str
                     };
 
-                    // V1.5.2: Determine return type string based on may_raise
-                    let ret_str = if *may_raise {
+                    // V1.5.2: Determine return type string based on may_raise or external calls
+                    // External calls (func_needs_resident) also require Result type
+                    let effective_may_raise = *may_raise || func_needs_resident;
+                    let ret_str = if effective_may_raise {
                         // Mark that TsuchinokoError type is needed
                         self.uses_tsuchinoko_error = true;
                         // Result<T, TsuchinokoError> for functions that may raise
@@ -1089,8 +1091,10 @@ use pyo3::types::PyList;
                     IrBinOp::MatMul => {
                         // V1.3.0: a @ b -> py_bridge.call_json("numpy.matmul", &[a, b])
                         // For NumPy arrays, use the resident worker
+                        // V1.5.2: Use ? instead of unwrap() for error propagation
+                        self.current_func_may_raise = true;
                         return format!(
-                            "py_bridge.call_json::<serde_json::Value>(\"numpy.matmul\", &[serde_json::json!({}), serde_json::json!({})]).unwrap()",
+                            "py_bridge.call_json::<serde_json::Value>(\"numpy.matmul\", &[serde_json::json!({}), serde_json::json!({})]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?",
                             self.emit_expr(left),
                             self.emit_expr(right)
                         );
@@ -2025,8 +2029,10 @@ use pyo3::types::PyList;
                     .map(|i| format!("serde_json::json!(_arg_{i})"))
                     .collect();
 
+                // V1.5.2: Use ? instead of unwrap() for error propagation
+                self.current_func_may_raise = true;
                 format!(
-                    "{{\n{}    py_bridge.call_json_method::<serde_json::Value>({}.clone(), {:?}, &[{}]).unwrap()\n}}",
+                    "{{\n{}    py_bridge.call_json_method::<serde_json::Value>({}.clone(), {:?}, &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
                     arg_evals.join("\n    ") + "\n",
                     self.emit_expr_internal(target),
                     method,
@@ -2165,8 +2171,11 @@ use pyo3::types::PyList;
                         let args_json: Vec<String> = (0..args.len())
                             .map(|i| format!("serde_json::json!(_arg_{i})"))
                             .collect();
+                        // V1.5.2: Use ? instead of unwrap() for error propagation
+                        // Mark that this function now may raise (for Ok() wrapping of returns)
+                        self.current_func_may_raise = true;
                         format!(
-                            "{{\n{}    py_bridge.call_json::<serde_json::Value>(\"{}\", &[{}]).unwrap()\n}}",
+                            "{{\n{}    py_bridge.call_json::<serde_json::Value>(\"{}\", &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
                             arg_evals.join("\n    ") + "\n",
                             target,
                             args_json.join(", ")
