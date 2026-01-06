@@ -41,6 +41,7 @@ fn test_function_def_to_rust() {
             op: IrBinOp::Add,
             right: Box::new(IrExpr::Var("b".to_string())),
         })))],
+        hoisted_vars: vec![],
     }];
 
     let result = emit(&ir);

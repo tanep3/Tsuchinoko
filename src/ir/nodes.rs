@@ -7,6 +7,14 @@ use super::exprs::IrExpr;
 use super::ops::IrAugAssignOp;
 use crate::semantic::Type;
 
+/// ホイストが必要な変数（ブロック境界を越えて使用される）
+/// Python の関数スコープを Rust のブロックスコープに変換するために使用
+#[derive(Debug, Clone, PartialEq)]
+pub struct HoistedVar {
+    pub name: String,
+    pub ty: Type,
+}
+
 /// IR ノード型 (ステートメント)
 #[derive(Debug, Clone)]
 pub enum IrNode {
@@ -56,6 +64,7 @@ pub enum IrNode {
         params: Vec<(String, Type)>,
         ret: Type,
         body: Vec<IrNode>,
+        hoisted_vars: Vec<HoistedVar>,  // 関数スコープにホイストが必要な変数
     },
     /// メソッド宣言 (implブロック内)
     MethodDecl {

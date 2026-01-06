@@ -206,6 +206,7 @@ impl SemanticAnalyzer {
                     params,
                     ret,
                     body,
+                    hoisted_vars,
                 } = other_decls.remove(pos)
                 {
                     other_decls.push(IrNode::FuncDecl {
@@ -213,6 +214,7 @@ impl SemanticAnalyzer {
                         params,
                         ret,
                         body,
+                        hoisted_vars,
                     });
                 }
             }
@@ -222,6 +224,7 @@ impl SemanticAnalyzer {
                 params: vec![],
                 ret: Type::Unit,
                 body: main_body,
+                hoisted_vars: vec![],
             });
         }
 

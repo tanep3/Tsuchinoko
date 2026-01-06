@@ -378,6 +378,7 @@ use pyo3::types::PyList;
                 params,
                 ret,
                 body,
+                hoisted_vars,  // 将来使用
             } => {
                 // Check if this is the auto-generated top-level function -> "fn main"
                 if name == "__top_level__" {

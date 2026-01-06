@@ -605,6 +605,7 @@ impl SemanticAnalyzer {
                     params: ir_params,
                     ret: ret_type,
                     body: ir_body,
+                    hoisted_vars: vec![],  // TODO: ホイスト解析で設定
                 })
             }
 
@@ -632,6 +633,7 @@ impl SemanticAnalyzer {
                                 params: vec![],
                                 ret: Type::Unit,
                                 body: ir_body,
+                                hoisted_vars: vec![],  // main 関数用
                             });
                         }
                     }
@@ -1094,6 +1096,7 @@ def add(a: int, b: int) -> int:
             params,
             ret,
             body,
+            hoisted_vars: _,
         } = &ir[0]
         {
             assert_eq!(name, "add");
