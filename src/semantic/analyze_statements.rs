@@ -988,7 +988,7 @@ impl SemanticAnalyzer {
             Stmt::TryExcept {
                 try_body,
                 except_clauses,
-                else_body: _,  // V1.5.2: TODO - Phase 2 で対応
+                else_body,      // V1.5.2: else ブロック
                 finally_body,
             } => {
                 // Use analyze_stmts to properly detect mutable variables in try/except blocks
@@ -1023,11 +1023,19 @@ impl SemanticAnalyzer {
                 } else {
                     None
                 };
+                
+                // V1.5.2: Analyze else body if present
+                let ir_else_body = if let Some(eb) = else_body {
+                    Some(self.analyze_stmts(eb)?)
+                } else {
+                    None
+                };
 
                 Ok(IrNode::TryBlock {
                     try_body: ir_try_body,
                     except_body: ir_except_body,
-                    except_var,  // V1.5.2: 例外変数名
+                    except_var,       // V1.5.2: 例外変数名
+                    else_body: ir_else_body,  // V1.5.2: else ブロック
                     finally_body: ir_finally_body,
                 })
             }

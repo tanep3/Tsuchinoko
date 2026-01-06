@@ -117,11 +117,12 @@ pub enum IrNode {
     TypeAlias { name: String, ty: Type },
 
     // --- 例外・アサート ---
-    /// try-exceptブロック (V1.5.2: except_var 追加)
+    /// try-exceptブロック (V1.5.2: except_var, else_body 追加)
     TryBlock {
         try_body: Vec<IrNode>,
         except_body: Vec<IrNode>,
-        except_var: Option<String>,  // V1.5.2: except ... as e の変数名
+        except_var: Option<String>,        // V1.5.2: except ... as e の変数名
+        else_body: Option<Vec<IrNode>>,    // V1.5.2: else ブロック
         finally_body: Option<Vec<IrNode>>,
     },
     /// アサート文 (V1.3.0)

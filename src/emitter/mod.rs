@@ -1,6 +1,6 @@
 //! Emitter module - Rust code generation
 
-use crate::ir::{IrAugAssignOp, IrBinOp, IrExpr, IrNode, IrUnaryOp};
+use crate::ir::{HoistedVar, IrAugAssignOp, IrBinOp, IrExpr, IrNode, IrUnaryOp};
 use crate::semantic::Type;
 use std::collections::HashMap;
 
@@ -44,6 +44,10 @@ pub struct RustEmitter {
     resident_functions: std::collections::HashSet<String>,
     /// Whether we are currently emitting inside a function wrapper that already has py_bridge
     is_inside_resident_func: bool,
+    /// Current function's hoisted variables (need Option<T> pattern)
+    current_hoisted_vars: Vec<HoistedVar>,
+    /// Variables hoisted in current TryBlock that need unwrap() in else body
+    try_hoisted_vars: Vec<String>,
 }
 
 /// Convert camelCase/PascalCase to snake_case
@@ -78,6 +82,8 @@ impl RustEmitter {
             external_imports: Vec::new(),
             resident_functions: std::collections::HashSet::new(),
             is_inside_resident_func: false,
+            current_hoisted_vars: Vec::new(),
+            try_hoisted_vars: Vec::new(),
         }
     }
 
@@ -243,35 +249,54 @@ use pyo3::types::PyList;
                 mutable,
                 init,
             } => {
-                let mut_kw = if *mutable { "mut " } else { "" };
-                let ty_annotation = if ty.contains_unknown() {
-                    "".to_string()
-                } else {
-                    format!(": {}", ty.to_rust_string())
-                };
-
                 let snake_name = to_snake_case(name);
-                match init {
-                    Some(expr) => {
-                        // If assigning a string literal to a String variable, add .to_string()
-                        let expr_str = if matches!(ty, Type::String)
-                            && matches!(expr.as_ref(), IrExpr::StringLit(_))
-                        {
-                            if let IrExpr::StringLit(s) = expr.as_ref() {
-                                format!("\"{s}\".to_string()")
+                
+                // Check if this variable is hoisted (already declared as Option<T>)
+                let is_hoisted = self.current_hoisted_vars.iter().any(|v| v.name == *name);
+                
+                if is_hoisted {
+                    // Hoisted variable: emit assignment with Some()
+                    match init {
+                        Some(expr) => {
+                            let expr_str = self.emit_expr_no_outer_parens(expr);
+                            format!("{indent}{snake_name} = Some({expr_str});")
+                        }
+                        None => {
+                            // No init: leave as None (already declared)
+                            String::new()
+                        }
+                    }
+                } else {
+                    // Normal variable declaration
+                    let mut_kw = if *mutable { "mut " } else { "" };
+                    let ty_annotation = if ty.contains_unknown() {
+                        "".to_string()
+                    } else {
+                        format!(": {}", ty.to_rust_string())
+                    };
+
+                    match init {
+                        Some(expr) => {
+                            // If assigning a string literal to a String variable, add .to_string()
+                            let expr_str = if matches!(ty, Type::String)
+                                && matches!(expr.as_ref(), IrExpr::StringLit(_))
+                            {
+                                if let IrExpr::StringLit(s) = expr.as_ref() {
+                                    format!("\"{s}\".to_string()")
+                                } else {
+                                    self.emit_expr_no_outer_parens(expr)
+                                }
+                            } else if matches!(expr.as_ref(), IrExpr::Tuple(_)) {
+                                // Keep parentheses for tuple literals
+                                self.emit_expr(expr)
                             } else {
                                 self.emit_expr_no_outer_parens(expr)
-                            }
-                        } else if matches!(expr.as_ref(), IrExpr::Tuple(_)) {
-                            // Keep parentheses for tuple literals
-                            self.emit_expr(expr)
-                        } else {
-                            self.emit_expr_no_outer_parens(expr)
-                        };
-                        format!("{indent}let {mut_kw}{snake_name}{ty_annotation} = {expr_str};")
-                    }
-                    None => {
-                        format!("{indent}let {mut_kw}{snake_name}{ty_annotation};")
+                            };
+                            format!("{indent}let {mut_kw}{snake_name}{ty_annotation} = {expr_str};")
+                        }
+                        None => {
+                            format!("{indent}let {mut_kw}{snake_name}{ty_annotation};")
+                        }
                     }
                 }
             }
@@ -418,10 +443,28 @@ use pyo3::types::PyList;
                     // needs_resident をバックアップして、この関数内での変化を追跡
                     let needs_resident_backup = self.needs_resident;
                     self.needs_resident = false;
+                    
+                    // Set current hoisted variables for this function scope
+                    let old_hoisted = std::mem::replace(&mut self.current_hoisted_vars, hoisted_vars.clone());
 
                     self.indent += 1;
+                    
+                    // Generate Option<T> declarations for hoisted variables
+                    let hoisted_decls = if !hoisted_vars.is_empty() {
+                        let inner_indent = "    ".repeat(self.indent);
+                        hoisted_vars.iter()
+                            .map(|v| format!("{}let mut {}: Option<{}> = None;", inner_indent, to_snake_case(&v.name), v.ty.to_rust_string()))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    } else {
+                        String::new()
+                    };
+                    
                     let body_str = self.emit_nodes(body);
                     self.indent -= 1;
+                    
+                    // Restore previous hoisted vars
+                    self.current_hoisted_vars = old_hoisted;
 
                     let func_needs_resident = self.needs_resident;
 
@@ -462,6 +505,13 @@ use pyo3::types::PyList;
                         s
                     } else {
                         body_str
+                    };
+                    
+                    // Prepend hoisted variable declarations to body
+                    let final_body_str = if !hoisted_decls.is_empty() {
+                        format!("{}\n{}", hoisted_decls, final_body_str)
+                    } else {
+                        final_body_str
                     };
 
                     let ret_str = effective_ret.to_rust_string();
@@ -595,19 +645,53 @@ use pyo3::types::PyList;
             IrNode::TryBlock {
                 try_body,
                 except_body,
-                except_var,  // V1.5.2
+                except_var,    // V1.5.2
+                else_body,     // V1.5.2
                 finally_body,
             } => {
+                let mut result = String::new();
+                
+                // V1.5.2: If else_body exists, collect VarDecl from try_body for hoisting
+                let need_hoisting = else_body.is_some();
+                let mut hoisted_vars: Vec<(String, Type)> = Vec::new();
+                
+                if need_hoisting {
+                    // Collect variable declarations from try_body
+                    for node in try_body.iter() {
+                        if let IrNode::VarDecl { name, ty, .. } = node {
+                            hoisted_vars.push((name.clone(), ty.clone()));
+                        }
+                    }
+                    
+                    // Emit hoisted variable declarations as Option<T>
+                    for (name, ty) in &hoisted_vars {
+                        let snake_name = to_snake_case(name);
+                        result.push_str(&format!("{indent}let mut {}: Option<{}> = None;\n", snake_name, ty.to_rust_string()));
+                    }
+                }
+                
                 // Use std::panic::catch_unwind to catch panics (like division by zero)
                 // and fall back to except_body
-                let mut result = format!(
+                result.push_str(&format!(
                     "{indent}match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{\n"
-                );
+                ));
                 self.indent += 1;
 
-                // Emit try body - convert return statements to just expressions for last statement
+                // Emit try body - convert VarDecl to assignments if hoisting
                 for (i, node) in try_body.iter().enumerate() {
                     let is_last = i == try_body.len() - 1;
+                    
+                    // Handle VarDecl specially if hoisting
+                    if need_hoisting {
+                        if let IrNode::VarDecl { name, init: Some(expr), .. } = node {
+                            // Convert to assignment: var = Some(value);
+                            let inner_indent = "    ".repeat(self.indent);
+                            let snake_name = to_snake_case(name);
+                            result.push_str(&format!("{}{} = Some({});\n", inner_indent, snake_name, self.emit_expr(expr)));
+                            continue;
+                        }
+                    }
+                    
                     if is_last {
                         // For the last statement, if it's a return, emit just the expression
                         match node {
@@ -633,8 +717,36 @@ use pyo3::types::PyList;
                 self.indent -= 1;
                 result.push_str(&format!("{indent}}})) {{\n"));
 
-                // Ok case - return the value
-                result.push_str(&format!("{indent}    Ok(__val) => __val,\n"));
+                // V1.5.2: Ok case - execute else block if present, otherwise return the value
+                if let Some(else_nodes) = else_body {
+                    // Set hoisted vars for unwrap() in else body
+                    let old_try_hoisted = std::mem::replace(
+                        &mut self.try_hoisted_vars, 
+                        hoisted_vars.iter().map(|(name, _)| to_snake_case(name)).collect()
+                    );
+                    
+                    result.push_str(&format!("{indent}    Ok(_) => {{\n"));
+                    self.indent += 2;
+                    for node in else_nodes {
+                        match node {
+                            IrNode::Return(Some(expr)) => {
+                                let inner_indent = "    ".repeat(self.indent);
+                                result.push_str(&format!("{}{}\n", inner_indent, self.emit_expr(expr)));
+                            }
+                            _ => {
+                                result.push_str(&self.emit_node(node));
+                                result.push('\n');
+                            }
+                        }
+                    }
+                    self.indent -= 2;
+                    result.push_str(&format!("{indent}    }}\n"));
+                    
+                    // Restore old try_hoisted_vars
+                    self.try_hoisted_vars = old_try_hoisted;
+                } else {
+                    result.push_str(&format!("{indent}    Ok(__val) => __val,\n"));
+                }
 
                 // V1.5.2: Err case - if except_var is defined, bind panic info to it
                 if let Some(var_name) = except_var {
@@ -809,7 +921,7 @@ use pyo3::types::PyList;
             IrExpr::NoneLit => "None".to_string(),
             IrExpr::Var(name) => {
                 // Don't snake_case qualified paths like std::collections::HashMap
-                if name.contains("::") {
+                let var_name = if name.contains("::") {
                     name.clone()
                 } else if name
                     .chars()
@@ -821,6 +933,13 @@ use pyo3::types::PyList;
                     name.clone()
                 } else {
                     to_snake_case(name)
+                };
+                
+                // If this variable is in try_hoisted_vars, add .unwrap()
+                if self.try_hoisted_vars.contains(&var_name) {
+                    format!("{}.unwrap()", var_name)
+                } else {
+                    var_name
                 }
             }
             IrExpr::BinOp { left, op, right } => {

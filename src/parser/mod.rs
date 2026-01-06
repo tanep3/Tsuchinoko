@@ -289,6 +289,7 @@ pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
 }
 
 /// Parse a try-except statement (V1.5.0: supports multiple except clauses & finally)
+/// V1.5.2: Added else block support
 fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), TsuchinokoError> {
     // First line should be "try:"
     let line_num = start + 1;
@@ -297,6 +298,7 @@ fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchin
     let (try_body, try_consumed) = parse_block(lines, start + 1)?;
 
     let mut except_clauses = Vec::new();
+    let mut else_body = None;
     let mut finally_body = None;
     let mut current = start + 1 + try_consumed;
 
@@ -308,6 +310,11 @@ fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchin
             let clause = parse_except_clause(lines, current)?;
             except_clauses.push(clause.0);
             current += clause.1;
+        } else if line == "else:" || line.starts_with("else:") {
+            // V1.5.2: Parse else block (after except, before finally)
+            let (eb, consumed) = parse_block(lines, current + 1)?;
+            else_body = Some(eb);
+            current += 1 + consumed;
         } else if line.starts_with("finally:") || line == "finally:" {
             // Parse finally block
             let (fb, consumed) = parse_block(lines, current + 1)?;
@@ -332,7 +339,7 @@ fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchin
         Stmt::TryExcept {
             try_body,
             except_clauses,
-            else_body: None,  // V1.5.2: TODO - Phase 2 で対応
+            else_body,
             finally_body,
         },
         total_consumed,
