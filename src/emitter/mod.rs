@@ -52,6 +52,8 @@ pub struct RustEmitter {
     uses_tsuchinoko_error: bool,
     /// V1.5.2: Whether current function may raise (for Ok() wrapping)
     current_func_may_raise: bool,
+    /// V1.5.2: Functions that return Result (may_raise=true or has external calls)
+    may_raise_functions: std::collections::HashSet<String>,
 }
 
 /// Convert camelCase/PascalCase to snake_case
@@ -90,6 +92,7 @@ impl RustEmitter {
             try_hoisted_vars: Vec::new(),
             uses_tsuchinoko_error: false,
             current_func_may_raise: false,
+            may_raise_functions: std::collections::HashSet::new(),
         }
     }
 
@@ -448,8 +451,15 @@ use pyo3::types::PyList;
                     // needs_resident をバックアップ
                     let needs_resident_backup = self.needs_resident;
                     self.needs_resident = false;
+                    
+                    // V1.5.2: __top_level__ (main) is never may_raise
+                    let old_may_raise = self.current_func_may_raise;
+                    self.current_func_may_raise = false;
 
                     let body_str = self.emit_nodes(body);
+                    
+                    // Restore may_raise state
+                    self.current_func_may_raise = old_may_raise;
 
                     // 関数内で resident 機能が使われたか
                     let func_needs_resident = self.needs_resident;
@@ -591,6 +601,19 @@ use pyo3::types::PyList;
                         // 関数を resident_functions セットに登録
                         self.resident_functions.insert(snake_name.clone());
                     }
+                    
+                    // V1.5.2: Register may_raise functions for call-site unwrapping
+                    if effective_may_raise {
+                        self.may_raise_functions.insert(snake_name.clone());
+                    }
+                    
+                    // V1.5.2: Add implicit Ok(()) for may_raise functions that return Unit
+                    let final_body_with_ok = if effective_may_raise && *effective_ret == Type::Unit {
+                        let inner_indent = "    ".repeat(self.indent + 1);
+                        format!("{}\n{}Ok(())", final_body_str, inner_indent)
+                    } else {
+                        final_body_str
+                    };
 
                     format!(
                         "{}fn {}({}) -> {} {{\n{}\n{}}}",
@@ -598,7 +621,7 @@ use pyo3::types::PyList;
                         snake_name,
                         params_str.join(", "),
                         ret_str,
-                        final_body_str,
+                        final_body_with_ok,
                         indent
                     )
                 }
@@ -1288,7 +1311,17 @@ use pyo3::types::PyList;
                                     args_str.insert(0, "&mut py_bridge".to_string());
                                 }
                             }
-                            format!("{}({})", func_name, args_str.join(", "))
+                            let call_str = format!("{}({})", func_name, args_str.join(", "));
+                            
+                            // V1.5.2: If calling a may_raise function from a non-may_raise context, add .unwrap()
+                            if self.may_raise_functions.contains(&func_name) && !self.current_func_may_raise {
+                                format!("{}.unwrap()", call_str)
+                            } else if self.may_raise_functions.contains(&func_name) && self.current_func_may_raise {
+                                // Both caller and callee may raise - use ?
+                                format!("{}?", call_str)
+                            } else {
+                                call_str
+                            }
                         }
                     } else {
                         // Generic function call (func is expression)

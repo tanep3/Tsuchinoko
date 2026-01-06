@@ -971,20 +971,38 @@ impl SemanticAnalyzer {
     ) -> Result<Option<IrExpr>, TsuchinokoError> {
         match (name, args.len()) {
             // V1.3.1: int(x) -> x as i64 (handled here to avoid emitter responsibility)
+            // V1.5.2: If x is Type::Any (serde_json::Value), use JsonConversion
             ("int", 1) => {
+                let arg_ty = self.infer_type(&args[0]);
                 let arg = self.analyze_expr(&args[0])?;
-                Ok(Some(IrExpr::Cast {
-                    target: Box::new(arg),
-                    ty: "i64".to_string(),
-                }))
+                if matches!(arg_ty, Type::Any) {
+                    Ok(Some(IrExpr::JsonConversion {
+                        target: Box::new(arg),
+                        convert_to: "i64".to_string(),
+                    }))
+                } else {
+                    Ok(Some(IrExpr::Cast {
+                        target: Box::new(arg),
+                        ty: "i64".to_string(),
+                    }))
+                }
             }
             // V1.3.1: float(x) -> x as f64 (handled here to avoid emitter responsibility)
+            // V1.5.2: If x is Type::Any (serde_json::Value), use JsonConversion
             ("float", 1) => {
+                let arg_ty = self.infer_type(&args[0]);
                 let arg = self.analyze_expr(&args[0])?;
-                Ok(Some(IrExpr::Cast {
-                    target: Box::new(arg),
-                    ty: "f64".to_string(),
-                }))
+                if matches!(arg_ty, Type::Any) {
+                    Ok(Some(IrExpr::JsonConversion {
+                        target: Box::new(arg),
+                        convert_to: "f64".to_string(),
+                    }))
+                } else {
+                    Ok(Some(IrExpr::Cast {
+                        target: Box::new(arg),
+                        ty: "f64".to_string(),
+                    }))
+                }
             }
             ("range", 1) => {
                 let start = IrExpr::IntLit(0);
