@@ -938,6 +938,7 @@ use pyo3::types::PyList;
                 body,
                 takes_self,
                 takes_mut_self,
+                may_raise,
             } => {
                 let inner_indent = "    ".repeat(self.indent);
                 let self_param = if !*takes_self {
@@ -953,7 +954,11 @@ use pyo3::types::PyList;
                     .map(|(n, t)| format!("{}: {}", to_snake_case(n), t.to_rust_string()))
                     .collect();
 
-                let ret_str = if *ret == Type::Unit {
+                // V1.5.2: Use Result type if may_raise
+                let ret_str = if *may_raise {
+                    self.uses_tsuchinoko_error = true;
+                    format!(" -> Result<{}, TsuchinokoError>", ret.to_rust_string())
+                } else if *ret == Type::Unit {
                     "".to_string()
                 } else {
                     format!(" -> {}", ret.to_rust_string())
@@ -968,11 +973,23 @@ use pyo3::types::PyList;
                     ret_str
                 );
 
+                // V1.5.2: Track may_raise for return statement wrapping
+                let old_may_raise = self.current_func_may_raise;
+                self.current_func_may_raise = *may_raise;
+
                 self.indent += 1;
                 for node in body {
                     result.push_str(&self.emit_node(node));
                     result.push('\n');
                 }
+                
+                // V1.5.2: Add implicit Ok(()) for may_raise methods returning Unit
+                if *may_raise && *ret == Type::Unit {
+                    let ok_indent = "    ".repeat(self.indent);
+                    result.push_str(&format!("{}Ok(())\n", ok_indent));
+                }
+                
+                self.current_func_may_raise = old_may_raise;
                 self.indent -= 1;
                 result.push_str(&format!("{inner_indent}}}"));
                 result

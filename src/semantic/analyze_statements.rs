@@ -949,11 +949,20 @@ impl SemanticAnalyzer {
                             self.scope.define(p_name, p_ty.clone(), false);
                         }
 
+                        // V1.5.2: Save and reset may_raise flag for this method
+                        let old_may_raise = self.current_func_may_raise;
+                        self.current_func_may_raise = false;
+
                         let ir_body: Vec<IrNode> = method
                             .body
                             .iter()
                             .map(|s| self.analyze_stmt(s))
                             .collect::<Result<Vec<_>, _>>()?;
+                        
+                        // Capture method's may_raise status
+                        let method_may_raise = self.current_func_may_raise;
+                        self.current_func_may_raise = old_may_raise;
+                        
                         self.scope.pop();
 
                         // Check if method modifies self (contains FieldAssign)
@@ -968,6 +977,7 @@ impl SemanticAnalyzer {
                             body: ir_body,
                             takes_self: !method.is_static,
                             takes_mut_self,
+                            may_raise: method_may_raise,
                         });
                     }
 

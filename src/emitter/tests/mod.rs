@@ -1055,6 +1055,7 @@ fn test_emit_method_decl() {
         body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(42))))],
         takes_self: true,
         takes_mut_self: false,
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("fn get_value("));
@@ -1070,6 +1071,7 @@ fn test_emit_method_decl_mut_self() {
         body: vec![],
         takes_self: true,
         takes_mut_self: true,
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("&mut self"));
@@ -1545,6 +1547,7 @@ fn test_emit_method_decl_static() {
         body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(42))))],
         takes_self: false,
         takes_mut_self: false,
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("fn create("));
@@ -1854,6 +1857,7 @@ fn test_emit_impl_block_with_method() {
             body: vec![],
             takes_self: true,
             takes_mut_self: true,
+            may_raise: false,
         }],
     };
     let result = emit(&[node]);

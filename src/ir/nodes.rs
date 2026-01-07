@@ -75,6 +75,7 @@ pub enum IrNode {
         body: Vec<IrNode>,
         takes_self: bool,     // インスタンスメソッド
         takes_mut_self: bool, // selfを変更する場合
+        may_raise: bool,      // V1.5.2: 例外を発生しうるメソッドか
     },
 
     // --- 制御構造 ---

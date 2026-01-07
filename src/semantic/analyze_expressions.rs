@@ -618,6 +618,9 @@ impl SemanticAnalyzer {
                                 .map(|a| self.analyze_expr(a))
                                 .collect::<Result<Vec<_>, _>>()?;
 
+                            // V1.5.2: PyO3 calls can fail, mark current function as may_raise
+                            self.current_func_may_raise = true;
+
                             // Return structured PyO3 call
                             return Ok(IrExpr::PyO3Call {
                                 module: module_alias.clone(),
@@ -977,6 +980,9 @@ impl SemanticAnalyzer {
                         )?;
 
                         if matches!(target_ty, Type::Any) {
+                            // V1.5.2: PyO3 method calls can fail
+                            self.current_func_may_raise = true;
+
                             return Ok(IrExpr::PyO3MethodCall {
                                 target: Box::new(ir_target),
                                 method: method_name.to_string(),
@@ -1003,11 +1009,24 @@ impl SemanticAnalyzer {
                             &expected_param_types,
                             &self.get_func_name_for_debug(func.as_ref()),
                         )?;
+                        
+                        // V1.5.2: Check if callee may raise (from function type)
+                        let callee_ty = self.infer_type(func);
+                        let callee_may_raise = match &callee_ty {
+                            Type::Func { may_raise, .. } => *may_raise,
+                            _ => false,
+                        };
+                        
+                        // Propagate may_raise to current function
+                        if callee_may_raise {
+                            self.current_func_may_raise = true;
+                        }
+                        
                         let ir_func = self.analyze_expr(func)?;
                         Ok(IrExpr::Call {
                             func: Box::new(ir_func),
                             args: ir_args,
-                            callee_may_raise: false,
+                            callee_may_raise,
                         })
                     }
                 }
@@ -1034,6 +1053,9 @@ impl SemanticAnalyzer {
                 // For sequence indexing, ensure the index is cast to usize
                 let target_ty = self.infer_type(target);
                 if matches!(target_ty, Type::Any) {
+                    // V1.5.2: PyO3 method calls can fail
+                    self.current_func_may_raise = true;
+
                     return Ok(IrExpr::PyO3MethodCall {
                         target: Box::new(ir_target),
                         method: "__getitem__".to_string(),
