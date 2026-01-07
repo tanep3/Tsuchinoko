@@ -517,13 +517,25 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                // V1.5.2: Preserve may_raise from forward_declare_functions
+                let existing_may_raise = self.scope.lookup(name)
+                    .and_then(|v| {
+                        if let Type::Func { may_raise, .. } = &v.ty {
+                            Some(*may_raise)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(false);
+
                 // Define function in current scope BEFORE analyzing body (for recursion)
                 self.scope.define(
                     name,
                     Type::Func {
                         params: param_types.clone(),
                         ret: Box::new(resolved_ret_type.clone()),
-                        is_boxed: false, may_raise: false,
+                        is_boxed: false,
+                        may_raise: existing_may_raise,  // Preserve from forward_declare
                     },
                     false,
                 );

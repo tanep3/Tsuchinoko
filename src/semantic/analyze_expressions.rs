@@ -919,8 +919,18 @@ impl SemanticAnalyzer {
                             Box::new(IrExpr::Var(name.clone()))
                         };
 
-                        // V1.5.2: Check if callee may raise
-                        let callee_may_raise = self.may_raise_funcs.contains(name);
+                        // V1.5.2: Check if callee may raise (from scope, set by forward_declare_functions)
+                        let callee_may_raise = if let Some(var_info) = self.scope.lookup(name) {
+                            matches!(&var_info.ty, Type::Func { may_raise: true, .. })
+                        } else {
+                            // Fallback to may_raise_funcs for functions set during analyze
+                            self.may_raise_funcs.contains(name)
+                        };
+                        
+                        // Propagate may_raise to current function
+                        if callee_may_raise {
+                            self.current_func_may_raise = true;
+                        }
 
                         Ok(IrExpr::Call {
                             func: final_func,

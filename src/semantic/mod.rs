@@ -262,6 +262,31 @@ impl SemanticAnalyzer {
         }
     }
 
+    /// V1.5.2: Pre-process import statements to populate external_imports
+    /// 
+    /// This must be done BEFORE forward_declare_functions so that may_raise
+    /// can correctly detect external library calls in function bodies.
+    fn preprocess_imports(&mut self, stmts: &[Stmt]) {
+        const NATIVE_MODULES: &[&str] = &["math", "typing"];
+        
+        for stmt in stmts {
+            if let Stmt::Import { module, alias, items } = stmt {
+                if !NATIVE_MODULES.contains(&module.as_str()) {
+                    if let Some(ref item_list) = items {
+                        // "from module import a, b, c" - register each item as (module, item)
+                        for item in item_list {
+                            self.external_imports.push((module.clone(), item.clone()));
+                        }
+                    } else {
+                        // "import module" or "import module as alias"
+                        let effective_name = alias.as_ref().unwrap_or(module);
+                        self.external_imports.push((module.clone(), effective_name.clone()));
+                    }
+                }
+            }
+        }
+    }
+
     pub fn define(&mut self, name: &str, ty: Type, mutable: bool) {
         self.scope.define(name, ty, mutable);
     }
@@ -439,6 +464,11 @@ impl SemanticAnalyzer {
 
         // Step 1.5: Collect mutable variables (targets of AugAssign or reassignment)
         self.collect_mutable_vars(&stmts);
+
+        // Step 1.6: V1.5.2 - Pre-process imports to populate external_imports
+        // This must be done BEFORE forward_declare_functions so that may_raise
+        // can correctly detect external library calls.
+        self.preprocess_imports(&stmts);
 
         // Step 1.7: V1.5.2 - Forward-declare all function signatures before analyzing statements
         // This ensures that function return types are available for type inference
