@@ -464,12 +464,60 @@ impl SemanticAnalyzer {
                 }
 
                 let mut param_types = Vec::new();
-                for p in params {
-                    let base_ty = p
-                        .type_hint
-                        .as_ref()
-                        .map(|th| self.type_from_hint(th))
-                        .unwrap_or(Type::Unknown);
+                
+                // V1.5.2: Get refined param types from forward_declare if available
+                let refined_func_params: Option<Vec<Type>> = self.scope.lookup(name)
+                    .and_then(|v| {
+                        if let Type::Func { params, .. } = &v.ty {
+                            Some(params.clone())
+                        } else {
+                            None
+                        }
+                    });
+                
+                for (i, p) in params.iter().enumerate() {
+                    // First try to use refined type from forward_declare
+                    let base_ty = if let Some(ref refined) = refined_func_params {
+                        if let Some(refined_ty) = refined.get(i) {
+                            // Unwrap Ref/MutRef to get the base type
+                            match refined_ty {
+                                Type::Ref(inner) | Type::MutRef(inner) => {
+                                    // For variadic params, if inner is already List, extract element type
+                                    if p.variadic {
+                                        if let Type::List(elem_ty) = inner.as_ref() {
+                                            elem_ty.as_ref().clone()
+                                        } else {
+                                            inner.as_ref().clone()
+                                        }
+                                    } else {
+                                        inner.as_ref().clone()
+                                    }
+                                },
+                                // Direct type (no Ref wrapper)
+                                _ => {
+                                    if p.variadic {
+                                        if let Type::List(elem_ty) = refined_ty {
+                                            elem_ty.as_ref().clone()
+                                        } else {
+                                            refined_ty.clone()
+                                        }
+                                    } else {
+                                        refined_ty.clone()
+                                    }
+                                },
+                            }
+                        } else {
+                            p.type_hint
+                                .as_ref()
+                                .map(|th| self.type_from_hint(th))
+                                .unwrap_or(Type::Unknown)
+                        }
+                    } else {
+                        p.type_hint
+                            .as_ref()
+                            .map(|th| self.type_from_hint(th))
+                            .unwrap_or(Type::Unknown)
+                    };
 
                     // For variadic parameters (*args), wrap in Vec<T>
                     let ty = if p.variadic {

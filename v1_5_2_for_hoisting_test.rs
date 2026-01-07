@@ -1,4 +1,4 @@
-fn find_first_even(nums: &[serde_json::Value]) -> i64 {
+fn find_first_even(nums: &[i64]) -> i64 {
     let mut found: Option<i64> = None;
     for n in nums.iter().cloned() {
         if (n % 2i64) == 0i64 {

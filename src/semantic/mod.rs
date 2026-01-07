@@ -381,6 +381,150 @@ impl SemanticAnalyzer {
                 break;
             }
         }
+        
+        // V1.5.2 (2-Pass Step 4): Refine Unknown parameter types from call sites
+        // For parameters with Type::List(Unknown), infer element type from caller's arguments
+        self.refine_unknown_param_types(stmts);
+    }
+    
+    /// V1.5.2: Refine Unknown types in function parameters by analyzing call sites
+    /// 
+    /// When a function has `nums: list` (without element type), we infer the element
+    /// type from how the function is called, e.g., `func([1, 2, 3])` -> List<Int>
+    fn refine_unknown_param_types(&mut self, stmts: &[Stmt]) {
+        // Collect call site argument types for each function
+        let mut call_arg_types: std::collections::HashMap<String, Vec<Vec<Type>>> = 
+            std::collections::HashMap::new();
+        
+        // Walk all statements to find function calls
+        for stmt in stmts {
+            self.collect_call_arg_types_from_stmt(stmt, &mut call_arg_types);
+        }
+        
+        // Update function signatures based on collected info
+        for (func_name, call_args_list) in call_arg_types {
+            if let Some(var_info) = self.scope.lookup(&func_name) {
+                if let Type::Func { params, ret, is_boxed, may_raise } = &var_info.ty {
+                    let mut refined_params = params.clone();
+                    let mut changed = false;
+                    
+                    // For each parameter position, check if we can refine
+                    for (i, param_type) in params.iter().enumerate() {
+                        if let Some(refined) = self.try_refine_type(param_type, &call_args_list, i) {
+                            refined_params[i] = refined;
+                            changed = true;
+                        }
+                    }
+                    
+                    if changed {
+                        self.scope.define(
+                            &func_name,
+                            Type::Func {
+                                params: refined_params,
+                                ret: ret.clone(),
+                                is_boxed: *is_boxed,
+                                may_raise: *may_raise,
+                            },
+                            false,
+                        );
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Collect argument types from all call sites in a statement
+    fn collect_call_arg_types_from_stmt(&self, stmt: &Stmt, result: &mut std::collections::HashMap<String, Vec<Vec<Type>>>) {
+        match stmt {
+            Stmt::FuncDef { body, .. } => {
+                for s in body {
+                    self.collect_call_arg_types_from_stmt(s, result);
+                }
+            }
+            Stmt::Assign { value, .. } | Stmt::Return(Some(value)) => {
+                self.collect_call_arg_types_from_expr(value, result);
+            }
+            Stmt::Expr(expr) => {
+                self.collect_call_arg_types_from_expr(expr, result);
+            }
+            Stmt::If { condition, then_body, else_body, .. } => {
+                self.collect_call_arg_types_from_expr(condition, result);
+                for s in then_body {
+                    self.collect_call_arg_types_from_stmt(s, result);
+                }
+                if let Some(eb) = else_body {
+                    for s in eb {
+                        self.collect_call_arg_types_from_stmt(s, result);
+                    }
+                }
+            }
+            Stmt::For { iter, body, .. } => {
+                self.collect_call_arg_types_from_expr(iter, result);
+                for s in body {
+                    self.collect_call_arg_types_from_stmt(s, result);
+                }
+            }
+            Stmt::While { condition, body } => {
+                self.collect_call_arg_types_from_expr(condition, result);
+                for s in body {
+                    self.collect_call_arg_types_from_stmt(s, result);
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    /// Collect argument types from call expressions
+    fn collect_call_arg_types_from_expr(&self, expr: &Expr, result: &mut std::collections::HashMap<String, Vec<Vec<Type>>>) {
+        match expr {
+            Expr::Call { func, args, .. } => {
+                if let Expr::Ident(func_name) = func.as_ref() {
+                    let arg_types: Vec<Type> = args.iter().map(|a| self.infer_type(a)).collect();
+                    result.entry(func_name.clone()).or_default().push(arg_types);
+                }
+                // Recurse into args
+                for arg in args {
+                    self.collect_call_arg_types_from_expr(arg, result);
+                }
+            }
+            Expr::BinOp { left, right, .. } => {
+                self.collect_call_arg_types_from_expr(left, result);
+                self.collect_call_arg_types_from_expr(right, result);
+            }
+            Expr::Attribute { value, .. } => {
+                self.collect_call_arg_types_from_expr(value, result);
+            }
+            Expr::Index { target, index } => {
+                self.collect_call_arg_types_from_expr(target, result);
+                self.collect_call_arg_types_from_expr(index, result);
+            }
+            Expr::List(elements) | Expr::Tuple(elements) => {
+                for e in elements {
+                    self.collect_call_arg_types_from_expr(e, result);
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    /// Try to refine a type if it contains Unknown
+    fn try_refine_type(&self, param_type: &Type, call_args_list: &[Vec<Type>], param_idx: usize) -> Option<Type> {
+        // Only refine List<Unknown> for now
+        if let Type::List(inner) = param_type {
+            if matches!(inner.as_ref(), Type::Unknown) {
+                // Find the most concrete type from all call sites
+                for call_args in call_args_list {
+                    if let Some(arg_type) = call_args.get(param_idx) {
+                        if let Type::List(elem_type) = arg_type {
+                            if !matches!(elem_type.as_ref(), Type::Unknown) {
+                                return Some(Type::List(elem_type.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Preprocess top-level statements to normalize main function and guard blocks
