@@ -561,12 +561,17 @@ use pyo3::types::PyList;
                         // ONLY set this if we are NOT in the special __top_level__ (fn main)
                         // Actually, this block is the "else" (non-__top_level__) path, so it's always true.
                         self.is_inside_resident_func = true;
+                        
+                        // Phase F: Set may_raise for proper Ok() wrapping in Return statements
+                        let backup_may_raise = self.current_func_may_raise;
+                        self.current_func_may_raise = *may_raise || func_needs_resident;
 
                         // Reset needs_resident just in case, though we know it will become true
                         self.needs_resident = false;
                         let s = self.emit_nodes(body);
 
                         self.is_inside_resident_func = backup_flag;
+                        self.current_func_may_raise = backup_may_raise;
                         self.indent -= 1;
                         s
                     } else {

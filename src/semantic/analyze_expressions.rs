@@ -302,7 +302,11 @@ impl SemanticAnalyzer {
                         if let Some(Expr::Lambda { params, body }) = key_lambda {
                             // sorted(iterable, key=lambda x: expr) -> sort_by_key
                             let param = params.first().cloned().unwrap_or_else(|| "x".to_string());
+                            // Phase E: Register lambda param in scope before analyzing body
+                            self.scope.push();
+                            self.scope.define(&param, Type::Unknown, false);
                             let ir_body = self.analyze_expr(body)?;
+                            self.scope.pop();
                             let body_str = self.emit_simple_ir_expr(&ir_body);
 
                             if reverse {
@@ -537,7 +541,11 @@ impl SemanticAnalyzer {
                                         if let Expr::Lambda { params, body } = lambda {
                                             if params.len() == 1 {
                                                 let param = &params[0];
+                                                // Phase E: Register lambda param in scope before analyzing body
+                                                self.scope.push();
+                                                self.scope.define(param, Type::Unknown, false);
                                                 let body_ir = self.analyze_expr(body)?;
+                                                self.scope.pop();
                                                 IrExpr::RawCode(format!(
                                                     "|&{}| {}",
                                                     param,
@@ -1012,10 +1020,19 @@ impl SemanticAnalyzer {
                         
                         // V1.5.2: Check if callee may raise (from function type)
                         let callee_ty = self.infer_type(func);
-                        let callee_may_raise = match &callee_ty {
+                        let mut callee_may_raise = match &callee_ty {
                             Type::Func { may_raise, .. } => *may_raise,
                             _ => false,
                         };
+                        
+                        // Phase G: from-import functions always may raise
+                        if let Expr::Ident(func_name) = func.as_ref() {
+                            let is_from_import = self.external_imports.iter()
+                                .any(|(_, item)| item == func_name);
+                            if is_from_import {
+                                callee_may_raise = true;
+                            }
+                        }
                         
                         // Propagate may_raise to current function
                         if callee_may_raise {
