@@ -1025,6 +1025,18 @@ impl SemanticAnalyzer {
                             _ => false,
                         };
                         
+                        // V1.5.2 (2-Pass): Also check scope directly for user-defined functions
+                        // This ensures we get the may_raise status from forward_declare_functions
+                        if !callee_may_raise {
+                            if let Expr::Ident(func_name) = func.as_ref() {
+                                if let Some(var_info) = self.scope.lookup(func_name) {
+                                    if let Type::Func { may_raise: true, .. } = &var_info.ty {
+                                        callee_may_raise = true;
+                                    }
+                                }
+                            }
+                        }
+                        
                         // Phase G: from-import functions always may raise
                         if let Expr::Ident(func_name) = func.as_ref() {
                             let is_from_import = self.external_imports.iter()

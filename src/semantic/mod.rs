@@ -90,6 +90,178 @@ impl SemanticAnalyzer {
         }
     }
 
+    /// V1.5.2 (2-Pass): Quick check if a function body may raise exceptions
+    /// This is a lightweight check on AST only, without full semantic analysis.
+    fn quick_may_raise_check(&self, body: &[Stmt]) -> bool {
+        for stmt in body {
+            if self.stmt_may_raise(stmt) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// V1.5.2 (2-Pass): Check if a statement may raise
+    fn stmt_may_raise(&self, stmt: &Stmt) -> bool {
+        match stmt {
+            // Explicit raise statement
+            Stmt::Raise { .. } => true,
+            
+            // Expression statement - check the expression
+            Stmt::Expr(expr) => self.expr_may_raise(expr),
+            
+            // Assignment - check the value expression
+            Stmt::Assign { value, .. } => self.expr_may_raise(value),
+            
+            // Augmented assignment - check the value
+            Stmt::AugAssign { value, .. } => self.expr_may_raise(value),
+            
+            // Return - check the return value
+            Stmt::Return(Some(expr)) => self.expr_may_raise(expr),
+            
+            // If statement - check all branches
+            Stmt::If { then_body, elif_clauses, else_body, .. } => {
+                if self.quick_may_raise_check(then_body) {
+                    return true;
+                }
+                for (_, elif_body) in elif_clauses {
+                    if self.quick_may_raise_check(elif_body) {
+                        return true;
+                    }
+                }
+                if let Some(else_b) = else_body {
+                    if self.quick_may_raise_check(else_b) {
+                        return true;
+                    }
+                }
+                false
+            }
+            
+            // For loop - check body
+            Stmt::For { body, .. } => self.quick_may_raise_check(body),
+            
+            // While loop - check body
+            Stmt::While { body, .. } => self.quick_may_raise_check(body),
+            
+            // Try - if it has try, it's handling exceptions, the body may raise
+            Stmt::TryExcept { try_body, .. } => self.quick_may_raise_check(try_body),
+            
+            // Default - doesn't raise
+            _ => false,
+        }
+    }
+
+    /// V1.5.2 (2-Pass): Check if an expression may raise
+    fn expr_may_raise(&self, expr: &Expr) -> bool {
+        match expr {
+            // PyO3 call: module.func(...)
+            Expr::Call { func, .. } => {
+                // Check if it's a PyO3 module call (module.func())
+                if let Expr::Attribute { value, .. } = func.as_ref() {
+                    if let Expr::Ident(module) = value.as_ref() {
+                        if self.external_imports.iter().any(|(_, alias)| alias == module) {
+                            return true;
+                        }
+                    }
+                }
+                
+                // Check if it's a from-import call (func())
+                if let Expr::Ident(name) = func.as_ref() {
+                    if self.external_imports.iter().any(|(_, item)| item == name) {
+                        return true;
+                    }
+                }
+                
+                // Check args for any raising expressions
+                if let Expr::Call { args, .. } = expr {
+                    return args.iter().any(|a| self.expr_may_raise(a));
+                }
+                
+                false
+            }
+            
+            // Binary operation - check both sides
+            Expr::BinOp { left, right, .. } => {
+                self.expr_may_raise(left) || self.expr_may_raise(right)
+            }
+            
+            // Attribute access - check target
+            Expr::Attribute { value, .. } => self.expr_may_raise(value),
+            
+            // Index access - check target and index
+            Expr::Index { target, index } => {
+                self.expr_may_raise(target) || self.expr_may_raise(index)
+            }
+            
+            // Default - doesn't raise
+            _ => false,
+        }
+    }
+
+    /// V1.5.2 (2-Pass Step 3): Check if function body calls any may_raise function
+    fn body_calls_may_raise_func(&self, body: &[Stmt]) -> bool {
+        for stmt in body {
+            if self.stmt_calls_may_raise_func(stmt) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// V1.5.2 (2-Pass Step 3): Check if a statement calls any may_raise function
+    fn stmt_calls_may_raise_func(&self, stmt: &Stmt) -> bool {
+        match stmt {
+            Stmt::Expr(expr) => self.expr_calls_may_raise_func(expr),
+            Stmt::Assign { value, .. } => self.expr_calls_may_raise_func(value),
+            Stmt::AugAssign { value, .. } => self.expr_calls_may_raise_func(value),
+            Stmt::Return(Some(expr)) => self.expr_calls_may_raise_func(expr),
+            Stmt::If { then_body, elif_clauses, else_body, .. } => {
+                if self.body_calls_may_raise_func(then_body) {
+                    return true;
+                }
+                for (_, elif_body) in elif_clauses {
+                    if self.body_calls_may_raise_func(elif_body) {
+                        return true;
+                    }
+                }
+                if let Some(else_b) = else_body {
+                    if self.body_calls_may_raise_func(else_b) {
+                        return true;
+                    }
+                }
+                false
+            }
+            Stmt::For { body, .. } => self.body_calls_may_raise_func(body),
+            Stmt::While { body, .. } => self.body_calls_may_raise_func(body),
+            Stmt::TryExcept { try_body, .. } => self.body_calls_may_raise_func(try_body),
+            _ => false,
+        }
+    }
+
+    /// V1.5.2 (2-Pass Step 3): Check if an expression calls any may_raise function
+    fn expr_calls_may_raise_func(&self, expr: &Expr) -> bool {
+        match expr {
+            // Function call - check if callee is may_raise
+            Expr::Call { func, args, .. } => {
+                // Check if calling a known may_raise function
+                if let Expr::Ident(name) = func.as_ref() {
+                    if let Some(var_info) = self.scope.lookup(name) {
+                        if let Type::Func { may_raise: true, .. } = &var_info.ty {
+                            return true;
+                        }
+                    }
+                }
+                // Check args recursively
+                args.iter().any(|a| self.expr_calls_may_raise_func(a))
+            }
+            Expr::BinOp { left, right, .. } => {
+                self.expr_calls_may_raise_func(left) || self.expr_calls_may_raise_func(right)
+            }
+            Expr::Attribute { value, .. } => self.expr_calls_may_raise_func(value),
+            _ => false,
+        }
+    }
+
     pub fn define(&mut self, name: &str, ty: Type, mutable: bool) {
         self.scope.define(name, ty, mutable);
     }
@@ -104,6 +276,7 @@ impl SemanticAnalyzer {
                 name,
                 params,
                 return_type,
+                body,
                 ..
             } = stmt
             {
@@ -129,6 +302,9 @@ impl SemanticAnalyzer {
                     })
                     .collect();
 
+                // V1.5.2 (2-Pass): Determine may_raise from function body
+                let may_raise = self.quick_may_raise_check(body);
+
                 // Register function in scope
                 self.scope.define(
                     name,
@@ -136,10 +312,48 @@ impl SemanticAnalyzer {
                         params: param_types,
                         ret: Box::new(ret_type),
                         is_boxed: false,
-                        may_raise: false,  // Will be updated during full analysis
+                        may_raise,
                     },
                     false,
                 );
+            }
+        }
+        
+        // V1.5.2 (2-Pass Step 3): Propagate may_raise through call chains
+        // Functions that call may_raise functions should also be may_raise
+        // We iterate until no changes are made (usually 2 iterations max)
+        loop {
+            let mut changed = false;
+            
+            for stmt in stmts {
+                if let Stmt::FuncDef { name, body, .. } = stmt {
+                    // Check if this function calls any may_raise function
+                    let calls_may_raise = self.body_calls_may_raise_func(body);
+                    
+                    // Get current may_raise status from scope
+                    if let Some(var_info) = self.scope.lookup(name) {
+                        if let Type::Func { may_raise, params, ret, is_boxed } = &var_info.ty {
+                            if !may_raise && calls_may_raise {
+                                // Update to may_raise = true
+                                self.scope.define(
+                                    name,
+                                    Type::Func {
+                                        params: params.clone(),
+                                        ret: ret.clone(),
+                                        is_boxed: *is_boxed,
+                                        may_raise: true,
+                                    },
+                                    false,
+                                );
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if !changed {
+                break;
             }
         }
     }
