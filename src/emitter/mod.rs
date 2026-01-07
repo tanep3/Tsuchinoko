@@ -48,6 +48,8 @@ pub struct RustEmitter {
     current_hoisted_vars: Vec<HoistedVar>,
     /// Variables hoisted in current TryBlock that need unwrap() in else body
     try_hoisted_vars: Vec<String>,
+    /// V1.5.2: Variables that shadow hoisted variables in current scope (e.g., for loop vars)
+    shadowed_vars: Vec<String>,
     /// V1.5.2: Whether TsuchinokoError type is needed (any may_raise=true function)
     uses_tsuchinoko_error: bool,
     /// V1.5.2: Whether current function may raise (for Ok() wrapping)
@@ -90,6 +92,7 @@ impl RustEmitter {
             is_inside_resident_func: false,
             current_hoisted_vars: Vec::new(),
             try_hoisted_vars: Vec::new(),
+            shadowed_vars: Vec::new(),
             uses_tsuchinoko_error: false,
             current_func_may_raise: false,
             in_try_body: false,
@@ -660,18 +663,63 @@ use pyo3::types::PyList;
                 iter,
                 body,
             } => {
+                // V1.5.2: Check which loop variables are hoisted
+                let loop_vars: Vec<String> = if var.contains(',') {
+                    var.split(',').map(|s| to_snake_case(s.trim())).collect()
+                } else {
+                    vec![to_snake_case(var)]
+                };
+                
+                // Build mapping: (original_name, actual_loop_var_name, is_hoisted)
+                // If hoisted, use _loop_<name> as loop variable to avoid shadowing
+                let mut var_mapping: Vec<(String, String, bool)> = Vec::new();
+                for lv in &loop_vars {
+                    let is_hoisted = self.current_hoisted_vars.iter().any(|v| to_snake_case(&v.name) == *lv);
+                    let loop_var_name = if is_hoisted {
+                        format!("_loop_{}", lv)
+                    } else {
+                        lv.clone()
+                    };
+                    var_mapping.push((lv.clone(), loop_var_name, is_hoisted));
+                }
+                
+                // Add renamed loop vars to shadowed_vars (these override hoisted check)
+                let old_shadowed_len = self.shadowed_vars.len();
+                for (_, loop_var_name, _) in &var_mapping {
+                    self.shadowed_vars.push(loop_var_name.clone());
+                }
+                
                 self.indent += 1;
                 let body_str = self.emit_nodes(body);
+                
+                // V1.5.2: For hoisted loop variables, add assignment at START of loop body
+                // This ensures i.unwrap() works inside the loop body
+                let mut hoisted_init_assignments = Vec::new();
+                for (hoisted_name, loop_var_name, is_hoisted) in &var_mapping {
+                    if *is_hoisted {
+                        let inner_indent = "    ".repeat(self.indent);
+                        hoisted_init_assignments.push(format!("{}{} = Some({});", inner_indent, hoisted_name, loop_var_name));
+                    }
+                }
+                
                 self.indent -= 1;
+                
+                // Restore shadowed_vars
+                self.shadowed_vars.truncate(old_shadowed_len);
 
-                // V1.3.0: Handle tuple unpacking for enumerate/zip
+                // Build the loop variable string for the for statement
                 let var_str = if var.contains(',') {
-                    // Tuple unpacking: i, item -> (i, item)
-                    let parts: Vec<String> =
-                        var.split(',').map(|s| to_snake_case(s.trim())).collect();
+                    let parts: Vec<String> = var_mapping.iter().map(|(_, lv, _)| lv.clone()).collect();
                     format!("({})", parts.join(", "))
                 } else {
-                    to_snake_case(var)
+                    var_mapping[0].1.clone()
+                };
+
+                // Build final body: hoisted init + original body
+                let final_body = if hoisted_init_assignments.is_empty() {
+                    body_str
+                } else {
+                    format!("{}\n{}", hoisted_init_assignments.join("\n"), body_str)
                 };
 
                 format!(
@@ -679,7 +727,7 @@ use pyo3::types::PyList;
                     indent,
                     var_str,
                     self.emit_expr(iter),
-                    body_str,
+                    final_body,
                     indent
                 )
             }
@@ -1094,11 +1142,14 @@ use pyo3::types::PyList;
                     to_snake_case(name)
                 };
                 
+                // V1.5.2: Skip unwrap if variable is shadowed (e.g., for loop variable)
+                let is_shadowed = self.shadowed_vars.contains(&var_name);
+                
                 // Check if this variable needs unwrap() due to hoisting
                 // 1. try_hoisted_vars: variables from try block (need clone due to closure)
                 // 2. current_hoisted_vars: variables hoisted at function level (if/for etc.)
-                let is_try_hoisted = self.try_hoisted_vars.contains(&var_name);
-                let is_func_hoisted = self.current_hoisted_vars.iter().any(|v| to_snake_case(&v.name) == var_name);
+                let is_try_hoisted = !is_shadowed && self.try_hoisted_vars.contains(&var_name);
+                let is_func_hoisted = !is_shadowed && self.current_hoisted_vars.iter().any(|v| to_snake_case(&v.name) == var_name);
                 
                 if is_try_hoisted {
                     // Try block hoisting needs clone due to catch_unwind closure
