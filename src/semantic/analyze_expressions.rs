@@ -908,10 +908,13 @@ impl SemanticAnalyzer {
                             Box::new(IrExpr::Var(name.clone()))
                         };
 
+                        // V1.5.2: Check if callee may raise
+                        let callee_may_raise = self.may_raise_funcs.contains(name);
+
                         Ok(IrExpr::Call {
                             func: final_func,
                             args: ir_args,
-                            callee_may_raise: false,
+                            callee_may_raise,
                         })
                     }
                     Expr::Attribute { value, attr } => {

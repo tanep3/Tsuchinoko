@@ -617,6 +617,11 @@ impl SemanticAnalyzer {
                 // V1.5.2: Capture may_raise from this function, then restore parent's flag
                 let func_may_raise = self.current_func_may_raise;
                 self.current_func_may_raise = old_may_raise;
+                
+                // V1.5.2: Register function in may_raise_funcs for callee_may_raise detection
+                if func_may_raise {
+                    self.may_raise_funcs.insert(name.clone());
+                }
 
                 let ir_name = name.clone();
                 Ok(IrNode::FuncDecl {

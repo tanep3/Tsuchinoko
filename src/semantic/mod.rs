@@ -64,6 +64,8 @@ pub struct SemanticAnalyzer {
     func_base_depth: usize,
     /// V1.5.2: Current function may raise an exception (Result化が必要)
     current_func_may_raise: bool,
+    /// V1.5.2: Functions that may raise (for callee_may_raise detection)
+    may_raise_funcs: std::collections::HashSet<String>,
 }
 
 impl Default for SemanticAnalyzer {
@@ -84,6 +86,7 @@ impl SemanticAnalyzer {
             hoisted_var_candidates: std::collections::HashMap::new(),
             func_base_depth: 0,
             current_func_may_raise: false,
+            may_raise_funcs: std::collections::HashSet::new(),
         }
     }
 

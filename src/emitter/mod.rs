@@ -52,6 +52,8 @@ pub struct RustEmitter {
     uses_tsuchinoko_error: bool,
     /// V1.5.2: Whether current function may raise (for Ok() wrapping)
     current_func_may_raise: bool,
+    /// V1.5.2: Whether we are inside try body closure (? not allowed, use .unwrap())
+    in_try_body: bool,
 }
 
 /// Convert camelCase/PascalCase to snake_case
@@ -90,6 +92,7 @@ impl RustEmitter {
             try_hoisted_vars: Vec::new(),
             uses_tsuchinoko_error: false,
             current_func_may_raise: false,
+            in_try_body: false,
         }
     }
 
@@ -774,6 +777,10 @@ use pyo3::types::PyList;
                     &mut self.try_hoisted_vars,
                     hoisted_vars.iter().map(|(name, _)| to_snake_case(name)).collect()
                 );
+                
+                // V1.5.2: Set in_try_body flag - closure returns (), so ? is not allowed
+                let old_in_try_body = self.in_try_body;
+                self.in_try_body = true;
 
                 // Emit try body - convert VarDecl to assignments if hoisting
                 for (i, node) in try_body.iter().enumerate() {
@@ -813,6 +820,10 @@ use pyo3::types::PyList;
                 }
 
                 self.indent -= 1;
+                
+                // V1.5.2: Restore in_try_body flag after try body
+                self.in_try_body = old_in_try_body;
+                
                 result.push_str(&format!("{indent}}})) {{\n"));
 
                 // V1.5.2: Ok case - execute else block if present, otherwise return the value
@@ -849,8 +860,11 @@ use pyo3::types::PyList;
                 // V1.5.2: Err case - if except_var is defined, bind panic info to it
                 if let Some(var_name) = except_var {
                     result.push_str(&format!("{indent}    Err(__exc) => {{\n"));
-                    // Bind the panic info to the variable name as a String
-                    result.push_str(&format!("{indent}        let {} = format!(\"{{:?}}\", __exc);\n", to_snake_case(var_name)));
+                    // V1.5.2: Convert panic info to TsuchinokoError for use in raise from
+                    result.push_str(&format!(
+                        "{indent}        let {} = TsuchinokoError::new(\"Exception\", &format!(\"{{:?}}\", __exc), None);\n",
+                        to_snake_case(var_name)
+                    ));
                 } else {
                     result.push_str(&format!("{indent}    Err(_) => {{\n"));
                 }
@@ -1309,10 +1323,11 @@ use pyo3::types::PyList;
                             
                             // V1.5.2: If calling a may_raise function from a non-may_raise context, add .unwrap()
                             // Use IR's callee_may_raise instead of tracking in emitter
-                            if *callee_may_raise && !self.current_func_may_raise {
+                            // Also, in try body closure, use .unwrap() instead of ? (closure returns ())
+                            if *callee_may_raise && (!self.current_func_may_raise || self.in_try_body) {
                                 format!("{}.unwrap()", call_str)
-                            } else if *callee_may_raise && self.current_func_may_raise {
-                                // Both caller and callee may raise - use ?
+                            } else if *callee_may_raise && self.current_func_may_raise && !self.in_try_body {
+                                // Both caller and callee may raise, and not in try body - use ?
                                 format!("{}?", call_str)
                             } else {
                                 call_str
