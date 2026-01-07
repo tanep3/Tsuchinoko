@@ -3343,7 +3343,7 @@ fn test_type_func_creation() {
     let ty = Type::Func {
         params: vec![Type::Int, Type::Int],
         ret: Box::new(Type::Int),
-        is_boxed: false,
+        is_boxed: false, may_raise: false,
     };
     if let Type::Func { params, ret, .. } = ty {
         assert_eq!(params.len(), 2);

@@ -5,10 +5,29 @@
 //! - `type_from_hint`: 型ヒントから型を生成
 //! - `resolve_type`: 型エイリアスの解決
 //! - `expr_to_type`: 式を型として解釈
+//! - `resolve_type_with_context`: コンテキスト付き型解決 (V1.5.2)
 
 use crate::parser::{BinOp as AstBinOp, Expr, TypeHint, UnaryOp as AstUnaryOp};
 
 use super::{ScopeStack, Type};
+
+/// 型解決コンテキスト
+/// 
+/// 「型を問う」操作を統一的に扱うための抽象化。
+/// 同じ式でも、使用されるコンテキストによって異なる型が必要になる。
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeContext {
+    /// 式の値としての型
+    Value,
+    /// イテラブルの要素としての型 (for loop)
+    IterElement,
+    /// 関数呼び出しの戻り値としての型
+    CallReturn,
+    /// インデックスアクセスの結果としての型
+    Index,
+    /// タプル展開の要素としての型 (index 指定)
+    TupleUnpack(usize),
+}
 
 /// 型推論を行うトレイト
 ///
@@ -278,6 +297,57 @@ pub trait TypeInference {
         }
     }
 
+    /// V1.5.2: コンテキストに基づいて型を変換する
+    ///
+    /// 型情報の「伝播チェーン」を抽象化。
+    /// 同じ型でもコンテキストによって異なる結果型が必要になる。
+    fn apply_context(&self, ty: Type, context: &TypeContext) -> Type {
+        match (ty.clone(), context) {
+            // 値としての型: そのまま返す
+            (t, TypeContext::Value) => t,
+            
+            // イテラブルの要素型を抽出
+            (Type::List(inner), TypeContext::IterElement) => *inner,
+            (Type::Ref(inner), TypeContext::IterElement) => {
+                self.apply_context(*inner, context)
+            }
+            (Type::Dict(k, _), TypeContext::IterElement) => *k,
+            (Type::String, TypeContext::IterElement) => Type::String,
+            (Type::Set(inner), TypeContext::IterElement) => *inner,
+            
+            // 関数呼び出しの戻り値型を抽出
+            (Type::Func { ret, .. }, TypeContext::CallReturn) => *ret,
+            
+            // インデックスアクセスの結果型
+            (Type::List(inner), TypeContext::Index) => *inner,
+            (Type::Dict(_, v), TypeContext::Index) => *v,
+            (Type::Tuple(elems), TypeContext::Index) => {
+                // タプルの全要素が同じ型の場合はその型を返す
+                if !elems.is_empty() && elems.windows(2).all(|w| w[0] == w[1]) {
+                    elems[0].clone()
+                } else {
+                    Type::Unknown
+                }
+            }
+            
+            // タプル展開の指定インデックスの要素
+            (Type::Tuple(elems), TypeContext::TupleUnpack(i)) => {
+                elems.get(*i).cloned().unwrap_or(Type::Unknown)
+            }
+            
+            // 解決できない場合
+            (_, _) => Type::Unknown,
+        }
+    }
+
+    /// V1.5.2: コンテキスト付きで型を解決する
+    ///
+    /// 式の型を推論し、コンテキストに基づいて変換する。
+    fn resolve_type_with_context(&self, expr: &Expr, context: &TypeContext) -> Type {
+        let base_type = self.infer_type(expr);
+        self.apply_context(base_type, context)
+    }
+
     /// 式を型として解釈する（型エイリアス用）
     ///
     /// `ConditionFunction = Callable[[int], bool]` のような
@@ -328,7 +398,7 @@ pub trait TypeInference {
                 return Some(Type::Func {
                     params: param_types,
                     ret: Box::new(ret_type),
-                    is_boxed: true,
+                    is_boxed: true, may_raise: false,
                 });
             }
         }

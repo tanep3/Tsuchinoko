@@ -523,7 +523,7 @@ impl SemanticAnalyzer {
                     Type::Func {
                         params: param_types.clone(),
                         ret: Box::new(resolved_ret_type.clone()),
-                        is_boxed: false,
+                        is_boxed: false, may_raise: false,
                     },
                     false,
                 );
@@ -553,7 +553,7 @@ impl SemanticAnalyzer {
                     }
 
                     let ir_body = self.analyze_stmts(body)?;
-                    self.scope.pop();
+                    self.scope.pop_without_promotion();
 
                     // Warn about closures if capturing variables?
                     // Currently implicit capture via 'move' in Rust.
@@ -572,7 +572,7 @@ impl SemanticAnalyzer {
                         ty: Type::Func {
                             params: param_types,
                             ret: Box::new(resolved_ret_type),
-                            is_boxed: true,
+                            is_boxed: true, may_raise: false,
                         }, // Variable holding closure is Boxed
                         mutable: false,
                         init: Some(Box::new(boxed_closure)),
@@ -606,7 +606,7 @@ impl SemanticAnalyzer {
                 // Restore old return type
                 self.current_return_type = old_return_type;
 
-                self.scope.pop();
+                self.scope.pop_without_promotion();
 
                 // Collect hoisted variables: those used at shallower depth than defined
                 let hoisted_vars: Vec<HoistedVar> = self.hoisted_var_candidates

@@ -1649,6 +1649,7 @@ mod tests {
             params,
             ret,
             is_boxed,
+            ..
         }) = ty
         {
             assert_eq!(params.len(), 2);

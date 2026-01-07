@@ -18,6 +18,8 @@ pub enum Type {
         params: Vec<Type>,
         ret: Box<Type>,
         is_boxed: bool,
+        /// V1.5.2: Whether this function may raise (Result で wrap される)
+        may_raise: bool,
     },
     Unit,           // ()
     Struct(String), // User-defined struct
@@ -78,6 +80,7 @@ impl Type {
                     params: param_types,
                     ret: Box::new(ret),
                     is_boxed: true, // Callable implies generic/boxed function object
+                    may_raise: false,
                 }
             }
             // Check if it's a user-defined type (capitalized name)
@@ -148,6 +151,7 @@ impl Type {
                 params,
                 ret,
                 is_boxed,
+                ..
             } => {
                 let p: Vec<_> = params.iter().map(|t| t.to_rust_string()).collect();
                 if *is_boxed {

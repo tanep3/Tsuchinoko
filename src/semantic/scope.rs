@@ -110,6 +110,15 @@ impl ScopeStack {
         }
     }
 
+    /// Pop the current scope WITHOUT promoting variables to parent scope.
+    /// Used for function scopes where local variables (including parameters)
+    /// should not leak into the parent scope.
+    pub fn pop_without_promotion(&mut self) {
+        if self.scopes.len() > 1 {
+            self.scopes.pop();
+        }
+    }
+
     pub fn define(&mut self, name: &str, ty: Type, mutable: bool) {
         let depth = self.depth();
         if let Some(scope) = self.scopes.last_mut() {

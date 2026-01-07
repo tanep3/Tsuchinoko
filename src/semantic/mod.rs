@@ -94,6 +94,56 @@ impl SemanticAnalyzer {
         self.scope.define(name, ty, mutable);
     }
 
+    /// V1.5.2: Forward-declare all function signatures
+    /// 
+    /// This allows top-level code to correctly infer types for function calls
+    /// to functions defined later in the file.
+    fn forward_declare_functions(&mut self, stmts: &[Stmt]) {
+        for stmt in stmts {
+            if let Stmt::FuncDef {
+                name,
+                params,
+                return_type,
+                ..
+            } = stmt
+            {
+                let ret_type = return_type
+                    .as_ref()
+                    .map(|th| self.type_from_hint(th))
+                    .unwrap_or(Type::Unit);
+
+                // Collect parameter types
+                let param_types: Vec<Type> = params
+                    .iter()
+                    .map(|p| {
+                        let base_ty = p
+                            .type_hint
+                            .as_ref()
+                            .map(|th| self.type_from_hint(th))
+                            .unwrap_or(Type::Unknown);
+                        if p.variadic {
+                            Type::List(Box::new(base_ty))
+                        } else {
+                            base_ty
+                        }
+                    })
+                    .collect();
+
+                // Register function in scope
+                self.scope.define(
+                    name,
+                    Type::Func {
+                        params: param_types,
+                        ret: Box::new(ret_type),
+                        is_boxed: false,
+                        may_raise: false,  // Will be updated during full analysis
+                    },
+                    false,
+                );
+            }
+        }
+    }
+
     /// Preprocess top-level statements to normalize main function and guard blocks
     fn preprocess_top_level(&self, stmts: &[Stmt]) -> Vec<Stmt> {
         let mut new_stmts = Vec::new();
@@ -175,6 +225,11 @@ impl SemanticAnalyzer {
 
         // Step 1.5: Collect mutable variables (targets of AugAssign or reassignment)
         self.collect_mutable_vars(&stmts);
+
+        // Step 1.7: V1.5.2 - Forward-declare all function signatures before analyzing statements
+        // This ensures that function return types are available for type inference
+        // when processing top-level code that calls functions defined later in the file.
+        self.forward_declare_functions(&stmts);
 
         // Step 2: Unified Analysis (Pass 0 -> Pass 1)
         // Now top-level statements are treated exactly like block statements
@@ -522,7 +577,7 @@ impl SemanticAnalyzer {
                                 return Some(Type::Func {
                                     params: param_types,
                                     ret: Box::new(ret_type),
-                                    is_boxed: true,
+                                    is_boxed: true, may_raise: false,
                                 });
                             }
                         }
