@@ -1,8 +1,8 @@
 # Tsuchinoko 要件定義書
 
 > **著者**: Tane Channel Technology  
-> **バージョン**: 1.5.0  
-> **最終更新**: 2026-01-05
+> **バージョン**: 1.5.2  
+> **最終更新**: 2026-01-08
 
 ---
 
@@ -120,6 +120,11 @@ flowchart LR
 | F-043 | スライス完全対応 | step指定 `[::2]`, 逆順 `[::-1]` | 高 | 1.5 | ✅ V1.5.0 |
 | F-044 | Optional 深い対応 | `x or default`, 三項演算子連携, union type | 高 | 1.5 | ✅ V1.5.0 |
 | F-045 | 例外処理強化 | 複数例外, as e, finally | 中 | 1.5 | ✅ V1.5.0 |
+| F-046 | raise from | 例外チェーン `raise A from B` | 高 | 1.5.2 | ✅ V1.5.2 |
+| F-047 | try/except/else | 例外未発生時の else ブロック | 中 | 1.5.2 | ✅ V1.5.2 |
+| F-048 | Result型統一 | 例外発生関数は `Result<T, TsuchinokoError>` | 高 | 1.5.2 | ✅ V1.5.2 |
+| F-049 | 外部境界Result化 | PyO3/py_bridge 失敗を `Err` で返す | 高 | 1.5.2 | ✅ V1.5.2 |
+| F-050 | エラー行番号 | `[line 10] RuntimeError: ...` 形式 | 中 | 1.5.2 | ✅ V1.5.2 |
 
 ### 3.2 サポート対象外
 

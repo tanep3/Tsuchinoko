@@ -1,5 +1,5 @@
 //! TsuchinokoError - Python例外を表現するエラー型
-//! 
+//!
 //! このファイルは**生成されるRustコード**に埋め込まれる型定義です。
 //! トランスパイラ内部のエラー型（crate::error::TsuchinokoError）とは別物です。
 
@@ -69,7 +69,7 @@ impl std::error::Error for TsuchinokoError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_error_definition_not_empty() {
         assert!(!TSUCHINOKO_ERROR_DEFINITION.is_empty());

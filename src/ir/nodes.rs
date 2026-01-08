@@ -64,8 +64,8 @@ pub enum IrNode {
         params: Vec<(String, Type)>,
         ret: Type,
         body: Vec<IrNode>,
-        hoisted_vars: Vec<HoistedVar>,  // 関数スコープにホイストが必要な変数
-        may_raise: bool,                // 例外を発生しうる関数か（Result化が必要）
+        hoisted_vars: Vec<HoistedVar>, // 関数スコープにホイストが必要な変数
+        may_raise: bool,               // 例外を発生しうる関数か（Result化が必要）
     },
     /// メソッド宣言 (implブロック内)
     MethodDecl {
@@ -123,8 +123,8 @@ pub enum IrNode {
     TryBlock {
         try_body: Vec<IrNode>,
         except_body: Vec<IrNode>,
-        except_var: Option<String>,        // V1.5.2: except ... as e の変数名
-        else_body: Option<Vec<IrNode>>,    // V1.5.2: else ブロック
+        except_var: Option<String>,     // V1.5.2: except ... as e の変数名
+        else_body: Option<Vec<IrNode>>, // V1.5.2: else ブロック
         finally_body: Option<Vec<IrNode>>,
     },
     /// アサート文 (V1.3.0)
@@ -137,8 +137,8 @@ pub enum IrNode {
     Raise {
         exc_type: String,
         message: Box<IrExpr>,
-        cause: Option<Box<IrExpr>>,  // V1.5.2: from 句
-        line: usize,  // V1.5.2: ソースコード行番号（0 = 不明）
+        cause: Option<Box<IrExpr>>, // V1.5.2: from 句
+        line: usize,                // V1.5.2: ソースコード行番号（0 = 不明）
     },
 
     // --- その他 ---

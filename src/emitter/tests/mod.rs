@@ -678,7 +678,8 @@ fn test_emit_binop_contains() {
 #[test]
 fn test_emit_call_simple() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call { callee_may_raise: false,
+    let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("my_func".to_string())),
         args: vec![IrExpr::IntLit(42)],
     };
@@ -1092,7 +1093,8 @@ fn test_emit_impl_block() {
 #[test]
 fn test_emit_call_some() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call { callee_may_raise: false,
+    let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("Some".to_string())),
         args: vec![IrExpr::IntLit(42)],
     };
@@ -1103,7 +1105,8 @@ fn test_emit_call_some() {
 #[test]
 fn test_emit_call_with_path() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call { callee_may_raise: false,
+    let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("std::cmp::max".to_string())),
         args: vec![IrExpr::IntLit(1), IrExpr::IntLit(2)],
     };
@@ -1255,7 +1258,8 @@ fn test_emit_binop_not_contains() {
 #[test]
 fn test_emit_call_field_func() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call { callee_may_raise: false,
+    let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::FieldAccess {
             target: Box::new(IrExpr::Var("obj".to_string())),
             field: "callback".to_string(),
@@ -1283,7 +1287,8 @@ fn test_emit_binop_is() {
 #[test]
 fn test_emit_call_print_string_literal() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call { callee_may_raise: false,
+    let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("print".to_string())),
         args: vec![IrExpr::StringLit("hello".to_string())],
     };
@@ -1295,7 +1300,8 @@ fn test_emit_call_print_string_literal() {
 #[test]
 fn test_emit_call_print_with_clone() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call { callee_may_raise: false,
+    let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("print".to_string())),
         args: vec![IrExpr::MethodCall {
             target: Box::new(IrExpr::Var("s".to_string())),
@@ -1428,7 +1434,8 @@ fn test_emit_aug_assign_mod() {
 #[test]
 fn test_emit_call_print_variable() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call { callee_may_raise: false,
+    let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("print".to_string())),
         args: vec![IrExpr::Var("x".to_string())],
     };
@@ -1441,7 +1448,8 @@ fn test_emit_call_print_variable() {
 #[test]
 fn test_emit_call_main() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call { callee_may_raise: false,
+    let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("main".to_string())),
         args: vec![],
     };
@@ -1529,7 +1537,8 @@ fn test_emit_binop_is_not() {
 #[test]
 fn test_emit_call_print_empty() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call { callee_may_raise: false,
+    let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("print".to_string())),
         args: vec![],
     };
@@ -1991,8 +2000,8 @@ fn test_emit_try_block() {
     let node = IrNode::TryBlock {
         try_body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(42))))],
         except_body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(0))))],
-        except_var: None,   // V1.5.2
-        else_body: None,    // V1.5.2
+        except_var: None, // V1.5.2
+        else_body: None,  // V1.5.2
         finally_body: None,
     };
     let result = emit(&[node]);
@@ -2185,7 +2194,8 @@ fn test_emit_method_call_reverse() {
 #[test]
 fn test_emit_call_callee_may_raise_false() {
     let mut emitter = RustEmitter::new();
-    let expr = IrExpr::Call { callee_may_raise: false,
+    let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("some_func".to_string())),
         args: vec![IrExpr::IntLit(42)],
     };
@@ -2199,19 +2209,25 @@ fn test_emit_call_callee_may_raise_false() {
 fn test_emit_call_callee_may_raise_true_in_normal_context() {
     let mut emitter = RustEmitter::new();
     // current_func_may_raise is false by default
-    let expr = IrExpr::Call { callee_may_raise: true,
+    let expr = IrExpr::Call {
+        callee_may_raise: true,
         func: Box::new(IrExpr::Var("risky_func".to_string())),
         args: vec![],
     };
     let result = emitter.emit_expr(&expr);
-    assert!(result.contains(".unwrap()"), "Expected .unwrap() in: {}", result);
+    assert!(
+        result.contains(".unwrap()"),
+        "Expected .unwrap() in: {}",
+        result
+    );
 }
 
 #[test]
 fn test_emit_call_callee_may_raise_true_in_may_raise_context() {
     let mut emitter = RustEmitter::new();
     emitter.current_func_may_raise = true; // Simulate being inside a may_raise function
-    let expr = IrExpr::Call { callee_may_raise: true,
+    let expr = IrExpr::Call {
+        callee_may_raise: true,
         func: Box::new(IrExpr::Var("risky_func".to_string())),
         args: vec![],
     };
@@ -2233,8 +2249,16 @@ fn test_emit_func_decl_with_may_raise() {
         may_raise: true,
     };
     let result = emitter.emit_nodes(&[node]);
-    assert!(result.contains("Result<i64, TsuchinokoError>"), "Expected Result return type in: {}", result);
-    assert!(result.contains("Ok(42i64)"), "Expected Ok() wrapping in: {}", result);
+    assert!(
+        result.contains("Result<i64, TsuchinokoError>"),
+        "Expected Result return type in: {}",
+        result
+    );
+    assert!(
+        result.contains("Ok(42i64)"),
+        "Expected Ok() wrapping in: {}",
+        result
+    );
 }
 
 #[test]
@@ -2249,8 +2273,16 @@ fn test_emit_func_decl_without_may_raise() {
         may_raise: false,
     };
     let result = emitter.emit_nodes(&[node]);
-    assert!(!result.contains("Result<"), "Should not have Result in: {}", result);
-    assert!(result.contains("-> i64"), "Expected i64 return in: {}", result);
+    assert!(
+        !result.contains("Result<"),
+        "Should not have Result in: {}",
+        result
+    );
+    assert!(
+        result.contains("-> i64"),
+        "Expected i64 return in: {}",
+        result
+    );
 }
 
 // --- Raise node ---
@@ -2264,8 +2296,16 @@ fn test_emit_raise_node() {
         line: 0,
     };
     let result = emitter.emit_nodes(&[node]);
-    assert!(result.contains("return Err(TsuchinokoError::with_line"), "Expected Err in: {}", result);
-    assert!(result.contains("ValueError"), "Expected ValueError in: {}", result);
+    assert!(
+        result.contains("return Err(TsuchinokoError::with_line"),
+        "Expected Err in: {}",
+        result
+    );
+    assert!(
+        result.contains("ValueError"),
+        "Expected ValueError in: {}",
+        result
+    );
 }
 
 #[test]
@@ -2278,8 +2318,16 @@ fn test_emit_raise_from_node() {
         line: 0,
     };
     let result = emitter.emit_nodes(&[node]);
-    assert!(result.contains("RuntimeError"), "Expected RuntimeError in: {}", result);
-    assert!(result.contains("Some("), "Expected Some for cause in: {}", result);
+    assert!(
+        result.contains("RuntimeError"),
+        "Expected RuntimeError in: {}",
+        result
+    );
+    assert!(
+        result.contains("Some("),
+        "Expected Some for cause in: {}",
+        result
+    );
 }
 
 // --- TryBlock with else ---
@@ -2295,8 +2343,11 @@ fn test_emit_try_block_with_else() {
     };
     let result = emitter.emit_nodes(&[node]);
     // Should generate match with Ok branch for else
-    assert!(result.contains("match") || result.contains("Ok") || result.contains("Err"), 
-            "Expected try pattern in: {}", result);
+    assert!(
+        result.contains("match") || result.contains("Ok") || result.contains("Err"),
+        "Expected try pattern in: {}",
+        result
+    );
 }
 
 // --- Unit return with may_raise should add Ok(()) ---
@@ -2307,11 +2358,19 @@ fn test_emit_func_decl_unit_return_with_may_raise() {
         name: "do_something".to_string(),
         params: vec![],
         ret: Type::Unit,
-        body: vec![],  // Empty body
+        body: vec![], // Empty body
         hoisted_vars: vec![],
         may_raise: true,
     };
     let result = emitter.emit_nodes(&[node]);
-    assert!(result.contains("Result<(), TsuchinokoError>"), "Expected Result<()> in: {}", result);
-    assert!(result.contains("Ok(())"), "Expected implicit Ok(()) in: {}", result);
+    assert!(
+        result.contains("Result<(), TsuchinokoError>"),
+        "Expected Result<()> in: {}",
+        result
+    );
+    assert!(
+        result.contains("Ok(())"),
+        "Expected implicit Ok(()) in: {}",
+        result
+    );
 }

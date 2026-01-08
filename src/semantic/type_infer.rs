@@ -12,7 +12,7 @@ use crate::parser::{BinOp as AstBinOp, Expr, TypeHint, UnaryOp as AstUnaryOp};
 use super::{ScopeStack, Type};
 
 /// 型解決コンテキスト
-/// 
+///
 /// 「型を問う」操作を統一的に扱うための抽象化。
 /// 同じ式でも、使用されるコンテキストによって異なる型が必要になる。
 #[derive(Debug, Clone, PartialEq)]
@@ -305,19 +305,17 @@ pub trait TypeInference {
         match (ty.clone(), context) {
             // 値としての型: そのまま返す
             (t, TypeContext::Value) => t,
-            
+
             // イテラブルの要素型を抽出
             (Type::List(inner), TypeContext::IterElement) => *inner,
-            (Type::Ref(inner), TypeContext::IterElement) => {
-                self.apply_context(*inner, context)
-            }
+            (Type::Ref(inner), TypeContext::IterElement) => self.apply_context(*inner, context),
             (Type::Dict(k, _), TypeContext::IterElement) => *k,
             (Type::String, TypeContext::IterElement) => Type::String,
             (Type::Set(inner), TypeContext::IterElement) => *inner,
-            
+
             // 関数呼び出しの戻り値型を抽出
             (Type::Func { ret, .. }, TypeContext::CallReturn) => *ret,
-            
+
             // インデックスアクセスの結果型
             (Type::List(inner), TypeContext::Index) => *inner,
             (Type::Dict(_, v), TypeContext::Index) => *v,
@@ -329,12 +327,12 @@ pub trait TypeInference {
                     Type::Unknown
                 }
             }
-            
+
             // タプル展開の指定インデックスの要素
             (Type::Tuple(elems), TypeContext::TupleUnpack(i)) => {
                 elems.get(*i).cloned().unwrap_or(Type::Unknown)
             }
-            
+
             // 解決できない場合
             (_, _) => Type::Unknown,
         }
@@ -398,7 +396,8 @@ pub trait TypeInference {
                 return Some(Type::Func {
                     params: param_types,
                     ret: Box::new(ret_type),
-                    is_boxed: true, may_raise: false,
+                    is_boxed: true,
+                    may_raise: false,
                 });
             }
         }

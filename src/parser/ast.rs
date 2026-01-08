@@ -220,15 +220,15 @@ pub enum Stmt {
     TryExcept {
         try_body: Vec<Stmt>,
         except_clauses: Vec<ExceptClause>,
-        else_body: Option<Vec<Stmt>>,    // V1.5.2: else ブロック
+        else_body: Option<Vec<Stmt>>, // V1.5.2: else ブロック
         finally_body: Option<Vec<Stmt>>,
     },
     /// Raise statement (V1.5.2: supports raise ... from ...)
     Raise {
         exception_type: String,
         message: Expr,
-        cause: Option<Box<Expr>>,  // V1.5.2: from 句
-        line: usize,               // V1.5.2: Python ソース行番号
+        cause: Option<Box<Expr>>, // V1.5.2: from 句
+        line: usize,              // V1.5.2: Python ソース行番号
     },
     /// Import statement (import x as y, from x import y)
     Import {

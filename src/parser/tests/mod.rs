@@ -571,7 +571,13 @@ else:
 #[test]
 fn test_parse_raise() {
     let result = parse_line("raise ValueError(\"invalid input\")", 1).unwrap();
-    if let Some(Stmt::Raise { exception_type, message, cause }) = result {
+    if let Some(Stmt::Raise {
+        exception_type,
+        message,
+        cause,
+        ..
+    }) = result
+    {
         assert_eq!(exception_type, "ValueError");
         assert!(matches!(message, Expr::StringLiteral(_)));
         assert!(cause.is_none());
@@ -583,7 +589,13 @@ fn test_parse_raise() {
 #[test]
 fn test_parse_raise_from() {
     let result = parse_line("raise RuntimeError(\"failed\") from e", 1).unwrap();
-    if let Some(Stmt::Raise { exception_type, message, cause }) = result {
+    if let Some(Stmt::Raise {
+        exception_type,
+        message,
+        cause,
+        ..
+    }) = result
+    {
         assert_eq!(exception_type, "RuntimeError");
         assert!(matches!(message, Expr::StringLiteral(_)));
         assert!(cause.is_some());

@@ -18,7 +18,7 @@ impl SemanticAnalyzer {
                 if let Some(var_info) = self.scope.lookup(name) {
                     let defined_depth = var_info.defined_at_depth;
                     let var_ty = var_info.ty.clone();
-                    
+
                     // If variable is used at a shallower depth than where it was defined,
                     // it needs to be hoisted (defined in inner block, used in outer scope)
                     if current_depth < defined_depth {
@@ -33,7 +33,7 @@ impl SemanticAnalyzer {
                             .or_insert((var_ty.clone(), defined_depth, current_depth));
                     }
                 }
-                
+
                 // Check if this variable has a narrowed type
                 // If the original type is Optional<T> but it's narrowed to T, we need to unwrap
                 if let Some(original_info) = self.scope.lookup(name) {
@@ -921,12 +921,18 @@ impl SemanticAnalyzer {
 
                         // V1.5.2: Check if callee may raise (from scope, set by forward_declare_functions)
                         let callee_may_raise = if let Some(var_info) = self.scope.lookup(name) {
-                            matches!(&var_info.ty, Type::Func { may_raise: true, .. })
+                            matches!(
+                                &var_info.ty,
+                                Type::Func {
+                                    may_raise: true,
+                                    ..
+                                }
+                            )
                         } else {
                             // Fallback to may_raise_funcs for functions set during analyze
                             self.may_raise_funcs.contains(name)
                         };
-                        
+
                         // Propagate may_raise to current function
                         if callee_may_raise {
                             self.current_func_may_raise = true;
@@ -1027,40 +1033,45 @@ impl SemanticAnalyzer {
                             &expected_param_types,
                             &self.get_func_name_for_debug(func.as_ref()),
                         )?;
-                        
+
                         // V1.5.2: Check if callee may raise (from function type)
                         let callee_ty = self.infer_type(func);
                         let mut callee_may_raise = match &callee_ty {
                             Type::Func { may_raise, .. } => *may_raise,
                             _ => false,
                         };
-                        
+
                         // V1.5.2 (2-Pass): Also check scope directly for user-defined functions
                         // This ensures we get the may_raise status from forward_declare_functions
                         if !callee_may_raise {
                             if let Expr::Ident(func_name) = func.as_ref() {
                                 if let Some(var_info) = self.scope.lookup(func_name) {
-                                    if let Type::Func { may_raise: true, .. } = &var_info.ty {
+                                    if let Type::Func {
+                                        may_raise: true, ..
+                                    } = &var_info.ty
+                                    {
                                         callee_may_raise = true;
                                     }
                                 }
                             }
                         }
-                        
+
                         // Phase G: from-import functions always may raise
                         if let Expr::Ident(func_name) = func.as_ref() {
-                            let is_from_import = self.external_imports.iter()
+                            let is_from_import = self
+                                .external_imports
+                                .iter()
                                 .any(|(_, item)| item == func_name);
                             if is_from_import {
                                 callee_may_raise = true;
                             }
                         }
-                        
+
                         // Propagate may_raise to current function
                         if callee_may_raise {
                             self.current_func_may_raise = true;
                         }
-                        
+
                         let ir_func = self.analyze_expr(func)?;
                         Ok(IrExpr::Call {
                             func: Box::new(ir_func),

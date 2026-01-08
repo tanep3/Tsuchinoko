@@ -106,21 +106,26 @@ impl SemanticAnalyzer {
         match stmt {
             // Explicit raise statement
             Stmt::Raise { .. } => true,
-            
+
             // Expression statement - check the expression
             Stmt::Expr(expr) => self.expr_may_raise(expr),
-            
+
             // Assignment - check the value expression
             Stmt::Assign { value, .. } => self.expr_may_raise(value),
-            
+
             // Augmented assignment - check the value
             Stmt::AugAssign { value, .. } => self.expr_may_raise(value),
-            
+
             // Return - check the return value
             Stmt::Return(Some(expr)) => self.expr_may_raise(expr),
-            
+
             // If statement - check all branches
-            Stmt::If { then_body, elif_clauses, else_body, .. } => {
+            Stmt::If {
+                then_body,
+                elif_clauses,
+                else_body,
+                ..
+            } => {
                 if self.quick_may_raise_check(then_body) {
                     return true;
                 }
@@ -136,16 +141,16 @@ impl SemanticAnalyzer {
                 }
                 false
             }
-            
+
             // For loop - check body
             Stmt::For { body, .. } => self.quick_may_raise_check(body),
-            
+
             // While loop - check body
             Stmt::While { body, .. } => self.quick_may_raise_check(body),
-            
+
             // Try - if it has try, it's handling exceptions, the body may raise
             Stmt::TryExcept { try_body, .. } => self.quick_may_raise_check(try_body),
-            
+
             // Default - doesn't raise
             _ => false,
         }
@@ -159,40 +164,44 @@ impl SemanticAnalyzer {
                 // Check if it's a PyO3 module call (module.func())
                 if let Expr::Attribute { value, .. } = func.as_ref() {
                     if let Expr::Ident(module) = value.as_ref() {
-                        if self.external_imports.iter().any(|(_, alias)| alias == module) {
+                        if self
+                            .external_imports
+                            .iter()
+                            .any(|(_, alias)| alias == module)
+                        {
                             return true;
                         }
                     }
                 }
-                
+
                 // Check if it's a from-import call (func())
                 if let Expr::Ident(name) = func.as_ref() {
                     if self.external_imports.iter().any(|(_, item)| item == name) {
                         return true;
                     }
                 }
-                
+
                 // Check args for any raising expressions
                 if let Expr::Call { args, .. } = expr {
                     return args.iter().any(|a| self.expr_may_raise(a));
                 }
-                
+
                 false
             }
-            
+
             // Binary operation - check both sides
             Expr::BinOp { left, right, .. } => {
                 self.expr_may_raise(left) || self.expr_may_raise(right)
             }
-            
+
             // Attribute access - check target
             Expr::Attribute { value, .. } => self.expr_may_raise(value),
-            
+
             // Index access - check target and index
             Expr::Index { target, index } => {
                 self.expr_may_raise(target) || self.expr_may_raise(index)
             }
-            
+
             // Default - doesn't raise
             _ => false,
         }
@@ -215,7 +224,12 @@ impl SemanticAnalyzer {
             Stmt::Assign { value, .. } => self.expr_calls_may_raise_func(value),
             Stmt::AugAssign { value, .. } => self.expr_calls_may_raise_func(value),
             Stmt::Return(Some(expr)) => self.expr_calls_may_raise_func(expr),
-            Stmt::If { then_body, elif_clauses, else_body, .. } => {
+            Stmt::If {
+                then_body,
+                elif_clauses,
+                else_body,
+                ..
+            } => {
                 if self.body_calls_may_raise_func(then_body) {
                     return true;
                 }
@@ -246,7 +260,10 @@ impl SemanticAnalyzer {
                 // Check if calling a known may_raise function
                 if let Expr::Ident(name) = func.as_ref() {
                     if let Some(var_info) = self.scope.lookup(name) {
-                        if let Type::Func { may_raise: true, .. } = &var_info.ty {
+                        if let Type::Func {
+                            may_raise: true, ..
+                        } = &var_info.ty
+                        {
                             return true;
                         }
                     }
@@ -263,14 +280,19 @@ impl SemanticAnalyzer {
     }
 
     /// V1.5.2: Pre-process import statements to populate external_imports
-    /// 
+    ///
     /// This must be done BEFORE forward_declare_functions so that may_raise
     /// can correctly detect external library calls in function bodies.
     fn preprocess_imports(&mut self, stmts: &[Stmt]) {
         const NATIVE_MODULES: &[&str] = &["math", "typing"];
-        
+
         for stmt in stmts {
-            if let Stmt::Import { module, alias, items } = stmt {
+            if let Stmt::Import {
+                module,
+                alias,
+                items,
+            } = stmt
+            {
                 if !NATIVE_MODULES.contains(&module.as_str()) {
                     if let Some(ref item_list) = items {
                         // "from module import a, b, c" - register each item as (module, item)
@@ -280,7 +302,8 @@ impl SemanticAnalyzer {
                     } else {
                         // "import module" or "import module as alias"
                         let effective_name = alias.as_ref().unwrap_or(module);
-                        self.external_imports.push((module.clone(), effective_name.clone()));
+                        self.external_imports
+                            .push((module.clone(), effective_name.clone()));
                     }
                 }
             }
@@ -292,7 +315,7 @@ impl SemanticAnalyzer {
     }
 
     /// V1.5.2: Forward-declare all function signatures
-    /// 
+    ///
     /// This allows top-level code to correctly infer types for function calls
     /// to functions defined later in the file.
     fn forward_declare_functions(&mut self, stmts: &[Stmt]) {
@@ -343,21 +366,27 @@ impl SemanticAnalyzer {
                 );
             }
         }
-        
+
         // V1.5.2 (2-Pass Step 3): Propagate may_raise through call chains
         // Functions that call may_raise functions should also be may_raise
         // We iterate until no changes are made (usually 2 iterations max)
         loop {
             let mut changed = false;
-            
+
             for stmt in stmts {
                 if let Stmt::FuncDef { name, body, .. } = stmt {
                     // Check if this function calls any may_raise function
                     let calls_may_raise = self.body_calls_may_raise_func(body);
-                    
+
                     // Get current may_raise status from scope
                     if let Some(var_info) = self.scope.lookup(name) {
-                        if let Type::Func { may_raise, params, ret, is_boxed } = &var_info.ty {
+                        if let Type::Func {
+                            may_raise,
+                            params,
+                            ret,
+                            is_boxed,
+                        } = &var_info.ty
+                        {
                             if !may_raise && calls_may_raise {
                                 // Update to may_raise = true
                                 self.scope.define(
@@ -376,46 +405,53 @@ impl SemanticAnalyzer {
                     }
                 }
             }
-            
+
             if !changed {
                 break;
             }
         }
-        
+
         // V1.5.2 (2-Pass Step 4): Refine Unknown parameter types from call sites
         // For parameters with Type::List(Unknown), infer element type from caller's arguments
         self.refine_unknown_param_types(stmts);
     }
-    
+
     /// V1.5.2: Refine Unknown types in function parameters by analyzing call sites
-    /// 
+    ///
     /// When a function has `nums: list` (without element type), we infer the element
     /// type from how the function is called, e.g., `func([1, 2, 3])` -> List<Int>
     fn refine_unknown_param_types(&mut self, stmts: &[Stmt]) {
         // Collect call site argument types for each function
-        let mut call_arg_types: std::collections::HashMap<String, Vec<Vec<Type>>> = 
+        let mut call_arg_types: std::collections::HashMap<String, Vec<Vec<Type>>> =
             std::collections::HashMap::new();
-        
+
         // Walk all statements to find function calls
         for stmt in stmts {
             self.collect_call_arg_types_from_stmt(stmt, &mut call_arg_types);
         }
-        
+
         // Update function signatures based on collected info
         for (func_name, call_args_list) in call_arg_types {
             if let Some(var_info) = self.scope.lookup(&func_name) {
-                if let Type::Func { params, ret, is_boxed, may_raise } = &var_info.ty {
+                if let Type::Func {
+                    params,
+                    ret,
+                    is_boxed,
+                    may_raise,
+                } = &var_info.ty
+                {
                     let mut refined_params = params.clone();
                     let mut changed = false;
-                    
+
                     // For each parameter position, check if we can refine
                     for (i, param_type) in params.iter().enumerate() {
-                        if let Some(refined) = self.try_refine_type(param_type, &call_args_list, i) {
+                        if let Some(refined) = self.try_refine_type(param_type, &call_args_list, i)
+                        {
                             refined_params[i] = refined;
                             changed = true;
                         }
                     }
-                    
+
                     if changed {
                         self.scope.define(
                             &func_name,
@@ -432,9 +468,13 @@ impl SemanticAnalyzer {
             }
         }
     }
-    
+
     /// Collect argument types from all call sites in a statement
-    fn collect_call_arg_types_from_stmt(&self, stmt: &Stmt, result: &mut std::collections::HashMap<String, Vec<Vec<Type>>>) {
+    fn collect_call_arg_types_from_stmt(
+        &self,
+        stmt: &Stmt,
+        result: &mut std::collections::HashMap<String, Vec<Vec<Type>>>,
+    ) {
         match stmt {
             Stmt::FuncDef { body, .. } => {
                 for s in body {
@@ -447,7 +487,12 @@ impl SemanticAnalyzer {
             Stmt::Expr(expr) => {
                 self.collect_call_arg_types_from_expr(expr, result);
             }
-            Stmt::If { condition, then_body, else_body, .. } => {
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+                ..
+            } => {
                 self.collect_call_arg_types_from_expr(condition, result);
                 for s in then_body {
                     self.collect_call_arg_types_from_stmt(s, result);
@@ -473,9 +518,13 @@ impl SemanticAnalyzer {
             _ => {}
         }
     }
-    
+
     /// Collect argument types from call expressions
-    fn collect_call_arg_types_from_expr(&self, expr: &Expr, result: &mut std::collections::HashMap<String, Vec<Vec<Type>>>) {
+    fn collect_call_arg_types_from_expr(
+        &self,
+        expr: &Expr,
+        result: &mut std::collections::HashMap<String, Vec<Vec<Type>>>,
+    ) {
         match expr {
             Expr::Call { func, args, .. } => {
                 if let Expr::Ident(func_name) = func.as_ref() {
@@ -506,19 +555,22 @@ impl SemanticAnalyzer {
             _ => {}
         }
     }
-    
+
     /// Try to refine a type if it contains Unknown
-    fn try_refine_type(&self, param_type: &Type, call_args_list: &[Vec<Type>], param_idx: usize) -> Option<Type> {
+    fn try_refine_type(
+        &self,
+        param_type: &Type,
+        call_args_list: &[Vec<Type>],
+        param_idx: usize,
+    ) -> Option<Type> {
         // Only refine List<Unknown> for now
         if let Type::List(inner) = param_type {
             if matches!(inner.as_ref(), Type::Unknown) {
                 // Find the most concrete type from all call sites
                 for call_args in call_args_list {
-                    if let Some(arg_type) = call_args.get(param_idx) {
-                        if let Type::List(elem_type) = arg_type {
-                            if !matches!(elem_type.as_ref(), Type::Unknown) {
-                                return Some(Type::List(elem_type.clone()));
-                            }
+                    if let Some(Type::List(elem_type)) = call_args.get(param_idx) {
+                        if !matches!(elem_type.as_ref(), Type::Unknown) {
+                            return Some(Type::List(elem_type.clone()));
                         }
                     }
                 }
@@ -824,7 +876,7 @@ impl SemanticAnalyzer {
             Stmt::TryExcept {
                 try_body,
                 except_clauses,
-                else_body,  // V1.5.2
+                else_body, // V1.5.2
                 finally_body,
             } => {
                 for s in try_body {
@@ -965,7 +1017,8 @@ impl SemanticAnalyzer {
                                 return Some(Type::Func {
                                     params: param_types,
                                     ret: Box::new(ret_type),
-                                    is_boxed: true, may_raise: false,
+                                    is_boxed: true,
+                                    may_raise: false,
                                 });
                             }
                         }

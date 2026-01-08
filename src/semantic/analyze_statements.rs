@@ -464,17 +464,17 @@ impl SemanticAnalyzer {
                 }
 
                 let mut param_types = Vec::new();
-                
+
                 // V1.5.2: Get refined param types from forward_declare if available
-                let refined_func_params: Option<Vec<Type>> = self.scope.lookup(name)
-                    .and_then(|v| {
+                let refined_func_params: Option<Vec<Type>> =
+                    self.scope.lookup(name).and_then(|v| {
                         if let Type::Func { params, .. } = &v.ty {
                             Some(params.clone())
                         } else {
                             None
                         }
                     });
-                
+
                 for (i, p) in params.iter().enumerate() {
                     // First try to use refined type from forward_declare
                     let base_ty = if let Some(ref refined) = refined_func_params {
@@ -492,7 +492,7 @@ impl SemanticAnalyzer {
                                     } else {
                                         inner.as_ref().clone()
                                     }
-                                },
+                                }
                                 // Direct type (no Ref wrapper)
                                 _ => {
                                     if p.variadic {
@@ -504,7 +504,7 @@ impl SemanticAnalyzer {
                                     } else {
                                         refined_ty.clone()
                                     }
-                                },
+                                }
                             }
                         } else {
                             p.type_hint
@@ -566,7 +566,9 @@ impl SemanticAnalyzer {
                 }
 
                 // V1.5.2: Preserve may_raise from forward_declare_functions
-                let existing_may_raise = self.scope.lookup(name)
+                let existing_may_raise = self
+                    .scope
+                    .lookup(name)
                     .and_then(|v| {
                         if let Type::Func { may_raise, .. } = &v.ty {
                             Some(*may_raise)
@@ -583,7 +585,7 @@ impl SemanticAnalyzer {
                         params: param_types.clone(),
                         ret: Box::new(resolved_ret_type.clone()),
                         is_boxed: false,
-                        may_raise: existing_may_raise,  // Preserve from forward_declare
+                        may_raise: existing_may_raise, // Preserve from forward_declare
                     },
                     false,
                 );
@@ -632,7 +634,8 @@ impl SemanticAnalyzer {
                         ty: Type::Func {
                             params: param_types,
                             ret: Box::new(resolved_ret_type),
-                            is_boxed: true, may_raise: false,
+                            is_boxed: true,
+                            may_raise: false,
                         }, // Variable holding closure is Boxed
                         mutable: false,
                         init: Some(Box::new(boxed_closure)),
@@ -640,11 +643,11 @@ impl SemanticAnalyzer {
                 }
 
                 self.scope.push();
-                
+
                 // Clear hoisted_var_candidates for this function scope
                 self.hoisted_var_candidates.clear();
                 self.func_base_depth = self.scope.depth();
-                
+
                 // V1.5.2: Save and reset may_raise flag for this function scope
                 let old_may_raise = self.current_func_may_raise;
                 self.current_func_may_raise = false;
@@ -669,7 +672,8 @@ impl SemanticAnalyzer {
                 self.scope.pop_without_promotion();
 
                 // Collect hoisted variables: those used at shallower depth than defined
-                let hoisted_vars: Vec<HoistedVar> = self.hoisted_var_candidates
+                let hoisted_vars: Vec<HoistedVar> = self
+                    .hoisted_var_candidates
                     .drain()
                     .map(|(name, (ty, _, _))| HoistedVar { name, ty })
                     .collect();
@@ -677,7 +681,7 @@ impl SemanticAnalyzer {
                 // V1.5.2: Capture may_raise from this function, then restore parent's flag
                 let func_may_raise = self.current_func_may_raise;
                 self.current_func_may_raise = old_may_raise;
-                
+
                 // V1.5.2: Register function in may_raise_funcs for callee_may_raise detection
                 if func_may_raise {
                     self.may_raise_funcs.insert(name.clone());
@@ -1018,11 +1022,11 @@ impl SemanticAnalyzer {
                             .iter()
                             .map(|s| self.analyze_stmt(s))
                             .collect::<Result<Vec<_>, _>>()?;
-                        
+
                         // Capture method's may_raise status
                         let method_may_raise = self.current_func_may_raise;
                         self.current_func_may_raise = old_may_raise;
-                        
+
                         self.scope.pop();
 
                         // Check if method modifies self (contains FieldAssign)
@@ -1063,7 +1067,7 @@ impl SemanticAnalyzer {
             } => {
                 // V1.5.2: Mark current function as may raise
                 self.current_func_may_raise = true;
-                
+
                 let msg_ir = self.analyze_expr(message)?;
                 // V1.5.2: Analyze cause expression if present
                 let cause_ir = match cause {
@@ -1080,16 +1084,14 @@ impl SemanticAnalyzer {
             Stmt::TryExcept {
                 try_body,
                 except_clauses,
-                else_body,      // V1.5.2: else ブロック
+                else_body, // V1.5.2: else ブロック
                 finally_body,
             } => {
                 // Use analyze_stmts to properly detect mutable variables in try/except blocks
                 let ir_try_body = self.analyze_stmts(try_body)?;
 
                 // V1.5.2: Collect the first except clause's variable name for IR
-                let except_var = except_clauses
-                    .iter()
-                    .find_map(|c| c.name.clone());
+                let except_var = except_clauses.iter().find_map(|c| c.name.clone());
 
                 // Collect all except bodies into one (Rust doesn't have typed exceptions)
                 // For now, we merge all except clauses into a single except block
@@ -1115,7 +1117,7 @@ impl SemanticAnalyzer {
                 } else {
                     None
                 };
-                
+
                 // V1.5.2: Analyze else body if present
                 let ir_else_body = if let Some(eb) = else_body {
                     Some(self.analyze_stmts(eb)?)
@@ -1126,8 +1128,8 @@ impl SemanticAnalyzer {
                 Ok(IrNode::TryBlock {
                     try_body: ir_try_body,
                     except_body: ir_except_body,
-                    except_var,       // V1.5.2: 例外変数名
-                    else_body: ir_else_body,  // V1.5.2: else ブロック
+                    except_var,              // V1.5.2: 例外変数名
+                    else_body: ir_else_body, // V1.5.2: else ブロック
                     finally_body: ir_finally_body,
                 })
             }

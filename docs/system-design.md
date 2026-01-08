@@ -1,8 +1,8 @@
 # Tsuchinoko システム設計書
 
 > **著者**: Tane Channel Technology  
-> **バージョン**: 1.4.0  
-> **最終更新**: 2026-01-04
+> **バージョン**: 1.5.2  
+> **最終更新**: 2026-01-08
 
 ---
 
@@ -91,7 +91,8 @@ tsuchinoko/
 │   ├── bridge/              # V1.2.0: Import ブリッジ
 │   │   ├── mod.rs           # PythonBridge ランタイム
 │   │   ├── module_table.rs  # 方式選択テーブル
-│   │   └── worker.rs        # 埋め込み Python ワーカー
+│   │   ├── worker.rs        # 埋め込み Python ワーカー
+│   │   └── tsuchinoko_error.rs  # V1.5.2: エラー型定義
 │   └── error.rs             # エラー定義
 ├── tests/
 │   ├── lexer_tests.rs
@@ -220,6 +221,98 @@ Error: This code uses external Python libraries.
 
 # 正しい使い方
 $ tnk script_with_numpy.py --project ./output
+```
+
+### 3.5 V1.5.2 3層エラーハンドリング・アーキテクチャ
+
+Python の例外機構を Rust で正しく変換するための包括的なエラーハンドリング設計。
+
+#### アーキテクチャ概要
+
+```mermaid
+flowchart TB
+    subgraph Layer1["第1層: Result統一"]
+        RAISE[raise → Err]
+        PROP["? 演算子で伝播"]
+        MAYRISE["may_raise 解析"]
+    end
+    
+    subgraph Layer2["第2層: 外部境界"]
+        PYO3[PyO3 呼び出し]
+        BRIDGE[py_bridge 呼び出し]
+        EXTERNAL["map_err → TsuchinokoError"]
+    end
+    
+    subgraph Layer3["第3層: catch_unwind"]
+        PANIC[想定外 panic]
+        CATCH[catch_unwind]
+        INTERNAL[InternalError]
+    end
+    
+    RAISE --> PROP
+    MAYRISE --> PROP
+    PYO3 --> EXTERNAL
+    BRIDGE --> EXTERNAL
+    PANIC --> CATCH --> INTERNAL
+```
+
+#### 守備範囲マトリクス
+
+| 種類 | 例 | 第1層 | 第2層 | 第3層 |
+|------|-----|:---:|:---:|:---:|
+| Python例外 | ValueError, TypeError | ◎ | ◎ | △ |
+| raise / raise from | 例外チェーン | ◎ | ◎ | × |
+| try/except/else/finally | 制御構造 | ◎ | △ | △ |
+| 外部呼び出し失敗 | import失敗/属性なし | ◎ | ◎ | △ |
+| 生成物のバグpanic | unwrap/OOB/todo | × | × | ◎ |
+
+※ ◎=主戦場 / △=副次的に効く / ×=対象外
+
+#### TsuchinokoError 型
+
+```rust
+pub struct TsuchinokoError {
+    kind: String,           // "ValueError", "RuntimeError" など
+    message: String,        // エラーメッセージ
+    line: usize,            // Python ソース行番号
+    cause: Option<Box<TsuchinokoError>>,  // 例外チェーン
+}
+```
+
+#### 2パス may_raise 解析
+
+関数が `may_raise=true` かどうかを2パスで解析:
+
+1. **第1パス (forward_declare_functions)**: 各関数の `raise` 文を直接検出
+2. **伝播ループ**: `may_raise=true` 関数を呼ぶ関数も `may_raise=true` に昇格
+
+```mermaid
+flowchart LR
+    A[inner: raise] --> B[outer: inner call]
+    B --> C[main: outer call]
+    
+    A -->|"Pass1"| D["may_raise=true"]
+    B -->|"Loop"| E["may_raise=true"]
+    C -->|"Loop"| F["may_raise=true"]
+```
+
+#### 呼び出し側からの List 型推論
+
+`def f(nums: list)` のような型ヒントなしパラメータを、呼び出し側の引数から推論。
+
+```python
+def find_first_even(nums: list) -> int:  # nums: list (Unknown)
+    ...
+
+find_first_even([1, 2, 3])  # 呼び出し側: [i64]
+```
+
+↓ 2パス解析で推論
+
+```rust
+fn find_first_even(nums: &[i64]) -> i64 {
+    ...
+}
 ```
 
 ---

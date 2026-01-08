@@ -1278,10 +1278,11 @@ fn parse_line(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoErr
     // Supports: raise ValueError("msg") and raise ValueError("msg") from e
     if line.starts_with("raise ") {
         let rest = line.strip_prefix("raise ").unwrap().trim();
-        
+
         // Check for "from" clause: raise ExType("msg") from cause_expr
         // Search for "from" keyword (not " from " because find_keyword_balanced checks word boundaries)
-        let (raise_part, cause) = if let Some(from_pos) = utils::find_keyword_balanced(rest, "from") {
+        let (raise_part, cause) = if let Some(from_pos) = utils::find_keyword_balanced(rest, "from")
+        {
             // from_pos points to start of "from", so we take everything before it
             let raise_str = rest[..from_pos].trim();
             // Skip "from" (4 chars) to get cause expression
@@ -1291,7 +1292,7 @@ fn parse_line(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoErr
         } else {
             (rest, None)
         };
-        
+
         // Parse exception: ExType("message") or ExType(message_expr)
         if let Some(paren_start) = raise_part.find('(') {
             let exception_type = raise_part[..paren_start].trim().to_string();

@@ -130,8 +130,12 @@ Tsuchinoko now supports persisting Python objects across bridge calls. This allo
 - **try/except with multiple exception types** (`except (ValueError, TypeError):`) (V1.5.0)
 - **except with variable** (`except ValueError as e:`) (V1.5.0)
 - **try/except/finally** blocks (V1.5.0)
-- **raise** statements (converted to `panic!`)
-- **ValueError**, **TypeError** (converted to `panic!`)
+- **try/except/else** blocks (`else` runs when no exception) (V1.5.2)
+- **raise** statements (converted to `Err(TsuchinokoError)` or `panic!`)
+- **raise from** (`raise A from B`) - exception chaining with `cause` (V1.5.2)
+- **Result type unification** - exception functions return `Result<T, TsuchinokoError>` (V1.5.2)
+- **Error line numbers** - Python source line included in error messages (V1.5.2)
+- **ValueError**, **TypeError** (converted to `TsuchinokoError`)
 
 ## Type System
 

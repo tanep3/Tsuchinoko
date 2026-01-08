@@ -49,7 +49,7 @@ impl std::fmt::Display for SourceLocation {
         if !self.is_known() {
             return Ok(());
         }
-        
+
         if let Some(ref file) = self.file {
             write!(f, "[{}:{}]", file, self.line)
         } else {

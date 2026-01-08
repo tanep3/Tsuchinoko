@@ -145,13 +145,13 @@ impl RustEmitter {
             } else {
                 ""
             };
-            
+
             let final_body = if !error_def.is_empty() {
                 format!("{}\n{}", error_def, body)
             } else {
                 body
             };
-            
+
             if self.needs_resident {
                 // py_bridge ランタイムを挿入（常駐プロセス方式）
                 self.emit_resident_wrapped(&final_body)
@@ -277,10 +277,10 @@ use pyo3::types::PyList;
                 init,
             } => {
                 let snake_name = to_snake_case(name);
-                
+
                 // Check if this variable is hoisted (already declared as Option<T>)
                 let is_hoisted = self.current_hoisted_vars.iter().any(|v| v.name == *name);
-                
+
                 if is_hoisted {
                     // Hoisted variable: emit assignment with Some()
                     match init {
@@ -329,11 +329,14 @@ use pyo3::types::PyList;
             }
             IrNode::Assign { target, value } => {
                 let snake_name = to_snake_case(target);
-                
+
                 // Check if this target is a hoisted variable (needs Some() wrapper)
-                let is_func_hoisted = self.current_hoisted_vars.iter().any(|v| to_snake_case(&v.name) == snake_name);
+                let is_func_hoisted = self
+                    .current_hoisted_vars
+                    .iter()
+                    .any(|v| to_snake_case(&v.name) == snake_name);
                 let is_try_hoisted = self.try_hoisted_vars.contains(&snake_name);
-                
+
                 if is_func_hoisted || is_try_hoisted {
                     // Hoisted variable: wrap value in Some()
                     format!(
@@ -343,12 +346,7 @@ use pyo3::types::PyList;
                         self.emit_expr(value)
                     )
                 } else {
-                    format!(
-                        "{}{} = {};",
-                        indent,
-                        snake_name,
-                        self.emit_expr(value)
-                    )
+                    format!("{}{} = {};", indent, snake_name, self.emit_expr(value))
                 }
             }
             IrNode::FieldAssign {
@@ -456,13 +454,13 @@ use pyo3::types::PyList;
                     // needs_resident をバックアップ
                     let needs_resident_backup = self.needs_resident;
                     self.needs_resident = false;
-                    
+
                     // V1.5.2: __top_level__ (main) is never may_raise
                     let old_may_raise = self.current_func_may_raise;
                     self.current_func_may_raise = false;
 
                     let body_str = self.emit_nodes(body);
-                    
+
                     // Restore may_raise state
                     self.current_func_may_raise = old_may_raise;
 
@@ -509,30 +507,39 @@ use pyo3::types::PyList;
                     // needs_resident をバックアップして、この関数内での変化を追跡
                     let needs_resident_backup = self.needs_resident;
                     self.needs_resident = false;
-                    
+
                     // Set current hoisted variables for this function scope
-                    let old_hoisted = std::mem::replace(&mut self.current_hoisted_vars, hoisted_vars.clone());
+                    let old_hoisted =
+                        std::mem::replace(&mut self.current_hoisted_vars, hoisted_vars.clone());
 
                     self.indent += 1;
-                    
+
                     // Generate Option<T> declarations for hoisted variables
                     let hoisted_decls = if !hoisted_vars.is_empty() {
                         let inner_indent = "    ".repeat(self.indent);
-                        hoisted_vars.iter()
-                            .map(|v| format!("{}let mut {}: Option<{}> = None;", inner_indent, to_snake_case(&v.name), v.ty.to_rust_string()))
+                        hoisted_vars
+                            .iter()
+                            .map(|v| {
+                                format!(
+                                    "{}let mut {}: Option<{}> = None;",
+                                    inner_indent,
+                                    to_snake_case(&v.name),
+                                    v.ty.to_rust_string()
+                                )
+                            })
                             .collect::<Vec<_>>()
                             .join("\n")
                     } else {
                         String::new()
                     };
-                    
+
                     // V1.5.2: Set may_raise flag for return statement wrapping
                     let old_may_raise = self.current_func_may_raise;
                     self.current_func_may_raise = *may_raise;
-                    
+
                     let body_str = self.emit_nodes(body);
                     self.indent -= 1;
-                    
+
                     // Restore previous hoisted vars and may_raise
                     self.current_hoisted_vars = old_hoisted;
                     self.current_func_may_raise = old_may_raise;
@@ -566,7 +573,7 @@ use pyo3::types::PyList;
                         // ONLY set this if we are NOT in the special __top_level__ (fn main)
                         // Actually, this block is the "else" (non-__top_level__) path, so it's always true.
                         self.is_inside_resident_func = true;
-                        
+
                         // Phase F: Set may_raise for proper Ok() wrapping in Return statements
                         let backup_may_raise = self.current_func_may_raise;
                         self.current_func_may_raise = *may_raise || func_needs_resident;
@@ -582,7 +589,7 @@ use pyo3::types::PyList;
                     } else {
                         body_str
                     };
-                    
+
                     // Prepend hoisted variable declarations to body
                     let final_body_str = if !hoisted_decls.is_empty() {
                         format!("{}\n{}", hoisted_decls, final_body_str)
@@ -611,9 +618,10 @@ use pyo3::types::PyList;
                         // 関数を resident_functions セットに登録
                         self.resident_functions.insert(snake_name.clone());
                     }
-                    
+
                     // V1.5.2: Add implicit Ok(()) for may_raise functions that return Unit
-                    let final_body_with_ok = if effective_may_raise && *effective_ret == Type::Unit {
+                    let final_body_with_ok = if effective_may_raise && *effective_ret == Type::Unit
+                    {
                         let inner_indent = "    ".repeat(self.indent + 1);
                         format!("{}\n{}Ok(())", final_body_str, inner_indent)
                     } else {
@@ -671,12 +679,15 @@ use pyo3::types::PyList;
                 } else {
                     vec![to_snake_case(var)]
                 };
-                
+
                 // Build mapping: (original_name, actual_loop_var_name, is_hoisted)
                 // If hoisted, use _loop_<name> as loop variable to avoid shadowing
                 let mut var_mapping: Vec<(String, String, bool)> = Vec::new();
                 for lv in &loop_vars {
-                    let is_hoisted = self.current_hoisted_vars.iter().any(|v| to_snake_case(&v.name) == *lv);
+                    let is_hoisted = self
+                        .current_hoisted_vars
+                        .iter()
+                        .any(|v| to_snake_case(&v.name) == *lv);
                     let loop_var_name = if is_hoisted {
                         format!("_loop_{}", lv)
                     } else {
@@ -684,34 +695,38 @@ use pyo3::types::PyList;
                     };
                     var_mapping.push((lv.clone(), loop_var_name, is_hoisted));
                 }
-                
+
                 // Add renamed loop vars to shadowed_vars (these override hoisted check)
                 let old_shadowed_len = self.shadowed_vars.len();
                 for (_, loop_var_name, _) in &var_mapping {
                     self.shadowed_vars.push(loop_var_name.clone());
                 }
-                
+
                 self.indent += 1;
                 let body_str = self.emit_nodes(body);
-                
+
                 // V1.5.2: For hoisted loop variables, add assignment at START of loop body
                 // This ensures i.unwrap() works inside the loop body
                 let mut hoisted_init_assignments = Vec::new();
                 for (hoisted_name, loop_var_name, is_hoisted) in &var_mapping {
                     if *is_hoisted {
                         let inner_indent = "    ".repeat(self.indent);
-                        hoisted_init_assignments.push(format!("{}{} = Some({});", inner_indent, hoisted_name, loop_var_name));
+                        hoisted_init_assignments.push(format!(
+                            "{}{} = Some({});",
+                            inner_indent, hoisted_name, loop_var_name
+                        ));
                     }
                 }
-                
+
                 self.indent -= 1;
-                
+
                 // Restore shadowed_vars
                 self.shadowed_vars.truncate(old_shadowed_len);
 
                 // Build the loop variable string for the for statement
                 let var_str = if var.contains(',') {
-                    let parts: Vec<String> = var_mapping.iter().map(|(_, lv, _)| lv.clone()).collect();
+                    let parts: Vec<String> =
+                        var_mapping.iter().map(|(_, lv, _)| lv.clone()).collect();
                     format!("({})", parts.join(", "))
                 } else {
                     var_mapping[0].1.clone()
@@ -795,44 +810,51 @@ use pyo3::types::PyList;
             IrNode::TryBlock {
                 try_body,
                 except_body,
-                except_var,    // V1.5.2
-                else_body,     // V1.5.2
+                except_var, // V1.5.2
+                else_body,  // V1.5.2
                 finally_body,
             } => {
                 let mut result = String::new();
-                
+
                 // V1.5.2: Always hoist variables from try_body
                 // Variables defined in try may be used in except/else/finally
                 let mut hoisted_vars: Vec<(String, Type)> = Vec::new();
-                
+
                 // Collect variable declarations from try_body
                 for node in try_body.iter() {
                     if let IrNode::VarDecl { name, ty, .. } = node {
                         hoisted_vars.push((name.clone(), ty.clone()));
                     }
                 }
-                
+
                 let need_hoisting = !hoisted_vars.is_empty();
-                
+
                 // Emit hoisted variable declarations as Option<T>
                 for (name, ty) in &hoisted_vars {
                     let snake_name = to_snake_case(name);
-                    result.push_str(&format!("{indent}let mut {}: Option<{}> = None;\n", snake_name, ty.to_rust_string()));
+                    result.push_str(&format!(
+                        "{indent}let mut {}: Option<{}> = None;\n",
+                        snake_name,
+                        ty.to_rust_string()
+                    ));
                 }
-                
+
                 // Use std::panic::catch_unwind to catch panics (like division by zero)
                 // and fall back to except_body
                 result.push_str(&format!(
                     "{indent}match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{\n"
                 ));
                 self.indent += 1;
-                
+
                 // Set hoisted vars for unwrap() in try body (for return statements)
-                let old_try_hoisted_try = std::mem::replace(
+                let _old_try_hoisted_try = std::mem::replace(
                     &mut self.try_hoisted_vars,
-                    hoisted_vars.iter().map(|(name, _)| to_snake_case(name)).collect()
+                    hoisted_vars
+                        .iter()
+                        .map(|(name, _)| to_snake_case(name))
+                        .collect(),
                 );
-                
+
                 // V1.5.2: Set in_try_body flag - closure returns (), so ? is not allowed
                 let old_in_try_body = self.in_try_body;
                 self.in_try_body = true;
@@ -840,18 +862,28 @@ use pyo3::types::PyList;
                 // Emit try body - convert VarDecl to assignments if hoisting
                 for (i, node) in try_body.iter().enumerate() {
                     let is_last = i == try_body.len() - 1;
-                    
+
                     // Handle VarDecl specially if hoisting
                     if need_hoisting {
-                        if let IrNode::VarDecl { name, init: Some(expr), .. } = node {
+                        if let IrNode::VarDecl {
+                            name,
+                            init: Some(expr),
+                            ..
+                        } = node
+                        {
                             // Convert to assignment: var = Some(value);
                             let inner_indent = "    ".repeat(self.indent);
                             let snake_name = to_snake_case(name);
-                            result.push_str(&format!("{}{} = Some({});\n", inner_indent, snake_name, self.emit_expr(expr)));
+                            result.push_str(&format!(
+                                "{}{} = Some({});\n",
+                                inner_indent,
+                                snake_name,
+                                self.emit_expr(expr)
+                            ));
                             continue;
                         }
                     }
-                    
+
                     if is_last {
                         // For the last statement, if it's a return, emit just the expression
                         match node {
@@ -875,27 +907,34 @@ use pyo3::types::PyList;
                 }
 
                 self.indent -= 1;
-                
+
                 // V1.5.2: Restore in_try_body flag after try body
                 self.in_try_body = old_in_try_body;
-                
+
                 result.push_str(&format!("{indent}}})) {{\n"));
 
                 // V1.5.2: Ok case - execute else block if present, otherwise return the value
                 if let Some(else_nodes) = else_body {
                     // Set hoisted vars for unwrap() in else body
                     let old_try_hoisted = std::mem::replace(
-                        &mut self.try_hoisted_vars, 
-                        hoisted_vars.iter().map(|(name, _)| to_snake_case(name)).collect()
+                        &mut self.try_hoisted_vars,
+                        hoisted_vars
+                            .iter()
+                            .map(|(name, _)| to_snake_case(name))
+                            .collect(),
                     );
-                    
+
                     result.push_str(&format!("{indent}    Ok(_) => {{\n"));
                     self.indent += 2;
                     for node in else_nodes {
                         match node {
                             IrNode::Return(Some(expr)) => {
                                 let inner_indent = "    ".repeat(self.indent);
-                                result.push_str(&format!("{}{}\n", inner_indent, self.emit_expr(expr)));
+                                result.push_str(&format!(
+                                    "{}{}\n",
+                                    inner_indent,
+                                    self.emit_expr(expr)
+                                ));
                             }
                             _ => {
                                 result.push_str(&self.emit_node(node));
@@ -905,7 +944,7 @@ use pyo3::types::PyList;
                     }
                     self.indent -= 2;
                     result.push_str(&format!("{indent}    }}\n"));
-                    
+
                     // Restore old try_hoisted_vars
                     self.try_hoisted_vars = old_try_hoisted;
                 } else {
@@ -932,20 +971,27 @@ use pyo3::types::PyList;
                 } else {
                     result.push_str(&format!("{indent}    Err(_) => {{\n"));
                 }
-                
+
                 // Set hoisted vars for unwrap() in except body
                 let old_try_hoisted_except = std::mem::replace(
                     &mut self.try_hoisted_vars,
-                    hoisted_vars.iter().map(|(name, _)| to_snake_case(name)).collect()
+                    hoisted_vars
+                        .iter()
+                        .map(|(name, _)| to_snake_case(name))
+                        .collect(),
                 );
-                
+
                 self.indent += 2;
                 for node in except_body {
                     // Emit return as proper return statement in except body
                     match node {
                         IrNode::Return(Some(expr)) => {
                             let inner_indent = "    ".repeat(self.indent);
-                            result.push_str(&format!("{}return {};\n", inner_indent, self.emit_expr(expr)));
+                            result.push_str(&format!(
+                                "{}return {};\n",
+                                inner_indent,
+                                self.emit_expr(expr)
+                            ));
                         }
                         _ => {
                             result.push_str(&self.emit_node(node));
@@ -954,10 +1000,10 @@ use pyo3::types::PyList;
                     }
                 }
                 self.indent -= 2;
-                
+
                 // Restore old try_hoisted_vars
                 self.try_hoisted_vars = old_try_hoisted_except;
-                
+
                 result.push_str(&format!("{indent}    }}\n"));
                 result.push_str(&format!("{indent}}}\n"));
 
@@ -969,7 +1015,7 @@ use pyo3::types::PyList;
                         result.push('\n');
                     }
                 }
-                
+
                 // V1.5.2: Add hoisted vars to try_hoisted_vars for rest of function
                 // Variables defined in try need unwrap() even after the try block
                 for (name, _) in &hoisted_vars {
@@ -1046,29 +1092,30 @@ use pyo3::types::PyList;
                     result.push_str(&self.emit_node(node));
                     result.push('\n');
                 }
-                
+
                 // V1.5.2: Add implicit Ok(()) for may_raise methods returning Unit
                 if *may_raise && *ret == Type::Unit {
                     let ok_indent = "    ".repeat(self.indent);
                     result.push_str(&format!("{}Ok(())\n", ok_indent));
                 }
-                
+
                 self.current_func_may_raise = old_may_raise;
                 self.indent -= 1;
                 result.push_str(&format!("{inner_indent}}}"));
                 result
             }
-            IrNode::Raise { exc_type, message, cause, line } => {
+            IrNode::Raise {
+                exc_type,
+                message,
+                cause,
+                line,
+            } => {
                 let msg_str = self.emit_expr(message);
-                
+
                 // V1.5.2: Inside try body, use panic! so catch_unwind can catch it
                 if self.in_try_body {
                     // Inside try block: use panic! for catch_unwind to catch
-                    format!(
-                        "{indent}panic!(\"[{}] {{}}\", {});",
-                        exc_type,
-                        msg_str
-                    )
+                    format!("{indent}panic!(\"[{}] {{}}\", {});", exc_type, msg_str)
                 } else {
                     // Outside try block: generate Err(TsuchinokoError::...)
                     match cause {
@@ -1163,16 +1210,20 @@ use pyo3::types::PyList;
                 } else {
                     to_snake_case(name)
                 };
-                
+
                 // V1.5.2: Skip unwrap if variable is shadowed (e.g., for loop variable)
                 let is_shadowed = self.shadowed_vars.contains(&var_name);
-                
+
                 // Check if this variable needs unwrap() due to hoisting
                 // 1. try_hoisted_vars: variables from try block (need clone due to closure)
                 // 2. current_hoisted_vars: variables hoisted at function level (if/for etc.)
                 let is_try_hoisted = !is_shadowed && self.try_hoisted_vars.contains(&var_name);
-                let is_func_hoisted = !is_shadowed && self.current_hoisted_vars.iter().any(|v| to_snake_case(&v.name) == var_name);
-                
+                let is_func_hoisted = !is_shadowed
+                    && self
+                        .current_hoisted_vars
+                        .iter()
+                        .any(|v| to_snake_case(&v.name) == var_name);
+
                 if is_try_hoisted {
                     // Try block hoisting needs clone due to catch_unwind closure
                     format!("{}.clone().unwrap()", var_name)
@@ -1280,7 +1331,11 @@ use pyo3::types::PyList;
                 };
                 format!("({}{})", op_str, self.emit_expr(operand))
             }
-            IrExpr::Call { func, args, callee_may_raise } => {
+            IrExpr::Call {
+                func,
+                args,
+                callee_may_raise,
+            } => {
                 let is_print = if let IrExpr::Var(name) = func.as_ref() {
                     name == "print"
                 } else {
@@ -1416,13 +1471,18 @@ use pyo3::types::PyList;
                                 }
                             }
                             let call_str = format!("{}({})", func_name, args_str.join(", "));
-                            
+
                             // V1.5.2: If calling a may_raise function from a non-may_raise context, add .unwrap()
                             // Use IR's callee_may_raise instead of tracking in emitter
                             // Also, in try body closure, use .unwrap() instead of ? (closure returns ())
-                            if *callee_may_raise && (!self.current_func_may_raise || self.in_try_body) {
+                            if *callee_may_raise
+                                && (!self.current_func_may_raise || self.in_try_body)
+                            {
                                 format!("{}.unwrap()", call_str)
-                            } else if *callee_may_raise && self.current_func_may_raise && !self.in_try_body {
+                            } else if *callee_may_raise
+                                && self.current_func_may_raise
+                                && !self.in_try_body
+                            {
                                 // Both caller and callee may raise, and not in try body - use ?
                                 format!("{}?", call_str)
                             } else {
