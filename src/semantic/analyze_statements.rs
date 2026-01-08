@@ -360,6 +360,47 @@ impl SemanticAnalyzer {
                     // Try to infer types if possible, otherwise Unknown
                     // If value is a call, we might not know the return type yet without a better symbol table
                     let result_type = self.infer_type(value);
+
+                    // V1.6.0 FT-008: PyO3 タプルアンパッキング
+                    // Type::Any (PyO3 戻り値) の場合は、個別のインデックスアクセスに展開
+                    if matches!(result_type, Type::Any) {
+                        let mut nodes = Vec::new();
+
+                        // まず一時変数に結果を格納
+                        let temp_var = "_tuple_result".to_string();
+                        nodes.push(IrNode::VarDecl {
+                            name: temp_var.clone(),
+                            ty: Type::Any,
+                            mutable: false,
+                            init: Some(Box::new(ir_value)),
+                        });
+
+                        // 各要素をインデックスアクセスで取得
+                        for (i, target) in targets.iter().enumerate() {
+                            self.scope.define(target, Type::Any, false);
+                            let index_access = IrExpr::MethodCall {
+                                target_type: Type::Any,
+                                target: Box::new(IrExpr::Index {
+                                    target: Box::new(IrExpr::Var(temp_var.clone())),
+                                    index: Box::new(IrExpr::Cast {
+                                        target: Box::new(IrExpr::IntLit(i as i64)),
+                                        ty: "usize".to_string(),
+                                    }),
+                                }),
+                                method: "clone".to_string(),
+                                args: vec![],
+                            };
+                            nodes.push(IrNode::VarDecl {
+                                name: target.clone(),
+                                ty: Type::Any,
+                                mutable: false,
+                                init: Some(Box::new(index_access)),
+                            });
+                        }
+
+                        return Ok(IrNode::Sequence(nodes));
+                    }
+
                     let elem_types = if let Type::Tuple(types) = result_type {
                         if types.len() == targets.len() {
                             types
@@ -741,6 +782,24 @@ impl SemanticAnalyzer {
                 let narrowing_info = self.extract_none_check(condition);
 
                 let ir_cond = self.analyze_expr(condition)?;
+                
+                // V1.6.0 FT-008: Type::Any を条件式で使用する場合、as_bool().unwrap_or(false) に変換
+                let cond_ty = self.infer_type(condition);
+                let ir_cond = if matches!(cond_ty, Type::Any) {
+                    IrExpr::MethodCall {
+                        target_type: Type::Any,
+                        target: Box::new(IrExpr::MethodCall {
+                            target_type: Type::Any,
+                            target: Box::new(ir_cond),
+                            method: "as_bool".to_string(),
+                            args: vec![],
+                        }),
+                        method: "unwrap_or".to_string(),
+                        args: vec![IrExpr::BoolLit(false)],
+                    }
+                } else {
+                    ir_cond
+                };
 
                 // Analyze then block with narrowing (if applicable)
                 self.scope.push();

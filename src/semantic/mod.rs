@@ -1333,6 +1333,47 @@ impl SemanticAnalyzer {
                     || matches!(&result_type, Type::Ref(inner) if matches!(inner.as_ref(), Type::List(_)));
 
                 if is_decl {
+                    // V1.6.0 FT-008: PyO3 タプルアンパッキング
+                    // Type::Any (PyO3 戻り値) の場合は、個別のインデックスアクセスに展開
+                    if matches!(result_type, Type::Any) {
+                        let mut nodes = Vec::new();
+
+                        // まず一時変数に結果を格納
+                        let temp_var = "_tuple_result".to_string();
+                        nodes.push(IrNode::VarDecl {
+                            name: temp_var.clone(),
+                            ty: Type::Any,
+                            mutable: false,
+                            init: Some(Box::new(ir_value)),
+                        });
+
+                        // 各要素をインデックスアクセスで取得
+                        for (i, target) in targets.iter().enumerate() {
+                            let is_mutable = reassigned_vars.contains(target);
+                            self.scope.define(target, Type::Any, is_mutable);
+                            let index_access = IrExpr::MethodCall {
+                                target_type: Type::Any,
+                                target: Box::new(IrExpr::Index {
+                                    target: Box::new(IrExpr::Var(temp_var.clone())),
+                                    index: Box::new(IrExpr::Cast {
+                                        target: Box::new(IrExpr::IntLit(i as i64)),
+                                        ty: "usize".to_string(),
+                                    }),
+                                }),
+                                method: "clone".to_string(),
+                                args: vec![],
+                            };
+                            nodes.push(IrNode::VarDecl {
+                                name: target.clone(),
+                                ty: Type::Any,
+                                mutable: is_mutable,
+                                init: Some(Box::new(index_access)),
+                            });
+                        }
+
+                        return Ok(IrNode::Sequence(nodes));
+                    }
+
                     let elem_types = if let Type::Tuple(types) = &result_type {
                         if types.len() == targets.len() {
                             types.clone()
