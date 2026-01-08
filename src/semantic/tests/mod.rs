@@ -742,9 +742,10 @@ fn test_scope_push_pop() {
     scope.define("y", Type::String, false);
     assert!(scope.lookup("x").is_some());
     assert!(scope.lookup("y").is_some());
+    // Python semantics: y is promoted to parent scope after pop
     scope.pop();
     assert!(scope.lookup("x").is_some());
-    assert!(scope.lookup("y").is_none());
+    assert!(scope.lookup("y").is_some()); // Python: still accessible!
 }
 
 // --- operators テスト ---
@@ -2450,11 +2451,14 @@ fn test_scope_multiple_push_pop() {
     assert!(scope.lookup("b").is_some());
     assert!(scope.lookup("c").is_some());
 
+    // Python semantics: variables are promoted to parent on pop
     scope.pop();
-    assert!(scope.lookup("c").is_none());
+    assert!(scope.lookup("c").is_some()); // Promoted from deepest scope
 
     scope.pop();
-    assert!(scope.lookup("b").is_none());
+    // Both b and c are now in the global scope
+    assert!(scope.lookup("b").is_some()); // Promoted
+    assert!(scope.lookup("c").is_some()); // Promoted through multiple pops
     assert!(scope.lookup("a").is_some());
 }
 
@@ -3340,6 +3344,7 @@ fn test_type_func_creation() {
         params: vec![Type::Int, Type::Int],
         ret: Box::new(Type::Int),
         is_boxed: false,
+        may_raise: false,
     };
     if let Type::Func { params, ret, .. } = ty {
         assert_eq!(params.len(), 2);

@@ -28,6 +28,8 @@ fn test_emit_function() {
             op: IrBinOp::Add,
             right: Box::new(IrExpr::Var("b".to_string())),
         })))],
+        hoisted_vars: vec![],
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("fn add(a: i64, b: i64) -> i64"));
@@ -351,6 +353,7 @@ fn test_emit_struct_def() {
 fn test_emit_method_call() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("arr".to_string())),
         method: "len".to_string(),
         args: vec![],
@@ -363,6 +366,7 @@ fn test_emit_method_call() {
 fn test_emit_method_call_with_args() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("arr".to_string())),
         method: "push".to_string(),
         args: vec![IrExpr::IntLit(42)],
@@ -677,6 +681,7 @@ fn test_emit_binop_contains() {
 fn test_emit_call_simple() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("my_func".to_string())),
         args: vec![IrExpr::IntLit(42)],
     };
@@ -710,6 +715,7 @@ fn test_emit_dict_comp() {
         }),
         target: "k, v".to_string(),
         iter: Box::new(IrExpr::MethodCall {
+            target_type: Type::Unknown,
             target: Box::new(IrExpr::Var("d".to_string())),
             method: "items".to_string(),
             args: vec![],
@@ -954,6 +960,7 @@ fn test_emit_list_comp_with_condition() {
 fn test_emit_method_call_multi_args() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("s".to_string())),
         method: "replace".to_string(),
         args: vec![
@@ -1019,6 +1026,8 @@ fn test_emit_func_decl_simple() {
         params: vec![("a".to_string(), Type::Int)],
         ret: Type::Int,
         body: vec![IrNode::Return(Some(Box::new(IrExpr::Var("a".to_string()))))],
+        hoisted_vars: vec![],
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("fn my_func("));
@@ -1033,6 +1042,8 @@ fn test_emit_func_unit_return() {
         params: vec![],
         ret: Type::Unit,
         body: vec![],
+        hoisted_vars: vec![],
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("fn do_nothing()"));
@@ -1049,6 +1060,7 @@ fn test_emit_method_decl() {
         body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(42))))],
         takes_self: true,
         takes_mut_self: false,
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("fn get_value("));
@@ -1064,6 +1076,7 @@ fn test_emit_method_decl_mut_self() {
         body: vec![],
         takes_self: true,
         takes_mut_self: true,
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("&mut self"));
@@ -1085,6 +1098,7 @@ fn test_emit_impl_block() {
 fn test_emit_call_some() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("Some".to_string())),
         args: vec![IrExpr::IntLit(42)],
     };
@@ -1096,6 +1110,7 @@ fn test_emit_call_some() {
 fn test_emit_call_with_path() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("std::cmp::max".to_string())),
         args: vec![IrExpr::IntLit(1), IrExpr::IntLit(2)],
     };
@@ -1150,6 +1165,7 @@ fn test_emit_dict_comp_with_condition() {
         value: Box::new(IrExpr::Var("v".to_string())),
         target: "k, v".to_string(),
         iter: Box::new(IrExpr::MethodCall {
+            target_type: Type::Unknown,
             target: Box::new(IrExpr::Var("d".to_string())),
             method: "items".to_string(),
             args: vec![],
@@ -1248,6 +1264,7 @@ fn test_emit_binop_not_contains() {
 fn test_emit_call_field_func() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::FieldAccess {
             target: Box::new(IrExpr::Var("obj".to_string())),
             field: "callback".to_string(),
@@ -1276,6 +1293,7 @@ fn test_emit_binop_is() {
 fn test_emit_call_print_string_literal() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("print".to_string())),
         args: vec![IrExpr::StringLit("hello".to_string())],
     };
@@ -1288,8 +1306,10 @@ fn test_emit_call_print_string_literal() {
 fn test_emit_call_print_with_clone() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("print".to_string())),
         args: vec![IrExpr::MethodCall {
+            target_type: Type::Unknown,
             target: Box::new(IrExpr::Var("s".to_string())),
             method: "clone".to_string(),
             args: vec![],
@@ -1330,6 +1350,7 @@ fn test_emit_var_decl_no_init() {
 fn test_emit_dict_iter() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("d".to_string())),
         method: "items".to_string(),
         args: vec![],
@@ -1346,6 +1367,7 @@ fn test_emit_list_comp_dict_values() {
         elt: Box::new(IrExpr::Var("v".to_string())),
         target: "v".to_string(),
         iter: Box::new(IrExpr::MethodCall {
+            target_type: Type::Unknown,
             target: Box::new(IrExpr::Var("d".to_string())),
             method: "values".to_string(),
             args: vec![],
@@ -1421,6 +1443,7 @@ fn test_emit_aug_assign_mod() {
 fn test_emit_call_print_variable() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("print".to_string())),
         args: vec![IrExpr::Var("x".to_string())],
     };
@@ -1434,6 +1457,7 @@ fn test_emit_call_print_variable() {
 fn test_emit_call_main() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("main".to_string())),
         args: vec![],
     };
@@ -1446,6 +1470,7 @@ fn test_emit_call_main() {
 fn test_emit_method_call_to_string() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::IntLit(42)),
         method: "to_string".to_string(),
         args: vec![],
@@ -1459,6 +1484,7 @@ fn test_emit_method_call_to_string() {
 fn test_emit_method_call_append() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("arr".to_string())),
         method: "append".to_string(),
         args: vec![IrExpr::IntLit(1)],
@@ -1472,6 +1498,7 @@ fn test_emit_method_call_append() {
 fn test_emit_method_call_split() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("s".to_string())),
         method: "split".to_string(),
         args: vec![IrExpr::StringLit(",".to_string())],
@@ -1522,6 +1549,7 @@ fn test_emit_binop_is_not() {
 fn test_emit_call_print_empty() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::Call {
+        callee_may_raise: false,
         func: Box::new(IrExpr::Var("print".to_string())),
         args: vec![],
     };
@@ -1539,6 +1567,7 @@ fn test_emit_method_decl_static() {
         body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(42))))],
         takes_self: false,
         takes_mut_self: false,
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("fn create("));
@@ -1564,6 +1593,7 @@ fn test_emit_slice_full() {
 fn test_emit_method_call_strip() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("s".to_string())),
         method: "strip".to_string(),
         args: vec![],
@@ -1676,6 +1706,7 @@ fn test_emit_pyo3_method_call() {
 fn test_emit_method_call_join() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::StringLit(",".to_string())),
         method: "join".to_string(),
         args: vec![IrExpr::Var("items".to_string())],
@@ -1689,6 +1720,7 @@ fn test_emit_method_call_join() {
 fn test_emit_method_call_format() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::StringLit("{}".to_string())),
         method: "format".to_string(),
         args: vec![IrExpr::IntLit(42)],
@@ -1702,6 +1734,7 @@ fn test_emit_method_call_format() {
 fn test_emit_method_call_lower() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("s".to_string())),
         method: "lower".to_string(),
         args: vec![],
@@ -1714,6 +1747,7 @@ fn test_emit_method_call_lower() {
 fn test_emit_method_call_upper() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("s".to_string())),
         method: "upper".to_string(),
         args: vec![],
@@ -1727,6 +1761,7 @@ fn test_emit_method_call_upper() {
 fn test_emit_method_call_startswith() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("s".to_string())),
         method: "startswith".to_string(),
         args: vec![IrExpr::StringLit("pre".to_string())],
@@ -1739,6 +1774,7 @@ fn test_emit_method_call_startswith() {
 fn test_emit_method_call_endswith() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("s".to_string())),
         method: "endswith".to_string(),
         args: vec![IrExpr::StringLit("suf".to_string())],
@@ -1752,6 +1788,7 @@ fn test_emit_method_call_endswith() {
 fn test_emit_method_call_get() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("d".to_string())),
         method: "get".to_string(),
         args: vec![IrExpr::StringLit("key".to_string())],
@@ -1765,6 +1802,7 @@ fn test_emit_method_call_get() {
 fn test_emit_method_call_keys() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("d".to_string())),
         method: "keys".to_string(),
         args: vec![],
@@ -1778,6 +1816,7 @@ fn test_emit_method_call_keys() {
 fn test_emit_method_call_pop() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("arr".to_string())),
         method: "pop".to_string(),
         args: vec![],
@@ -1791,6 +1830,7 @@ fn test_emit_method_call_pop() {
 fn test_emit_method_call_extend() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("arr".to_string())),
         method: "extend".to_string(),
         args: vec![IrExpr::Var("other".to_string())],
@@ -1804,6 +1844,7 @@ fn test_emit_method_call_extend() {
 fn test_emit_method_call_copy() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("arr".to_string())),
         method: "copy".to_string(),
         args: vec![],
@@ -1827,6 +1868,8 @@ fn test_emit_func_decl_multi_params() {
         body: vec![IrNode::Return(Some(Box::new(IrExpr::Var(
             "name".to_string(),
         ))))],
+        hoisted_vars: vec![],
+        may_raise: false,
     };
     let result = emit(&[node]);
     assert!(result.contains("name: String"));
@@ -1846,6 +1889,7 @@ fn test_emit_impl_block_with_method() {
             body: vec![],
             takes_self: true,
             takes_mut_self: true,
+            may_raise: false,
         }],
     };
     let result = emit(&[node]);
@@ -1920,6 +1964,7 @@ fn test_emit_var_private() {
 fn test_emit_method_call_find() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("s".to_string())),
         method: "find".to_string(),
         args: vec![IrExpr::StringLit("x".to_string())],
@@ -1933,6 +1978,7 @@ fn test_emit_method_call_find() {
 fn test_emit_method_call_replace_full() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("s".to_string())),
         method: "replace".to_string(),
         args: vec![
@@ -1963,6 +2009,7 @@ fn test_emit_fstring_empty() {
 fn test_emit_method_call_enumerate() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("arr".to_string())),
         method: "enumerate".to_string(),
         args: vec![],
@@ -1979,6 +2026,8 @@ fn test_emit_try_block() {
     let node = IrNode::TryBlock {
         try_body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(42))))],
         except_body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(0))))],
+        except_var: None, // V1.5.2
+        else_body: None,  // V1.5.2
         finally_body: None,
     };
     let result = emit(&[node]);
@@ -2083,6 +2132,7 @@ fn test_emit_closure_unknown_return() {
 fn test_emit_method_call_zip() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("a".to_string())),
         method: "zip".to_string(),
         args: vec![IrExpr::Var("b".to_string())],
@@ -2096,6 +2146,7 @@ fn test_emit_method_call_zip() {
 fn test_emit_method_call_count() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("s".to_string())),
         method: "count".to_string(),
         args: vec![IrExpr::StringLit("x".to_string())],
@@ -2130,6 +2181,7 @@ fn test_emit_cast_v2() {
 fn test_emit_method_call_abs() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("x".to_string())),
         method: "abs".to_string(),
         args: vec![],
@@ -2143,6 +2195,7 @@ fn test_emit_method_call_abs() {
 fn test_emit_method_call_sort() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("arr".to_string())),
         method: "sort".to_string(),
         args: vec![],
@@ -2156,10 +2209,199 @@ fn test_emit_method_call_sort() {
 fn test_emit_method_call_reverse() {
     let mut emitter = RustEmitter::new();
     let expr = IrExpr::MethodCall {
+        target_type: Type::Unknown,
         target: Box::new(IrExpr::Var("arr".to_string())),
         method: "reverse".to_string(),
         args: vec![],
     };
     let result = emitter.emit_expr(&expr);
     assert!(result.contains(".reverse()"));
+}
+// =============================================================================
+// V1.5.2 Tests
+// =============================================================================
+
+// --- IrExpr::Call with callee_may_raise ---
+#[test]
+fn test_emit_call_callee_may_raise_false() {
+    let mut emitter = RustEmitter::new();
+    let expr = IrExpr::Call {
+        callee_may_raise: false,
+        func: Box::new(IrExpr::Var("some_func".to_string())),
+        args: vec![IrExpr::IntLit(42)],
+    };
+    let result = emitter.emit_expr(&expr);
+    assert_eq!(result, "some_func(42i64)");
+    assert!(!result.contains(".unwrap()"));
+    assert!(!result.contains("?"));
+}
+
+#[test]
+fn test_emit_call_callee_may_raise_true_in_normal_context() {
+    let mut emitter = RustEmitter::new();
+    // current_func_may_raise is false by default
+    let expr = IrExpr::Call {
+        callee_may_raise: true,
+        func: Box::new(IrExpr::Var("risky_func".to_string())),
+        args: vec![],
+    };
+    let result = emitter.emit_expr(&expr);
+    assert!(
+        result.contains(".unwrap()"),
+        "Expected .unwrap() in: {}",
+        result
+    );
+}
+
+#[test]
+fn test_emit_call_callee_may_raise_true_in_may_raise_context() {
+    let mut emitter = RustEmitter::new();
+    emitter.current_func_may_raise = true; // Simulate being inside a may_raise function
+    let expr = IrExpr::Call {
+        callee_may_raise: true,
+        func: Box::new(IrExpr::Var("risky_func".to_string())),
+        args: vec![],
+    };
+    let result = emitter.emit_expr(&expr);
+    assert!(result.contains("?"), "Expected ? operator in: {}", result);
+    assert!(!result.contains(".unwrap()"));
+}
+
+// --- FuncDecl with may_raise ---
+#[test]
+fn test_emit_func_decl_with_may_raise() {
+    let mut emitter = RustEmitter::new();
+    let node = IrNode::FuncDecl {
+        name: "risky_operation".to_string(),
+        params: vec![],
+        ret: Type::Int,
+        body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(42))))],
+        hoisted_vars: vec![],
+        may_raise: true,
+    };
+    let result = emitter.emit_nodes(&[node]);
+    assert!(
+        result.contains("Result<i64, TsuchinokoError>"),
+        "Expected Result return type in: {}",
+        result
+    );
+    assert!(
+        result.contains("Ok(42i64)"),
+        "Expected Ok() wrapping in: {}",
+        result
+    );
+}
+
+#[test]
+fn test_emit_func_decl_without_may_raise() {
+    let mut emitter = RustEmitter::new();
+    let node = IrNode::FuncDecl {
+        name: "safe_operation".to_string(),
+        params: vec![],
+        ret: Type::Int,
+        body: vec![IrNode::Return(Some(Box::new(IrExpr::IntLit(42))))],
+        hoisted_vars: vec![],
+        may_raise: false,
+    };
+    let result = emitter.emit_nodes(&[node]);
+    assert!(
+        !result.contains("Result<"),
+        "Should not have Result in: {}",
+        result
+    );
+    assert!(
+        result.contains("-> i64"),
+        "Expected i64 return in: {}",
+        result
+    );
+}
+
+// --- Raise node ---
+#[test]
+fn test_emit_raise_node() {
+    let mut emitter = RustEmitter::new();
+    let node = IrNode::Raise {
+        exc_type: "ValueError".to_string(),
+        message: Box::new(IrExpr::StringLit("invalid input".to_string())),
+        cause: None,
+        line: 0,
+    };
+    let result = emitter.emit_nodes(&[node]);
+    assert!(
+        result.contains("return Err(TsuchinokoError::with_line"),
+        "Expected Err in: {}",
+        result
+    );
+    assert!(
+        result.contains("ValueError"),
+        "Expected ValueError in: {}",
+        result
+    );
+}
+
+#[test]
+fn test_emit_raise_from_node() {
+    let mut emitter = RustEmitter::new();
+    let node = IrNode::Raise {
+        exc_type: "RuntimeError".to_string(),
+        message: Box::new(IrExpr::StringLit("operation failed".to_string())),
+        cause: Some(Box::new(IrExpr::Var("original_error".to_string()))),
+        line: 0,
+    };
+    let result = emitter.emit_nodes(&[node]);
+    assert!(
+        result.contains("RuntimeError"),
+        "Expected RuntimeError in: {}",
+        result
+    );
+    assert!(
+        result.contains("Some("),
+        "Expected Some for cause in: {}",
+        result
+    );
+}
+
+// --- TryBlock with else ---
+#[test]
+fn test_emit_try_block_with_else() {
+    let mut emitter = RustEmitter::new();
+    let node = IrNode::TryBlock {
+        try_body: vec![IrNode::Expr(IrExpr::IntLit(1))],
+        except_body: vec![IrNode::Expr(IrExpr::IntLit(-1))],
+        else_body: Some(vec![IrNode::Expr(IrExpr::IntLit(100))]),
+        finally_body: None,
+        except_var: None,
+    };
+    let result = emitter.emit_nodes(&[node]);
+    // Should generate match with Ok branch for else
+    assert!(
+        result.contains("match") || result.contains("Ok") || result.contains("Err"),
+        "Expected try pattern in: {}",
+        result
+    );
+}
+
+// --- Unit return with may_raise should add Ok(()) ---
+#[test]
+fn test_emit_func_decl_unit_return_with_may_raise() {
+    let mut emitter = RustEmitter::new();
+    let node = IrNode::FuncDecl {
+        name: "do_something".to_string(),
+        params: vec![],
+        ret: Type::Unit,
+        body: vec![], // Empty body
+        hoisted_vars: vec![],
+        may_raise: true,
+    };
+    let result = emitter.emit_nodes(&[node]);
+    assert!(
+        result.contains("Result<(), TsuchinokoError>"),
+        "Expected Result<()> in: {}",
+        result
+    );
+    assert!(
+        result.contains("Ok(())"),
+        "Expected implicit Ok(()) in: {}",
+        result
+    );
 }

@@ -9,6 +9,8 @@ pub struct VarInfo {
     pub name: String,
     pub ty: Type,
     pub mutable: bool,
+    /// Scope depth at which this variable was defined (0 = global/function level)
+    pub defined_at_depth: usize,
 }
 
 /// Scope for variable tracking
@@ -34,13 +36,14 @@ impl Scope {
         }
     }
 
-    pub fn define(&mut self, name: &str, ty: Type, mutable: bool) {
+    pub fn define(&mut self, name: &str, ty: Type, mutable: bool, depth: usize) {
         self.variables.insert(
             name.to_string(),
             VarInfo {
                 name: name.to_string(),
                 ty,
                 mutable,
+                defined_at_depth: depth,
             },
         );
     }
@@ -85,15 +88,41 @@ impl ScopeStack {
         self.scopes.push(Scope::new());
     }
 
+    /// Pop the current scope and promote variables to parent scope.
+    /// This implements Python's scope semantics where variables defined
+    /// in if/for/while/try blocks are accessible after the block.
     pub fn pop(&mut self) {
+        if self.scopes.len() > 1 {
+            if let Some(popped) = self.scopes.pop() {
+                // Promote variables from popped scope to parent scope
+                // This is Python's scope semantics: block-level variables
+                // become accessible in the parent scope
+                if let Some(parent) = self.scopes.last_mut() {
+                    for (name, var_info) in popped.variables {
+                        // Only promote if not already defined in parent
+                        // (avoid shadowing parent's definition)
+                        if parent.lookup(&name).is_none() {
+                            parent.variables.insert(name, var_info);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Pop the current scope WITHOUT promoting variables to parent scope.
+    /// Used for function scopes where local variables (including parameters)
+    /// should not leak into the parent scope.
+    pub fn pop_without_promotion(&mut self) {
         if self.scopes.len() > 1 {
             self.scopes.pop();
         }
     }
 
     pub fn define(&mut self, name: &str, ty: Type, mutable: bool) {
+        let depth = self.depth();
         if let Some(scope) = self.scopes.last_mut() {
-            scope.define(name, ty, mutable);
+            scope.define(name, ty, mutable, depth);
         }
     }
 
@@ -133,11 +162,12 @@ mod tests {
     #[test]
     fn test_scope_define_and_lookup() {
         let mut scope = Scope::new();
-        scope.define("x", Type::Int, false);
+        scope.define("x", Type::Int, false, 0);
 
         let info = scope.lookup("x").unwrap();
         assert_eq!(info.name, "x");
         assert_eq!(info.ty, Type::Int);
+        assert_eq!(info.defined_at_depth, 0);
     }
 
     #[test]
@@ -151,8 +181,10 @@ mod tests {
         assert!(stack.lookup("global_var").is_some());
         assert!(stack.lookup("local_var").is_some());
 
+        // After pop, local_var is PROMOTED to parent scope (Python semantics)
+        // Variables defined in inner blocks are accessible in outer scope
         stack.pop();
         assert!(stack.lookup("global_var").is_some());
-        assert!(stack.lookup("local_var").is_none());
+        assert!(stack.lookup("local_var").is_some()); // Python: still accessible!
     }
 }

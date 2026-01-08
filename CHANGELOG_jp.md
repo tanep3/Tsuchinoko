@@ -2,7 +2,44 @@
 
 本プロジェクトの主要な変更点をここに記録します。
 
-## [VS Code 拡張 0.1.0] - 2026-01-06
+## [1.5.2] - 2026-01-08 - Result型エラーハンドリング
+
+### 追加 - 例外チェイン (`raise from`)
+
+- **`raise A from B`**: 例外チェーン (`TsuchinokoError.cause` で原因保持)
+- **エラーチェーン表示**: `Caused by:` 形式でエラーメッセージ表示
+- **行番号追跡**: Python ソース行番号をエラーに含む (`[line 10] RuntimeError: ...`)
+
+### 追加 - `try/except/else` ブロック
+
+- **`else` ブロック**: 例外が発生しなかった場合のみ実行
+- **複数例外型**: `except (ValueError, TypeError):`
+- **例外変数**: `except ValueError as e:`
+
+### 追加 - Result型統一
+
+- **3層エラーハンドリング・アーキテクチャ**:
+  1. **Result統一**: `raise` → `Err(TsuchinokoError)`、`?` で伝播
+  2. **外部境界**: PyO3/py_bridge 失敗 → `Err(TsuchinokoError)` (panic しない)
+  3. **catch_unwind 診断**: 想定外panic → `InternalError`
+- **2パス may_raise 解析**: may_raise 関数を呼ぶ関数は自動的に昇格
+- **呼び出し側からの List 型推論**: `def f(nums: list)` + `f([1,2,3])` → `&[i64]`
+
+### 追加 - Hoisting 修正
+
+- **for ループ変数 Hoisting**: `_loop_` プレフィックスでシャドーイング回避
+- **Hoisted 変数への代入**: ループ開始時に `i = Some(_loop_i);`
+
+### 変更
+
+- **Python 構文カバレッジ**: 68% → **71%** (78機能サポート)
+
+### テスト
+
+- **リグレッションテスト**: 72/72 パス (100%)
+- **新規テスト**: v1.5.2 システムテスト 10件追加
+
+## [1.5.1 - VS Code 拡張 0.1.0] - 2026-01-06
 
 ### 追加
 

@@ -289,6 +289,7 @@ pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
 }
 
 /// Parse a try-except statement (V1.5.0: supports multiple except clauses & finally)
+/// V1.5.2: Added else block support
 fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), TsuchinokoError> {
     // First line should be "try:"
     let line_num = start + 1;
@@ -297,6 +298,7 @@ fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchin
     let (try_body, try_consumed) = parse_block(lines, start + 1)?;
 
     let mut except_clauses = Vec::new();
+    let mut else_body = None;
     let mut finally_body = None;
     let mut current = start + 1 + try_consumed;
 
@@ -308,6 +310,11 @@ fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchin
             let clause = parse_except_clause(lines, current)?;
             except_clauses.push(clause.0);
             current += clause.1;
+        } else if line == "else:" || line.starts_with("else:") {
+            // V1.5.2: Parse else block (after except, before finally)
+            let (eb, consumed) = parse_block(lines, current + 1)?;
+            else_body = Some(eb);
+            current += 1 + consumed;
         } else if line.starts_with("finally:") || line == "finally:" {
             // Parse finally block
             let (fb, consumed) = parse_block(lines, current + 1)?;
@@ -332,6 +339,7 @@ fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchin
         Stmt::TryExcept {
             try_body,
             except_clauses,
+            else_body,
             finally_body,
         },
         total_consumed,
@@ -575,6 +583,7 @@ fn parse_class_body(
                 fields.push(Field {
                     name: field_name,
                     type_hint,
+                    default_value: None, // dataclass field-level default not yet supported
                 });
             }
         } else {
@@ -720,6 +729,7 @@ fn extract_fields_from_init(body: &[Stmt], params: &[Param]) -> Vec<Field> {
                 fields.push(Field {
                     name: field_name.to_string(),
                     type_hint: hint,
+                    default_value: Some(value.clone()),
                 });
             }
         }
@@ -767,6 +777,26 @@ fn infer_type_from_expr(
             }
             infer_type_from_expr(right, param_types)
         }
+        // Integer literal -> int
+        Expr::IntLiteral(_) => TypeHint {
+            name: "int".to_string(),
+            params: vec![],
+        },
+        // Float literal -> float
+        Expr::FloatLiteral(_) => TypeHint {
+            name: "float".to_string(),
+            params: vec![],
+        },
+        // String literal -> str
+        Expr::StringLiteral(_) => TypeHint {
+            name: "str".to_string(),
+            params: vec![],
+        },
+        // Bool literal -> bool
+        Expr::BoolLiteral(_) => TypeHint {
+            name: "bool".to_string(),
+            params: vec![],
+        },
         // Other expression types - return Any
         _ => TypeHint {
             name: "Any".to_string(),
@@ -1263,6 +1293,53 @@ fn parse_line(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoErr
         } else {
             let test = parse_expr(rest, line_num)?;
             return Ok(Some(Stmt::Assert { test, msg: None }));
+        }
+    }
+
+    // V1.5.2: Try to parse as raise statement
+    // Supports: raise ValueError("msg") and raise ValueError("msg") from e
+    if line.starts_with("raise ") {
+        let rest = line.strip_prefix("raise ").unwrap().trim();
+
+        // Check for "from" clause: raise ExType("msg") from cause_expr
+        // Search for "from" keyword (not " from " because find_keyword_balanced checks word boundaries)
+        let (raise_part, cause) = if let Some(from_pos) = utils::find_keyword_balanced(rest, "from")
+        {
+            // from_pos points to start of "from", so we take everything before it
+            let raise_str = rest[..from_pos].trim();
+            // Skip "from" (4 chars) to get cause expression
+            let cause_str = rest[from_pos + 4..].trim();
+            let cause_expr = parse_expr(cause_str, line_num)?;
+            (raise_str, Some(Box::new(cause_expr)))
+        } else {
+            (rest, None)
+        };
+
+        // Parse exception: ExType("message") or ExType(message_expr)
+        if let Some(paren_start) = raise_part.find('(') {
+            let exception_type = raise_part[..paren_start].trim().to_string();
+            let paren_end = find_closing_paren(raise_part, paren_start)?;
+            let msg_str = raise_part[paren_start + 1..paren_end].trim();
+            let message = if msg_str.is_empty() {
+                Expr::StringLiteral(String::new())
+            } else {
+                parse_expr(msg_str, line_num)?
+            };
+            return Ok(Some(Stmt::Raise {
+                exception_type,
+                message,
+                cause,
+                line: line_num,
+            }));
+        } else {
+            // Simple raise without arguments: raise Exception
+            // Treat as raise with empty message
+            return Ok(Some(Stmt::Raise {
+                exception_type: raise_part.to_string(),
+                message: Expr::StringLiteral(String::new()),
+                cause,
+                line: line_num,
+            }));
         }
     }
 

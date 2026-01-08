@@ -43,12 +43,16 @@ pub enum IrExpr {
     Call {
         func: Box<IrExpr>,
         args: Vec<IrExpr>,
+        /// V1.5.2: 呼び出し先が may_raise (Result を返す) かどうか
+        callee_may_raise: bool,
     },
     /// メソッド呼び出し (e.g., arr.len())
     MethodCall {
         target: Box<IrExpr>,
         method: String,
         args: Vec<IrExpr>,
+        /// ターゲットの型 (Set/List/Dict/Class 判別用)
+        target_type: Type,
     },
     /// PyO3モジュール呼び出し (np.array(...), pd.DataFrame(...))
     PyO3Call {

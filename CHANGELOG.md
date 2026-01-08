@@ -5,7 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [VS Code Extension 0.1.0] - 2026-01-06
+## [1.5.2] - 2026-01-08 - Result Type Error Handling
+
+### Added - Exception Chaining (`raise from`)
+
+- **`raise A from B`**: Exception chaining with `TsuchinokoError.cause`
+- **Error Chain Display**: `Caused by:` format in error messages
+- **Line Number Tracking**: Python source line included in errors (`[line 10] RuntimeError: ...`)
+
+### Added - `try/except/else` Block
+
+- **`else` Block**: Executes only when no exception occurs
+- **Multiple Exception Types**: `except (ValueError, TypeError):`
+- **Exception Variable**: `except ValueError as e:`
+
+### Added - Result Type Unification
+
+- **3-Layer Error Handling Architecture**:
+  1. **Result Unification**: `raise` → `Err(TsuchinokoError)`, `?` propagation
+  2. **External Boundary**: PyO3/py_bridge failures → `Err(TsuchinokoError)` (no panic)
+  3. **catch_unwind Diagnosis**: Unexpected panic → `InternalError`
+- **2-Pass May-Raise Analysis**: Functions calling may-raise functions are automatically upgraded
+- **List Type Inference from Call Sites**: `def f(nums: list)` + `f([1,2,3])` → `&[i64]`
+
+### Added - Hoisting Fix
+
+- **For Loop Variable Hoisting**: `_loop_` prefix to avoid shadowing
+- **Assignment to Hoisted Variable**: `i = Some(_loop_i);` at loop start
+
+### Changed
+
+- **Python Syntax Coverage**: 68% → **71%** (78 features supported)
+
+### Tests
+
+- **Regression Tests**: 72/72 passed (100%)
+- **New Tests**: 10 new v1.5.2 system tests added
+
+## [1.5.1 - VS Code Extension 0.1.0] - 2026-01-06
 
 ### Added
 

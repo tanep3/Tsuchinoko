@@ -41,6 +41,8 @@ fn test_function_def_to_rust() {
             op: IrBinOp::Add,
             right: Box::new(IrExpr::Var("b".to_string())),
         })))],
+        hoisted_vars: vec![],
+        may_raise: false,
     }];
 
     let result = emit(&ir);
@@ -93,6 +95,7 @@ fn test_for_loop_to_rust() {
             end: Box::new(IrExpr::IntLit(10)),
         }),
         body: vec![IrNode::Expr(IrExpr::Call {
+            callee_may_raise: false,
             func: Box::new(IrExpr::Var("println".to_string())),
             args: vec![IrExpr::Var("i".to_string())],
         })],

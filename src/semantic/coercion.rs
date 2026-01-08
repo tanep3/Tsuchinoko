@@ -80,6 +80,7 @@ pub fn needs_box_wrap(expected_ty: &Type, actual_ty: &Type) -> bool {
             actual_ty,
             Type::Func {
                 is_boxed: false,
+                may_raise: false,
                 ..
             }
         )
@@ -230,11 +231,13 @@ mod tests {
             params: vec![Type::Int],
             ret: Box::new(Type::Int),
             is_boxed: true,
+            may_raise: false,
         };
         let actual = Type::Func {
             params: vec![Type::Int],
             ret: Box::new(Type::Int),
             is_boxed: false,
+            may_raise: false,
         };
         assert!(needs_box_wrap(&expected, &actual));
     }

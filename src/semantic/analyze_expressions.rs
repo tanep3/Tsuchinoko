@@ -13,6 +13,27 @@ impl SemanticAnalyzer {
             Expr::BoolLiteral(b) => Ok(IrExpr::BoolLit(*b)),
             Expr::NoneLiteral => Ok(IrExpr::NoneLit),
             Expr::Ident(name) => {
+                // Check for scope-crossing variable usage (for hoisting detection)
+                let current_depth = self.scope.depth();
+                if let Some(var_info) = self.scope.lookup(name) {
+                    let defined_depth = var_info.defined_at_depth;
+                    let var_ty = var_info.ty.clone();
+
+                    // If variable is used at a shallower depth than where it was defined,
+                    // it needs to be hoisted (defined in inner block, used in outer scope)
+                    if current_depth < defined_depth {
+                        self.hoisted_var_candidates
+                            .entry(name.clone())
+                            .and_modify(|(_, _, used)| {
+                                // Keep track of the shallowest usage depth
+                                if current_depth < *used {
+                                    *used = current_depth;
+                                }
+                            })
+                            .or_insert((var_ty.clone(), defined_depth, current_depth));
+                    }
+                }
+
                 // Check if this variable has a narrowed type
                 // If the original type is Optional<T> but it's narrowed to T, we need to unwrap
                 if let Some(original_info) = self.scope.lookup(name) {
@@ -76,6 +97,7 @@ impl SemanticAnalyzer {
                     };
 
                     return Ok(IrExpr::MethodCall {
+                        target_type: Type::Unknown,
                         target: Box::new(ir_right),
                         method: method.to_string(),
                         args: vec![arg],
@@ -110,6 +132,7 @@ impl SemanticAnalyzer {
                         }
                     };
                     let contains_call = IrExpr::MethodCall {
+                        target_type: Type::Unknown,
                         target: Box::new(ir_right),
                         method: method.to_string(),
                         args: vec![arg],
@@ -137,6 +160,7 @@ impl SemanticAnalyzer {
                                     "is_some"
                                 };
                                 return Ok(IrExpr::MethodCall {
+                                    target_type: Type::Unknown,
                                     target: Box::new(ir_left),
                                     method: method.to_string(),
                                     args: vec![],
@@ -178,6 +202,7 @@ impl SemanticAnalyzer {
 
                         // Generate: left.method(&right).cloned().collect()
                         let method_call = IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(ir_left),
                             method: method.to_string(),
                             args: vec![IrExpr::Reference {
@@ -185,12 +210,14 @@ impl SemanticAnalyzer {
                             }],
                         };
                         let cloned_call = IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(method_call),
                             method: "cloned".to_string(),
                             args: vec![],
                         };
                         // Use collect_hashset marker for type inference
                         return Ok(IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(cloned_call),
                             method: "collect_hashset".to_string(),
                             args: vec![],
@@ -208,6 +235,7 @@ impl SemanticAnalyzer {
                         // If right is StringLit, add .to_string()
                         let ir_right = if matches!(ir_right, IrExpr::StringLit(_)) {
                             IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(ir_right),
                                 method: "to_string".to_string(),
                                 args: vec![],
@@ -217,6 +245,7 @@ impl SemanticAnalyzer {
                         };
                         // x.unwrap_or(default)
                         return Ok(IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(ir_left),
                             method: "unwrap_or".to_string(),
                             args: vec![ir_right],
@@ -281,7 +310,11 @@ impl SemanticAnalyzer {
                         if let Some(Expr::Lambda { params, body }) = key_lambda {
                             // sorted(iterable, key=lambda x: expr) -> sort_by_key
                             let param = params.first().cloned().unwrap_or_else(|| "x".to_string());
+                            // Phase E: Register lambda param in scope before analyzing body
+                            self.scope.push();
+                            self.scope.define(&param, Type::Unknown, false);
                             let ir_body = self.analyze_expr(body)?;
+                            self.scope.pop();
                             let body_str = self.emit_simple_ir_expr(&ir_body);
 
                             if reverse {
@@ -357,11 +390,13 @@ impl SemanticAnalyzer {
                     if name == "all" && !args.is_empty() && kwargs.is_empty() {
                         let ir_arg = self.analyze_expr(&args[0])?;
                         let iter_call = IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(ir_arg),
                             method: "iter".to_string(),
                             args: vec![],
                         };
                         return Ok(IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(iter_call),
                             method: "all".to_string(),
                             args: vec![IrExpr::RawCode("|x| *x".to_string())],
@@ -372,11 +407,13 @@ impl SemanticAnalyzer {
                     if name == "any" && !args.is_empty() && kwargs.is_empty() {
                         let ir_arg = self.analyze_expr(&args[0])?;
                         let iter_call = IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(ir_arg),
                             method: "iter".to_string(),
                             args: vec![],
                         };
                         return Ok(IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(iter_call),
                             method: "any".to_string(),
                             args: vec![IrExpr::RawCode("|x| *x".to_string())],
@@ -486,16 +523,19 @@ impl SemanticAnalyzer {
                                     let ir_lambda = self.analyze_expr(lambda)?;
 
                                     let iter_call = IrExpr::MethodCall {
+                                        target_type: Type::Unknown,
                                         target: Box::new(ir_iter),
                                         method: "iter".to_string(),
                                         args: vec![],
                                     };
                                     let map_call = IrExpr::MethodCall {
+                                        target_type: Type::Unknown,
                                         target: Box::new(iter_call),
                                         method: "map".to_string(),
                                         args: vec![ir_lambda],
                                     };
                                     return Ok(IrExpr::MethodCall {
+                                        target_type: Type::Unknown,
                                         target: Box::new(map_call),
                                         method: "collect".to_string(),
                                         args: vec![],
@@ -516,7 +556,11 @@ impl SemanticAnalyzer {
                                         if let Expr::Lambda { params, body } = lambda {
                                             if params.len() == 1 {
                                                 let param = &params[0];
+                                                // Phase E: Register lambda param in scope before analyzing body
+                                                self.scope.push();
+                                                self.scope.define(param, Type::Unknown, false);
                                                 let body_ir = self.analyze_expr(body)?;
+                                                self.scope.pop();
                                                 IrExpr::RawCode(format!(
                                                     "|&{}| {}",
                                                     param,
@@ -530,22 +574,26 @@ impl SemanticAnalyzer {
                                         };
 
                                     let iter_call = IrExpr::MethodCall {
+                                        target_type: Type::Unknown,
                                         target: Box::new(ir_iter),
                                         method: "iter".to_string(),
                                         args: vec![],
                                     };
                                     // cloned() before filter to get owned values
                                     let cloned_call = IrExpr::MethodCall {
+                                        target_type: Type::Unknown,
                                         target: Box::new(iter_call),
                                         method: "cloned".to_string(),
                                         args: vec![],
                                     };
                                     let filter_call = IrExpr::MethodCall {
+                                        target_type: Type::Unknown,
                                         target: Box::new(cloned_call),
                                         method: "filter".to_string(),
                                         args: vec![filter_closure],
                                     };
                                     return Ok(IrExpr::MethodCall {
+                                        target_type: Type::Unknown,
                                         target: Box::new(filter_call),
                                         method: "collect".to_string(),
                                         args: vec![],
@@ -563,17 +611,20 @@ impl SemanticAnalyzer {
                         // Build: arg.iter().cloned().collect()
                         // Use MethodCall chain, emitter will handle turbofish
                         let iter_call = IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(ir_arg),
                             method: "iter".to_string(),
                             args: vec![],
                         };
                         let cloned_call = IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(iter_call),
                             method: "cloned".to_string(),
                             args: vec![],
                         };
                         // Special marker for set collect - emitter will add turbofish
                         return Ok(IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(cloned_call),
                             method: "collect_hashset".to_string(), // Special marker
                             args: vec![],
@@ -596,6 +647,9 @@ impl SemanticAnalyzer {
                                 .iter()
                                 .map(|a| self.analyze_expr(a))
                                 .collect::<Result<Vec<_>, _>>()?;
+
+                            // V1.5.2: PyO3 calls can fail, mark current function as may_raise
+                            self.current_func_may_raise = true;
 
                             // Return structured PyO3 call
                             return Ok(IrExpr::PyO3Call {
@@ -635,6 +689,7 @@ impl SemanticAnalyzer {
                                         "{class_name}::{attr}"
                                     ))),
                                     args: ir_args,
+                                    callee_may_raise: false,
                                 });
                             };
                             return Ok(IrExpr::RawCode(format!(
@@ -671,6 +726,7 @@ impl SemanticAnalyzer {
                             if let Some(rust_method) = method {
                                 let ir_arg = self.analyze_expr(&args[0])?;
                                 return Ok(IrExpr::MethodCall {
+                                    target_type: Type::Unknown,
                                     target: Box::new(ir_arg),
                                     method: rust_method.to_string(),
                                     args: vec![],
@@ -698,6 +754,7 @@ impl SemanticAnalyzer {
                         // Unwrap matches structure of Expr::Attribute.
                         if let Expr::Attribute { value, .. } = *func.clone() {
                             return Ok(IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(self.analyze_expr(&value)?),
                                 method: "iter".to_string(),
                                 args: vec![],
@@ -844,8 +901,48 @@ impl SemanticAnalyzer {
                                 self.analyze_call_args(&resolved_args, &expected_types, name)?;
 
                             // Build field list with names and values
+                            // V1.5.2: If no arguments provided but fields exist, use default values from __init__
                             let fields: Vec<(String, IrExpr)> =
-                                field_names.into_iter().zip(ir_args).collect();
+                                if ir_args.is_empty() && !field_names.is_empty() {
+                                    // Get default values from struct_field_defaults (populated from __init__)
+                                    let defaults = self
+                                        .struct_field_defaults
+                                        .get(name)
+                                        .cloned()
+                                        .unwrap_or_default();
+                                    let defaults_map: std::collections::HashMap<_, _> =
+                                        defaults.into_iter().collect();
+
+                                    field_types
+                                        .iter()
+                                        .map(|(field_name, ty)| {
+                                            // Use actual default value from __init__ if available
+                                            let default_val =
+                                                if let Some(ir) = defaults_map.get(field_name) {
+                                                    ir.clone()
+                                                } else {
+                                                    // Fallback to type-based default (should rarely happen)
+                                                    match ty {
+                                                        Type::Int => IrExpr::IntLit(0),
+                                                        Type::Float => IrExpr::FloatLit(0.0),
+                                                        Type::Bool => IrExpr::BoolLit(false),
+                                                        Type::String => IrExpr::MethodCall {
+                                                            target_type: Type::Unknown,
+                                                            target: Box::new(IrExpr::StringLit(
+                                                                String::new(),
+                                                            )),
+                                                            method: "to_string".to_string(),
+                                                            args: vec![],
+                                                        },
+                                                        _ => IrExpr::IntLit(0),
+                                                    }
+                                                };
+                                            (field_name.clone(), default_val)
+                                        })
+                                        .collect()
+                                } else {
+                                    field_names.into_iter().zip(ir_args).collect()
+                                };
 
                             return Ok(IrExpr::StructConstruct {
                                 name: name.clone(),
@@ -886,9 +983,29 @@ impl SemanticAnalyzer {
                             Box::new(IrExpr::Var(name.clone()))
                         };
 
+                        // V1.5.2: Check if callee may raise (from scope, set by forward_declare_functions)
+                        let callee_may_raise = if let Some(var_info) = self.scope.lookup(name) {
+                            matches!(
+                                &var_info.ty,
+                                Type::Func {
+                                    may_raise: true,
+                                    ..
+                                }
+                            )
+                        } else {
+                            // Fallback to may_raise_funcs for functions set during analyze
+                            self.may_raise_funcs.contains(name)
+                        };
+
+                        // Propagate may_raise to current function
+                        if callee_may_raise {
+                            self.current_func_may_raise = true;
+                        }
+
                         Ok(IrExpr::Call {
                             func: final_func,
                             args: ir_args,
+                            callee_may_raise,
                         })
                     }
                     Expr::Attribute { value, attr } => {
@@ -924,6 +1041,7 @@ impl SemanticAnalyzer {
                                                 field: stripped_attr.to_string(),
                                             }),
                                             args: ir_args,
+                                            callee_may_raise: false,
                                         });
                                     }
                                 }
@@ -950,6 +1068,9 @@ impl SemanticAnalyzer {
                         )?;
 
                         if matches!(target_ty, Type::Any) {
+                            // V1.5.2: PyO3 method calls can fail
+                            self.current_func_may_raise = true;
+
                             return Ok(IrExpr::PyO3MethodCall {
                                 target: Box::new(ir_target),
                                 method: method_name.to_string(),
@@ -958,6 +1079,7 @@ impl SemanticAnalyzer {
                         }
 
                         Ok(IrExpr::MethodCall {
+                            target_type: target_ty.clone(),
                             target: Box::new(ir_target),
                             method: method_name.to_string(),
                             args: ir_args,
@@ -976,10 +1098,50 @@ impl SemanticAnalyzer {
                             &expected_param_types,
                             &self.get_func_name_for_debug(func.as_ref()),
                         )?;
+
+                        // V1.5.2: Check if callee may raise (from function type)
+                        let callee_ty = self.infer_type(func);
+                        let mut callee_may_raise = match &callee_ty {
+                            Type::Func { may_raise, .. } => *may_raise,
+                            _ => false,
+                        };
+
+                        // V1.5.2 (2-Pass): Also check scope directly for user-defined functions
+                        // This ensures we get the may_raise status from forward_declare_functions
+                        if !callee_may_raise {
+                            if let Expr::Ident(func_name) = func.as_ref() {
+                                if let Some(var_info) = self.scope.lookup(func_name) {
+                                    if let Type::Func {
+                                        may_raise: true, ..
+                                    } = &var_info.ty
+                                    {
+                                        callee_may_raise = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Phase G: from-import functions always may raise
+                        if let Expr::Ident(func_name) = func.as_ref() {
+                            let is_from_import = self
+                                .external_imports
+                                .iter()
+                                .any(|(_, item)| item == func_name);
+                            if is_from_import {
+                                callee_may_raise = true;
+                            }
+                        }
+
+                        // Propagate may_raise to current function
+                        if callee_may_raise {
+                            self.current_func_may_raise = true;
+                        }
+
                         let ir_func = self.analyze_expr(func)?;
                         Ok(IrExpr::Call {
                             func: Box::new(ir_func),
                             args: ir_args,
+                            callee_may_raise,
                         })
                     }
                 }
@@ -1006,6 +1168,9 @@ impl SemanticAnalyzer {
                 // For sequence indexing, ensure the index is cast to usize
                 let target_ty = self.infer_type(target);
                 if matches!(target_ty, Type::Any) {
+                    // V1.5.2: PyO3 method calls can fail
+                    self.current_func_may_raise = true;
+
                     return Ok(IrExpr::PyO3MethodCall {
                         target: Box::new(ir_target),
                         method: "__getitem__".to_string(),
@@ -1066,6 +1231,7 @@ impl SemanticAnalyzer {
                                     Type::Struct(_) => {
                                         // Struct with items() method - call items() directly
                                         IrExpr::MethodCall {
+                                            target_type: Type::Unknown,
                                             target: Box::new(ir_target),
                                             method: "items".to_string(),
                                             args: vec![],
@@ -1074,11 +1240,13 @@ impl SemanticAnalyzer {
                                     Type::Dict(_, _) => {
                                         // Dict - use iter().map() for owned values
                                         let iter_call = IrExpr::MethodCall {
+                                            target_type: Type::Unknown,
                                             target: Box::new(ir_target),
                                             method: "iter".to_string(),
                                             args: vec![],
                                         };
                                         IrExpr::MethodCall {
+                                            target_type: Type::Unknown,
                                             target: Box::new(iter_call),
                                             method: "map".to_string(),
                                             args: vec![IrExpr::RawCode(
@@ -1147,20 +1315,24 @@ impl SemanticAnalyzer {
                             let ir_second = self.analyze_expr(&args[1])?;
 
                             let iter_call = IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(ir_first),
                                 method: "iter".to_string(),
                                 args: vec![],
                             };
                             let zip_call = IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(iter_call),
                                 method: "zip".to_string(),
                                 args: vec![IrExpr::MethodCall {
+                                    target_type: Type::Unknown,
                                     target: Box::new(ir_second),
                                     method: "iter".to_string(),
                                     args: vec![],
                                 }],
                             };
                             let mapped = IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(zip_call),
                                 method: "map".to_string(),
                                 args: vec![IrExpr::RawCode(
@@ -1185,16 +1357,19 @@ impl SemanticAnalyzer {
                             // enumerate(items) -> items.iter().enumerate().map(|(i, x)| (i as i64, x.clone()))
                             let ir_items = self.analyze_expr(&args[0])?;
                             let iter_call = IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(ir_items),
                                 method: "iter".to_string(),
                                 args: vec![],
                             };
                             let enum_call = IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(iter_call),
                                 method: "enumerate".to_string(),
                                 args: vec![],
                             };
                             let mapped = IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(enum_call),
                                 method: "map".to_string(),
                                 args: vec![IrExpr::RawCode(
@@ -1279,6 +1454,7 @@ impl SemanticAnalyzer {
                     // Optional variable as condition -> x.is_some()
                     let inner = self.analyze_expr(test)?;
                     IrExpr::MethodCall {
+                        target_type: Type::Unknown,
                         target: Box::new(inner),
                         method: "is_some".to_string(),
                         args: vec![],
@@ -1289,6 +1465,7 @@ impl SemanticAnalyzer {
                     IrExpr::UnaryOp {
                         op: IrUnaryOp::Not,
                         operand: Box::new(IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(inner),
                             method: "is_empty".to_string(),
                             args: vec![],
@@ -1307,6 +1484,7 @@ impl SemanticAnalyzer {
                     {
                         if test_var == body_var {
                             ir_body = IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(ir_body),
                                 method: "unwrap".to_string(),
                                 args: vec![],
@@ -1316,6 +1494,7 @@ impl SemanticAnalyzer {
                     // Also if body is Optional type, unwrap it
                     if matches!(self.infer_type(body), Type::Optional(_)) {
                         ir_body = IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(ir_body),
                             method: "unwrap".to_string(),
                             args: vec![],
@@ -1328,6 +1507,7 @@ impl SemanticAnalyzer {
                     if let Expr::Ident(body_var) = body.as_ref() {
                         if body_var == opt_var {
                             ir_body = IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(ir_body),
                                 method: "unwrap".to_string(),
                                 args: vec![],
@@ -1339,6 +1519,7 @@ impl SemanticAnalyzer {
                 // V1.5.0: If orelse is StringLit, add to_string()
                 if matches!(ir_orelse, IrExpr::StringLit(_)) {
                     ir_orelse = IrExpr::MethodCall {
+                        target_type: Type::Unknown,
                         target: Box::new(ir_orelse),
                         method: "to_string".to_string(),
                         args: vec![],
@@ -1369,6 +1550,7 @@ impl SemanticAnalyzer {
                     let final_val = if let Type::String = val_ty {
                         if let IrExpr::StringLit(_) = ir_value {
                             IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(ir_value),
                                 method: "to_string".to_string(),
                                 args: vec![],
@@ -1621,6 +1803,7 @@ mod tests {
             params,
             ret,
             is_boxed,
+            ..
         }) = ty
         {
             assert_eq!(params.len(), 2);

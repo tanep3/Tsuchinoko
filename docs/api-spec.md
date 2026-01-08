@@ -1,8 +1,8 @@
 # Tsuchinoko API設計書
 
 > **著者**: Tane Channel Technology  
-> **バージョン**: 1.1.0  
-> **最終更新**: 2025-12-30
+> **バージョン**: 1.5.2  
+> **最終更新**: 2026-01-08
 
 ---
 
@@ -79,6 +79,7 @@ pub mod semantic;
 pub mod ir;
 pub mod emitter;
 pub mod error;
+pub mod bridge;  // V1.2.0: 外部ライブラリ連携
 ```
 
 ### 2.2 主要関数
@@ -118,7 +119,7 @@ pub fn emit(typed_ast: &TypedAst) -> String;
 
 ## 3. エラー API
 
-### 3.1 エラー型
+### 3.1 トランスパイラエラー型
 
 ```rust
 #[derive(Debug, thiserror::Error)]
@@ -140,7 +141,29 @@ pub enum TsuchinokoError {
 }
 ```
 
-### 3.2 エラー出力形式
+### 3.2 ランタイムエラー型 (V1.5.2 生成コード側)
+
+```rust
+/// 生成された Rust コード内で使用されるエラー型
+pub struct TsuchinokoError {
+    kind: String,           // 例外型名 ("ValueError", "RuntimeError" など)
+    message: String,        // エラーメッセージ
+    line: usize,            // Python ソース行番号
+    cause: Option<Box<TsuchinokoError>>,  // 例外チェーン (raise from)
+}
+
+impl TsuchinokoError {
+    /// 行番号と cause 付きで生成
+    pub fn with_line(kind: &str, message: &str, line: usize, cause: Option<TsuchinokoError>) -> Self;
+}
+
+impl std::fmt::Display for TsuchinokoError {
+    // 出力例: "[line 10] ValueError: invalid value"
+    //         "Caused by: [line 5] RuntimeError: original error"
+}
+```
+
+### 3.3 エラー出力形式
 
 ```
 error[E0001]: Parse error at line 5

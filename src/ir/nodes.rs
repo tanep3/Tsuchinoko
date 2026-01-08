@@ -7,6 +7,14 @@ use super::exprs::IrExpr;
 use super::ops::IrAugAssignOp;
 use crate::semantic::Type;
 
+/// ホイストが必要な変数（ブロック境界を越えて使用される）
+/// Python の関数スコープを Rust のブロックスコープに変換するために使用
+#[derive(Debug, Clone, PartialEq)]
+pub struct HoistedVar {
+    pub name: String,
+    pub ty: Type,
+}
+
 /// IR ノード型 (ステートメント)
 #[derive(Debug, Clone)]
 pub enum IrNode {
@@ -56,6 +64,8 @@ pub enum IrNode {
         params: Vec<(String, Type)>,
         ret: Type,
         body: Vec<IrNode>,
+        hoisted_vars: Vec<HoistedVar>, // 関数スコープにホイストが必要な変数
+        may_raise: bool,               // 例外を発生しうる関数か（Result化が必要）
     },
     /// メソッド宣言 (implブロック内)
     MethodDecl {
@@ -65,6 +75,7 @@ pub enum IrNode {
         body: Vec<IrNode>,
         takes_self: bool,     // インスタンスメソッド
         takes_mut_self: bool, // selfを変更する場合
+        may_raise: bool,      // V1.5.2: 例外を発生しうるメソッドか
     },
 
     // --- 制御構造 ---
@@ -108,10 +119,12 @@ pub enum IrNode {
     TypeAlias { name: String, ty: Type },
 
     // --- 例外・アサート ---
-    /// try-exceptブロック (V1.5.0: finally support)
+    /// try-exceptブロック (V1.5.2: except_var, else_body 追加)
     TryBlock {
         try_body: Vec<IrNode>,
         except_body: Vec<IrNode>,
+        except_var: Option<String>,     // V1.5.2: except ... as e の変数名
+        else_body: Option<Vec<IrNode>>, // V1.5.2: else ブロック
         finally_body: Option<Vec<IrNode>>,
     },
     /// アサート文 (V1.3.0)
@@ -119,8 +132,14 @@ pub enum IrNode {
         test: Box<IrExpr>,
         msg: Option<Box<IrExpr>>,
     },
-    /// パニック (raise由来)
-    Panic(String),
+    /// Raise 文 (V1.5.2: cause 対応, 行番号対応)
+    /// raise ValueError("message") from original_error
+    Raise {
+        exc_type: String,
+        message: Box<IrExpr>,
+        cause: Option<Box<IrExpr>>, // V1.5.2: from 句
+        line: usize,                // V1.5.2: ソースコード行番号（0 = 不明）
+    },
 
     // --- その他 ---
     /// 式文

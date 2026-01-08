@@ -5,6 +5,7 @@
 
 pub mod module_table;
 pub mod strategies;
+pub mod tsuchinoko_error;
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};

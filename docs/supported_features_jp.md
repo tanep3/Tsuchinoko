@@ -130,8 +130,12 @@ Python オブジェクトをブリッジ呼び出しをまたいで保持でき�
 - **複数例外型** (`except (ValueError, TypeError):`) (V1.5.0)
 - **例外変数** (`except ValueError as e:`) (V1.5.0)
 - **try/except/finally** ブロック (V1.5.0)
-- **raise** 文 (`panic!`に変換)
-- **ValueError**, **TypeError** (`panic!`に変換)
+- **try/except/else** ブロック (例外なし時のみ `else` 実行) (V1.5.2)
+- **raise** 文 (`Err(TsuchinokoError)` または `panic!` に変換)
+- **raise from** (`raise A from B`) - 例外チェーン (`cause` 保持) (V1.5.2)
+- **Result型統一** - 例外発生関数は `Result<T, TsuchinokoError>` を返す (V1.5.2)
+- **エラー行番号** - Python ソース行番号をエラーに含む (V1.5.2)
+- **ValueError**, **TypeError** (`TsuchinokoError`に変換)
 
 ## 型システム
 

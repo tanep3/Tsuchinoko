@@ -470,4 +470,13 @@ mod tests {
         let parts = split_by_comma_balanced("func(a, b), c");
         assert_eq!(parts, vec!["func(a, b)", "c"]);
     }
+
+    #[test]
+    fn test_find_keyword_balanced_from() {
+        // Test for raise from parsing
+        let s = "RuntimeError(\"failed\") from e";
+        let result = find_keyword_balanced(s, "from");
+        assert!(result.is_some(), "Should find 'from' in: {}", s);
+        assert_eq!(result, Some(23)); // Position of "from" (after ") ")
+    }
 }
