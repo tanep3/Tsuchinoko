@@ -143,6 +143,7 @@ impl SemanticAnalyzer {
                 // For Dict types, use insert() method instead of index assignment
                 if matches!(current_target_ty, Type::Dict(_, _)) {
                     Ok(IrNode::Expr(IrExpr::MethodCall {
+                        target_type: Type::Unknown,
                         target: Box::new(ir_target),
                         method: "insert".to_string(),
                         args: vec![ir_index, ir_value],
@@ -184,6 +185,7 @@ impl SemanticAnalyzer {
                 if matches!(op, AugAssignOp::Add) && matches!(target_ty, Type::String) {
                     // Convert to: target.push(value)
                     return Ok(IrNode::Expr(IrExpr::MethodCall {
+                        target_type: Type::Unknown,
                         target: Box::new(IrExpr::Var(target.clone())),
                         method: "push".to_string(),
                         args: vec![ir_value],
@@ -251,6 +253,7 @@ impl SemanticAnalyzer {
                             let slice_expr = if end_offset == 0 {
                                 // values[i..].to_vec()
                                 IrExpr::MethodCall {
+                                    target_type: Type::Unknown,
                                     target: Box::new(IrExpr::Slice {
                                         target: Box::new(ir_value.clone()),
                                         start: Some(Box::new(IrExpr::IntLit(start_idx as i64))),
@@ -264,6 +267,7 @@ impl SemanticAnalyzer {
                                 // values[i..len-end_offset].to_vec()
                                 // Need to calculate end index
                                 let len_call = IrExpr::MethodCall {
+                                    target_type: Type::Unknown,
                                     target: Box::new(ir_value.clone()),
                                     method: "len".to_string(),
                                     args: vec![],
@@ -274,6 +278,7 @@ impl SemanticAnalyzer {
                                     right: Box::new(IrExpr::IntLit(end_offset as i64)),
                                 };
                                 IrExpr::MethodCall {
+                                    target_type: Type::Unknown,
                                     target: Box::new(IrExpr::Slice {
                                         target: Box::new(ir_value.clone()),
                                         start: Some(Box::new(IrExpr::IntLit(start_idx as i64))),
@@ -316,6 +321,7 @@ impl SemanticAnalyzer {
                             self.scope.define(target, elem_ty.clone(), false);
 
                             let len_call = IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(ir_value.clone()),
                                 method: "len".to_string(),
                                 args: vec![],
@@ -423,6 +429,7 @@ impl SemanticAnalyzer {
                             };
 
                             return Ok(IrNode::Expr(IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(ir_target),
                                 method: "swap".to_string(),
                                 args: vec![i1_cast, i2_cast],
@@ -865,12 +872,14 @@ impl SemanticAnalyzer {
                         let ir = if let Type::Ref(inner) = &ty {
                             if matches!(inner.as_ref(), Type::List(_)) {
                                 IrExpr::MethodCall {
+                                    target_type: Type::Unknown,
                                     target: Box::new(ir),
                                     method: "to_vec".to_string(),
                                     args: vec![],
                                 }
                             } else {
                                 IrExpr::MethodCall {
+                                    target_type: Type::Unknown,
                                     target: Box::new(ir),
                                     method: "clone".to_string(),
                                     args: vec![],
@@ -885,9 +894,34 @@ impl SemanticAnalyzer {
                             && matches!(ir, IrExpr::StringLit(_))
                         {
                             IrExpr::MethodCall {
+                                target_type: Type::Unknown,
                                 target: Box::new(ir),
                                 method: "to_string".to_string(),
                                 args: vec![],
+                            }
+                        } else if let Some(Type::Tuple(expected_types)) = &self.current_return_type {
+                            // Handle tuple return with string elements
+                            if let IrExpr::Tuple(elements) = ir {
+                                let converted: Vec<IrExpr> = elements.into_iter()
+                                    .zip(expected_types.iter())
+                                    .map(|(elem, expected_ty)| {
+                                        if matches!(*expected_ty, Type::String) 
+                                            && matches!(elem, IrExpr::StringLit(_)) 
+                                        {
+                                            IrExpr::MethodCall {
+                                                target_type: Type::Unknown,
+                                                target: Box::new(elem),
+                                                method: "to_string".to_string(),
+                                                args: vec![],
+                                            }
+                                        } else {
+                                            elem
+                                        }
+                                    })
+                                    .collect();
+                                IrExpr::Tuple(converted)
+                            } else {
+                                ir
                             }
                         } else {
                             ir
@@ -1027,7 +1061,7 @@ impl SemanticAnalyzer {
                         let method_may_raise = self.current_func_may_raise;
                         self.current_func_may_raise = old_may_raise;
 
-                        self.scope.pop();
+                        self.scope.pop_without_promotion();
 
                         // Check if method modifies self (contains FieldAssign)
                         let takes_mut_self = ir_body

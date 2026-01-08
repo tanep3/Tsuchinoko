@@ -775,6 +775,26 @@ fn infer_type_from_expr(
             }
             infer_type_from_expr(right, param_types)
         }
+        // Integer literal -> int
+        Expr::IntLiteral(_) => TypeHint {
+            name: "int".to_string(),
+            params: vec![],
+        },
+        // Float literal -> float
+        Expr::FloatLiteral(_) => TypeHint {
+            name: "float".to_string(),
+            params: vec![],
+        },
+        // String literal -> str
+        Expr::StringLiteral(_) => TypeHint {
+            name: "str".to_string(),
+            params: vec![],
+        },
+        // Bool literal -> bool
+        Expr::BoolLiteral(_) => TypeHint {
+            name: "bool".to_string(),
+            params: vec![],
+        },
         // Other expression types - return Any
         _ => TypeHint {
             name: "Any".to_string(),

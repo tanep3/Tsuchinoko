@@ -1280,6 +1280,7 @@ impl SemanticAnalyzer {
                     // If value is StringLit, add .to_string()
                     let ir_value = if matches!(ir_value, IrExpr::StringLit(_)) {
                         IrExpr::MethodCall {
+                            target_type: Type::Unknown,
                             target: Box::new(ir_value),
                             method: "to_string".to_string(),
                             args: vec![],

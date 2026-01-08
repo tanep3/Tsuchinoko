@@ -1354,6 +1354,7 @@ use pyo3::types::PyList;
                                     target,
                                     method,
                                     args: mc_args,
+                                    target_type: _,
                                 } if mc_args.is_empty()
                                     && (method == "clone" || method == "to_string") =>
                                 {
@@ -1988,6 +1989,7 @@ use pyo3::types::PyList;
                 target,
                 method,
                 args,
+                target_type,
             } => {
                 if args.is_empty() {
                     if method == "len" {
@@ -2043,7 +2045,8 @@ use pyo3::types::PyList;
                     }
                 } else {
                     // V1.5.0: Set method translations
-                    if method == "add" {
+                    // V1.5.2: Check target_type to correctly handle add method
+                    if method == "add" && matches!(target_type, Type::Set(_)) {
                         // Python set.add(x) -> Rust set.insert(x)
                         let args_str: Vec<_> =
                             args.iter().map(|a| self.emit_expr_internal(a)).collect();

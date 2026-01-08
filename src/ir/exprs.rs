@@ -51,6 +51,8 @@ pub enum IrExpr {
         target: Box<IrExpr>,
         method: String,
         args: Vec<IrExpr>,
+        /// ターゲットの型 (Set/List/Dict/Class 判別用)
+        target_type: Type,
     },
     /// PyO3モジュール呼び出し (np.array(...), pd.DataFrame(...))
     PyO3Call {
