@@ -368,7 +368,7 @@ use pyo3::types::PyList;
                 value,
             } => {
                 format!(
-                    "{}{}[{} as usize] = {};",
+                    "{}{}[{}] = {};",
                     indent,
                     self.emit_expr(target),
                     self.emit_expr(index),
