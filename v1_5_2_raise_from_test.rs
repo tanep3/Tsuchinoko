@@ -68,8 +68,8 @@ fn validate_input(value: i64) -> Result<i64, TsuchinokoError> {
     })) {
         Ok(__val) => __val,
         Err(__exc) => {
-            let e: String = if let Some(s) = __exc.downcast_ref::<&str>() { s.to_string() } else if let Some(s) = __exc.downcast_ref::<String>() { s.clone() } else { "Unknown panic".to_string() };
-            return Err(TsuchinokoError::with_line("RuntimeError", &format!("{}", "validation failed"), 0, Some(e)));
+            let e = TsuchinokoError::new("Exception", &format!("{:?}", __exc), None);
+            return Err(TsuchinokoError::with_line("RuntimeError", &format!("{}", "validation failed"), 10, Some(e)));
         }
     }
 

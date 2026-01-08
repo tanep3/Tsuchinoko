@@ -1059,6 +1059,7 @@ impl SemanticAnalyzer {
                 exception_type,
                 message,
                 cause,
+                line,
             } => {
                 // V1.5.2: Mark current function as may raise
                 self.current_func_may_raise = true;
@@ -1073,7 +1074,7 @@ impl SemanticAnalyzer {
                     exc_type: exception_type.clone(),
                     message: Box::new(msg_ir),
                     cause: cause_ir,
-                    line: 0,  // TODO: AST から行番号を取得
+                    line: *line,
                 })
             }
             Stmt::TryExcept {

@@ -1306,6 +1306,7 @@ fn parse_line(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoErr
                 exception_type,
                 message,
                 cause,
+                line: line_num,
             }));
         } else {
             // Simple raise without arguments: raise Exception
@@ -1314,6 +1315,7 @@ fn parse_line(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoErr
                 exception_type: raise_part.to_string(),
                 message: Expr::StringLiteral(String::new()),
                 cause,
+                line: line_num,
             }));
         }
     }

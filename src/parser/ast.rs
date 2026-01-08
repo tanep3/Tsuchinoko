@@ -228,6 +228,7 @@ pub enum Stmt {
         exception_type: String,
         message: Expr,
         cause: Option<Box<Expr>>,  // V1.5.2: from 句
+        line: usize,               // V1.5.2: Python ソース行番号
     },
     /// Import statement (import x as y, from x import y)
     Import {
