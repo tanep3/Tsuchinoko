@@ -6,9 +6,9 @@ mod utils;
 pub use ast::*;
 
 use utils::{
-    find_char_balanced, find_char_balanced_rtl, find_keyword_balanced, find_matching_bracket,
-    find_matching_bracket_rtl, find_operator_balanced, find_operator_balanced_rtl,
-    split_by_comma_balanced,
+    find_all_comparison_operators_balanced, find_char_balanced, find_char_balanced_rtl,
+    find_keyword_balanced, find_matching_bracket, find_matching_bracket_rtl,
+    find_operator_balanced, find_operator_balanced_rtl, split_by_comma_balanced,
 };
 
 use crate::error::TsuchinokoError;
@@ -2089,7 +2089,62 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         });
     }
 
-    // Comparison operators (check longer ones first)
+    // V1.6.0: Chained comparison operators (e.g., a < b < c -> a < b && b < c)
+    // First, detect if there are multiple comparison operators
+    let cmp_ops = find_all_comparison_operators_balanced(expr_str);
+    if cmp_ops.len() >= 2 {
+        // Chained comparison detected! Build operands and operators.
+        let mut operands = Vec::new();
+        let mut operators = Vec::new();
+        let mut last_end = 0;
+
+        for (pos, op_str) in &cmp_ops {
+            let operand_str = &expr_str[last_end..*pos];
+            operands.push(operand_str.trim());
+            operators.push(op_str.as_str());
+            last_end = pos + op_str.len();
+        }
+        // Add the final operand
+        operands.push(expr_str[last_end..].trim());
+
+        // Build chained comparison: (a op1 b) && (b op2 c) && ...
+        let mut result_expr: Option<Expr> = None;
+
+        for i in 0..operators.len() {
+            let left = parse_expr(operands[i], line_num)?;
+            let right = parse_expr(operands[i + 1], line_num)?;
+            let op = match operators[i] {
+                "==" => BinOp::Eq,
+                "!=" => BinOp::NotEq,
+                ">=" => BinOp::GtEq,
+                "<=" => BinOp::LtEq,
+                ">" => BinOp::Gt,
+                "<" => BinOp::Lt,
+                _ => BinOp::Eq, // fallback
+            };
+
+            let cmp_expr = Expr::BinOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+
+            result_expr = match result_expr {
+                None => Some(cmp_expr),
+                Some(prev) => Some(Expr::BinOp {
+                    left: Box::new(prev),
+                    op: BinOp::And,
+                    right: Box::new(cmp_expr),
+                }),
+            };
+        }
+
+        if let Some(expr) = result_expr {
+            return Ok(expr);
+        }
+    }
+
+    // Single comparison operator (original logic)
     for (op_str, op) in [
         ("==", BinOp::Eq),
         ("!=", BinOp::NotEq),

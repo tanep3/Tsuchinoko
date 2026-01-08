@@ -451,6 +451,94 @@ pub fn find_keyword_balanced(s: &str, keyword: &str) -> Option<usize> {
     None
 }
 
+/// V1.6.0: Find all comparison operator positions (for chained comparison detection)
+/// Returns Vec of (position, operator string, operator enum variant index)
+pub fn find_all_comparison_operators_balanced(s: &str) -> Vec<(usize, String)> {
+    let mut results = Vec::new();
+    let mut depth_paren = 0;
+    let mut depth_bracket = 0;
+    let mut in_string = false;
+    let mut string_char = ' ';
+
+    let chars: Vec<char> = s.chars().collect();
+    
+    // Operators to detect: ==, !=, >=, <=, >, < (in order of length - longest first)
+    let operators = vec!["==", "!=", ">=", "<=", ">", "<"];
+
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+
+        if in_string {
+            if c == string_char {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        match c {
+            '"' | '\'' => {
+                in_string = true;
+                string_char = c;
+                i += 1;
+            }
+            '(' => {
+                depth_paren += 1;
+                i += 1;
+            }
+            ')' => {
+                depth_paren -= 1;
+                i += 1;
+            }
+            '[' => {
+                depth_bracket += 1;
+                i += 1;
+            }
+            ']' => {
+                depth_bracket -= 1;
+                i += 1;
+            }
+            _ if depth_paren == 0 && depth_bracket == 0 => {
+                let mut found = false;
+                for op in &operators {
+                    let op_len = op.len();
+                    if i + op_len <= chars.len() {
+                        let slice: String = chars[i..i + op_len].iter().collect();
+                        if &slice == op {
+                            // Avoid matching < inside << and > inside >>
+                            let should_skip = if *op == "<" {
+                                (i + op_len < chars.len() && chars[i + op_len] == '<')
+                                    || (i > 0 && chars[i - 1] == '<')
+                            } else if *op == ">" {
+                                (i + op_len < chars.len() && chars[i + op_len] == '>')
+                                    || (i > 0 && chars[i - 1] == '>')
+                            } else {
+                                false
+                            };
+
+                            if !should_skip {
+                                results.push((i, op.to_string()));
+                                i += op_len;
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if !found {
+                    i += 1;
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    results
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
