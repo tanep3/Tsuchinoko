@@ -255,12 +255,14 @@ use pyo3::types::PyList;
             .collect::<Vec<_>>()
             .join("\n");
 
+        // V1.5.2: Generate main with Result type for PyO3 ? error propagation
         format!(
-            r#"fn main() {{
+            r#"fn main() -> Result<(), Box<dyn std::error::Error>> {{
     let mut py_bridge = tsuchinoko::bridge::PythonBridge::new()
         .expect("Failed to start Python worker");
     
 {indented_body}
+    Ok(())
 }}"#
         )
     }
@@ -913,11 +915,20 @@ use pyo3::types::PyList;
                 // V1.5.2: Err case - if except_var is defined, bind panic info to it
                 if let Some(var_name) = except_var {
                     result.push_str(&format!("{indent}    Err(__exc) => {{\n"));
-                    // V1.5.2: Convert panic info to TsuchinokoError for use in raise from
-                    result.push_str(&format!(
-                        "{indent}        let {} = TsuchinokoError::new(\"Exception\", &format!(\"{{:?}}\", __exc), None);\n",
-                        to_snake_case(var_name)
-                    ));
+                    // V1.5.2: Convert panic info appropriately based on may_raise
+                    if self.current_func_may_raise {
+                        // may_raise function: use TsuchinokoError for raise from compatibility
+                        result.push_str(&format!(
+                            "{indent}        let {} = TsuchinokoError::new(\"Exception\", &format!(\"{{:?}}\", __exc), None);\n",
+                            to_snake_case(var_name)
+                        ));
+                    } else {
+                        // non-may_raise function: use String to avoid TsuchinokoError dependency
+                        result.push_str(&format!(
+                            "{indent}        let {}: String = if let Some(s) = __exc.downcast_ref::<&str>() {{ s.to_string() }} else if let Some(s) = __exc.downcast_ref::<String>() {{ s.clone() }} else {{ \"Unknown panic\".to_string() }};\n",
+                            to_snake_case(var_name)
+                        ));
+                    }
                 } else {
                     result.push_str(&format!("{indent}    Err(_) => {{\n"));
                 }
@@ -1048,27 +1059,38 @@ use pyo3::types::PyList;
                 result
             }
             IrNode::Raise { exc_type, message, cause, line } => {
-                // V1.5.2: Generate Err(TsuchinokoError::with_line(...)) with line number
                 let msg_str = self.emit_expr(message);
-                match cause {
-                    Some(cause_expr) => {
-                        // With cause: Err(TsuchinokoError::with_line("Type", "msg", line, Some(cause)))
-                        format!(
-                            "{indent}return Err(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, Some({})));",
-                            exc_type,
-                            msg_str,
-                            line,
-                            self.emit_expr(cause_expr)
-                        )
-                    }
-                    None => {
-                        // Without cause: Err(TsuchinokoError::with_line("Type", "msg", line, None))
-                        format!(
-                            "{indent}return Err(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, None));",
-                            exc_type,
-                            msg_str,
-                            line
-                        )
+                
+                // V1.5.2: Inside try body, use panic! so catch_unwind can catch it
+                if self.in_try_body {
+                    // Inside try block: use panic! for catch_unwind to catch
+                    format!(
+                        "{indent}panic!(\"[{}] {{}}\", {});",
+                        exc_type,
+                        msg_str
+                    )
+                } else {
+                    // Outside try block: generate Err(TsuchinokoError::...)
+                    match cause {
+                        Some(cause_expr) => {
+                            // With cause: Err(TsuchinokoError::with_line("Type", "msg", line, Some(cause)))
+                            format!(
+                                "{indent}return Err(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, Some({})));",
+                                exc_type,
+                                msg_str,
+                                line,
+                                self.emit_expr(cause_expr)
+                            )
+                        }
+                        None => {
+                            // Without cause: Err(TsuchinokoError::with_line("Type", "msg", line, None))
+                            format!(
+                                "{indent}return Err(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, None));",
+                                exc_type,
+                                msg_str,
+                                line
+                            )
+                        }
                     }
                 }
             }
@@ -1197,6 +1219,7 @@ use pyo3::types::PyList;
                         // For NumPy arrays, use the resident worker
                         // V1.5.2: Use ? instead of unwrap() for error propagation
                         self.current_func_may_raise = true;
+                        self.uses_tsuchinoko_error = true;
                         return format!(
                             "py_bridge.call_json::<serde_json::Value>(\"numpy.matmul\", &[serde_json::json!({}), serde_json::json!({})]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?",
                             self.emit_expr(left),
@@ -2147,6 +2170,7 @@ use pyo3::types::PyList;
 
                 // V1.5.2: Use ? instead of unwrap() for error propagation
                 self.current_func_may_raise = true;
+                self.uses_tsuchinoko_error = true;
                 format!(
                     "{{\n{}    py_bridge.call_json_method::<serde_json::Value>({}.clone(), {:?}, &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
                     arg_evals.join("\n    ") + "\n",
@@ -2290,6 +2314,7 @@ use pyo3::types::PyList;
                         // V1.5.2: Use ? instead of unwrap() for error propagation
                         // Mark that this function now may raise (for Ok() wrapping of returns)
                         self.current_func_may_raise = true;
+                        self.uses_tsuchinoko_error = true;
                         format!(
                             "{{\n{}    py_bridge.call_json::<serde_json::Value>(\"{}\", &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
                             arg_evals.join("\n    ") + "\n",
