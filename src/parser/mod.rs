@@ -583,6 +583,7 @@ fn parse_class_body(
                 fields.push(Field {
                     name: field_name,
                     type_hint,
+                    default_value: None, // dataclass field-level default not yet supported
                 });
             }
         } else {
@@ -728,6 +729,7 @@ fn extract_fields_from_init(body: &[Stmt], params: &[Param]) -> Vec<Field> {
                 fields.push(Field {
                     name: field_name.to_string(),
                     type_hint: hint,
+                    default_value: Some(value.clone()),
                 });
             }
         }

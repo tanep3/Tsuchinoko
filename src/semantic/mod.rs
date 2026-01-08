@@ -50,6 +50,8 @@ pub struct SemanticAnalyzer {
     current_return_type: Option<Type>,
     /// Struct name -> Vec of (field_name, field_type) for constructor type checking
     struct_field_types: std::collections::HashMap<String, Vec<(String, Type)>>,
+    /// V1.5.2: Struct name -> Vec of (field_name, default_value_ir) for constructor default values
+    struct_field_defaults: std::collections::HashMap<String, Vec<(String, IrExpr)>>,
     /// Variables that need to be mutable (targets of AugAssign or reassignment)
     mutable_vars: std::collections::HashSet<String>,
     /// Function name -> Vec of (param_name, param_type, default_expr, is_variadic) for default arg handling
@@ -80,6 +82,7 @@ impl SemanticAnalyzer {
             scope: ScopeStack::new(),
             current_return_type: None,
             struct_field_types: std::collections::HashMap::new(),
+            struct_field_defaults: std::collections::HashMap::new(),
             mutable_vars: std::collections::HashSet::new(),
             func_param_info: std::collections::HashMap::new(),
             external_imports: Vec::new(),

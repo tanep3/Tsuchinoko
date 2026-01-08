@@ -265,6 +265,8 @@ pub struct TypeHint {
 pub struct Field {
     pub name: String,
     pub type_hint: TypeHint,
+    /// Default value expression from __init__ (e.g., self.value = 0)
+    pub default_value: Option<Expr>,
 }
 
 /// Class method

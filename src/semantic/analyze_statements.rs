@@ -899,14 +899,16 @@ impl SemanticAnalyzer {
                                 method: "to_string".to_string(),
                                 args: vec![],
                             }
-                        } else if let Some(Type::Tuple(expected_types)) = &self.current_return_type {
+                        } else if let Some(Type::Tuple(expected_types)) = &self.current_return_type
+                        {
                             // Handle tuple return with string elements
                             if let IrExpr::Tuple(elements) = ir {
-                                let converted: Vec<IrExpr> = elements.into_iter()
+                                let converted: Vec<IrExpr> = elements
+                                    .into_iter()
                                     .zip(expected_types.iter())
                                     .map(|(elem, expected_ty)| {
-                                        if matches!(*expected_ty, Type::String) 
-                                            && matches!(elem, IrExpr::StringLit(_)) 
+                                        if matches!(*expected_ty, Type::String)
+                                            && matches!(elem, IrExpr::StringLit(_))
                                         {
                                             IrExpr::MethodCall {
                                                 target_type: Type::Unknown,
@@ -984,6 +986,20 @@ impl SemanticAnalyzer {
                 // Save field types for constructor type checking
                 self.struct_field_types
                     .insert(name.clone(), ir_fields.clone());
+
+                // V1.5.2: Save field default values for constructor initialization
+                let field_defaults: Vec<(String, IrExpr)> = fields
+                    .iter()
+                    .filter_map(|f| {
+                        f.default_value.as_ref().and_then(|expr| {
+                            self.analyze_expr(expr).ok().map(|ir| (f.name.clone(), ir))
+                        })
+                    })
+                    .collect();
+                if !field_defaults.is_empty() {
+                    self.struct_field_defaults
+                        .insert(name.clone(), field_defaults);
+                }
 
                 // Register this struct type in scope (for use in type hints)
                 self.scope.define(name, Type::Struct(name.clone()), false);

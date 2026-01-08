@@ -901,27 +901,48 @@ impl SemanticAnalyzer {
                                 self.analyze_call_args(&resolved_args, &expected_types, name)?;
 
                             // Build field list with names and values
-                            // V1.5.2: If no arguments provided but fields exist, use default values
-                            let fields: Vec<(String, IrExpr)> = if ir_args.is_empty() && !field_names.is_empty() {
-                                // Generate default values for each field based on type
-                                field_types.iter().map(|(field_name, ty)| {
-                                    let default_val = match ty {
-                                        Type::Int => IrExpr::IntLit(0),
-                                        Type::Float => IrExpr::FloatLit(0.0),
-                                        Type::Bool => IrExpr::BoolLit(false),
-                                        Type::String => IrExpr::MethodCall {
-                                            target_type: Type::Unknown,
-                                            target: Box::new(IrExpr::StringLit(String::new())),
-                                            method: "to_string".to_string(),
-                                            args: vec![],
-                                        },
-                                        _ => IrExpr::IntLit(0), // Fallback
-                                    };
-                                    (field_name.clone(), default_val)
-                                }).collect()
-                            } else {
-                                field_names.into_iter().zip(ir_args).collect()
-                            };
+                            // V1.5.2: If no arguments provided but fields exist, use default values from __init__
+                            let fields: Vec<(String, IrExpr)> =
+                                if ir_args.is_empty() && !field_names.is_empty() {
+                                    // Get default values from struct_field_defaults (populated from __init__)
+                                    let defaults = self
+                                        .struct_field_defaults
+                                        .get(name)
+                                        .cloned()
+                                        .unwrap_or_default();
+                                    let defaults_map: std::collections::HashMap<_, _> =
+                                        defaults.into_iter().collect();
+
+                                    field_types
+                                        .iter()
+                                        .map(|(field_name, ty)| {
+                                            // Use actual default value from __init__ if available
+                                            let default_val =
+                                                if let Some(ir) = defaults_map.get(field_name) {
+                                                    ir.clone()
+                                                } else {
+                                                    // Fallback to type-based default (should rarely happen)
+                                                    match ty {
+                                                        Type::Int => IrExpr::IntLit(0),
+                                                        Type::Float => IrExpr::FloatLit(0.0),
+                                                        Type::Bool => IrExpr::BoolLit(false),
+                                                        Type::String => IrExpr::MethodCall {
+                                                            target_type: Type::Unknown,
+                                                            target: Box::new(IrExpr::StringLit(
+                                                                String::new(),
+                                                            )),
+                                                            method: "to_string".to_string(),
+                                                            args: vec![],
+                                                        },
+                                                        _ => IrExpr::IntLit(0),
+                                                    }
+                                                };
+                                            (field_name.clone(), default_val)
+                                        })
+                                        .collect()
+                                } else {
+                                    field_names.into_iter().zip(ir_args).collect()
+                                };
 
                             return Ok(IrExpr::StructConstruct {
                                 name: name.clone(),
