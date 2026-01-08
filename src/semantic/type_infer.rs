@@ -78,6 +78,9 @@ pub trait TypeInference {
                 Type::List(Box::new(self.infer_type(elt)))
             }
 
+            // V1.6.0: Set comprehension type inference
+            Expr::SetComp { elt, .. } => Type::Set(Box::new(self.infer_type(elt))),
+
             Expr::Ident(name) => {
                 if let Some(info) = self.scope().lookup(name) {
                     info.ty.clone()

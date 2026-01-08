@@ -1910,13 +1910,14 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         }
 
         // V1.3.0: Check for dict comprehension {k: v for target in iter}
+        // V1.6.0: Or set comprehension {x for target in iter} (no colon in kv_part)
         if let Some(for_pos) = find_keyword_balanced(inner, "for") {
-            // This is a dict comprehension
             let kv_part = &inner[..for_pos].trim();
             let comp_part = &inner[for_pos + 3..]; // skip "for"
 
-            // Parse key: value
+            // Check if this is dict comprehension (has colon) or set comprehension (no colon)
             if let Some(colon_pos) = utils::find_char_balanced(kv_part, ':') {
+                // Dict comprehension: {k: v for target in iter}
                 let key = parse_expr(kv_part[..colon_pos].trim(), line_num)?;
                 let value = parse_expr(kv_part[colon_pos + 1..].trim(), line_num)?;
 
@@ -1939,6 +1940,31 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
                     return Ok(Expr::DictComp {
                         key: Box::new(key),
                         value: Box::new(value),
+                        target: target_str,
+                        iter: Box::new(iter),
+                        condition,
+                    });
+                }
+            } else {
+                // V1.6.0: Set comprehension: {x for target in iter}
+                let elt = parse_expr(kv_part, line_num)?;
+
+                if let Some(in_pos) = find_keyword_balanced(comp_part, "in") {
+                    let target_str = comp_part[..in_pos].trim().to_string();
+                    let after_in = comp_part[in_pos + 2..].trim();
+
+                    let (iter_str, condition) =
+                        if let Some(if_pos) = find_keyword_balanced(after_in, "if") {
+                            let iter_part = after_in[..if_pos].trim();
+                            let cond_part = after_in[if_pos + 2..].trim();
+                            (iter_part, Some(Box::new(parse_expr(cond_part, line_num)?)))
+                        } else {
+                            (after_in, None)
+                        };
+
+                    let iter = parse_expr(iter_str, line_num)?;
+                    return Ok(Expr::SetComp {
+                        elt: Box::new(elt),
                         target: target_str,
                         iter: Box::new(iter),
                         condition,

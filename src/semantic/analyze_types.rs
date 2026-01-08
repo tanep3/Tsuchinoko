@@ -21,6 +21,8 @@ impl SemanticAnalyzer {
             Expr::ListComp { elt, .. } | Expr::GenExpr { elt, .. } => {
                 Type::List(Box::new(self.infer_type(elt)))
             }
+            // V1.6.0: Set comprehension type inference
+            Expr::SetComp { elt, .. } => Type::Set(Box::new(self.infer_type(elt))),
             Expr::Ident(name) => {
                 let ty = if let Some(info) = self.scope.lookup(name) {
                     info.ty.clone()

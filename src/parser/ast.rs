@@ -38,6 +38,13 @@ pub enum Expr {
         iter: Box<Expr>,
         condition: Option<Box<Expr>>,
     },
+    /// Set comprehension {elt for target in iter if cond} (V1.6.0)
+    SetComp {
+        elt: Box<Expr>,
+        target: String,
+        iter: Box<Expr>,
+        condition: Option<Box<Expr>>,
+    },
     /// Dict comprehension {key: value for target in iter} or {k: v for k, v in items if cond} (V1.3.0)
     DictComp {
         key: Box<Expr>,

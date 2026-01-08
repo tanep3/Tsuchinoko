@@ -1768,6 +1768,56 @@ use pyo3::types::PyList;
                     )
                 }
             }
+            // V1.6.0: Set comprehension {x for target in iter if condition}
+            IrExpr::SetComp {
+                elt,
+                target,
+                iter,
+                condition,
+            } => {
+                let elt_str = self.emit_expr_internal(elt);
+
+                let target_has_comma = target.contains(',');
+                let target_snake = if target_has_comma {
+                    let parts: Vec<String> =
+                        target.split(',').map(|s| to_snake_case(s.trim())).collect();
+                    format!("({})", parts.join(", "))
+                } else {
+                    to_snake_case(target)
+                };
+
+                let closure_var = if target_has_comma || elt_str.contains(&target_snake) {
+                    target_snake.clone()
+                } else {
+                    "_".to_string()
+                };
+
+                let iter_str = self.emit_expr_internal(iter);
+
+                let iter_chain = match iter.as_ref() {
+                    IrExpr::Range { .. } => format!("({iter_str})"),
+                    IrExpr::MethodCall { method, .. }
+                        if method.contains("iter")
+                            || method.contains("filter")
+                            || method.contains("map") =>
+                    {
+                        iter_str
+                    }
+                    _ => format!("{iter_str}.iter().cloned()"),
+                };
+
+                if let Some(cond) = condition {
+                    let cond_str = self.emit_expr_internal(cond);
+                    format!(
+                        "{}.filter(|{}| {}).map(|{}| {}).collect::<std::collections::HashSet<_>>()",
+                        iter_chain, &target_snake, cond_str, closure_var, elt_str
+                    )
+                } else {
+                    format!(
+                        "{iter_chain}.map(|{closure_var}| {elt_str}).collect::<std::collections::HashSet<_>>()"
+                    )
+                }
+            }
             IrExpr::Closure {
                 params,
                 body,

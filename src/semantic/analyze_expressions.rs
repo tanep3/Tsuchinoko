@@ -1425,6 +1425,37 @@ impl SemanticAnalyzer {
                     condition: ir_condition,
                 })
             }
+            // V1.6.0: Set comprehension {x for target in iter if condition}
+            Expr::SetComp {
+                elt,
+                target,
+                iter,
+                condition,
+            } => {
+                let ir_iter = self.analyze_expr(iter)?;
+                let mut iter_ty = self.infer_type(iter);
+                while let Type::Ref(inner) = iter_ty {
+                    iter_ty = *inner;
+                }
+
+                self.scope.push();
+                self.define_loop_variables(target, &iter_ty, true);
+
+                let ir_elt = self.analyze_expr(elt)?;
+                let ir_condition = if let Some(cond) = condition {
+                    Some(Box::new(self.analyze_expr(cond)?))
+                } else {
+                    None
+                };
+                self.scope.pop();
+
+                Ok(IrExpr::SetComp {
+                    elt: Box::new(ir_elt),
+                    target: target.clone(),
+                    iter: Box::new(ir_iter),
+                    condition: ir_condition,
+                })
+            }
             Expr::IfExp { test, body, orelse } => {
                 // V1.5.0: If test is an Optional variable used as condition, convert to is_some()
                 let test_ty = self.infer_type(test);
