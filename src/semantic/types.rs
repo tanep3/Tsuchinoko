@@ -31,6 +31,7 @@ impl Type {
     /// Convert Python type hint to Rust type
     pub fn from_python_hint(name: &str, params: &[Type]) -> Self {
         match name {
+            "Any" | "any" | "object" => Type::Any,
             "int" => Type::Int,
             "float" => Type::Float,
             "str" => Type::String,
@@ -92,7 +93,6 @@ impl Type {
             {
                 Type::Struct(name.to_string())
             }
-            "Any" | "any" | "object" => Type::Any,
             // PyO3 module types (np.ndarray, pd.DataFrame, etc.)
             name if name.contains('.') => Type::Any,
             _ => Type::Unknown,
@@ -168,8 +168,8 @@ impl Type {
             }
             Type::Unit => "()".to_string(),
             Type::Struct(name) => name.clone(),
-            Type::Any => "serde_json::Value".to_string(),
-            Type::Unknown => "serde_json::Value".to_string(),
+            Type::Any => "tsuchinoko::bridge::protocol::TnkValue".to_string(),
+            Type::Unknown => "tsuchinoko::bridge::protocol::TnkValue".to_string(),
         }
     }
 

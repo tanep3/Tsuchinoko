@@ -1,4 +1,4 @@
-//! PythonBridge - 常駐 Python ワーカーとの通信
+//! PythonBridge - 常駐 Python ワーカーとの通信 (V1.7.0 Enhanced)
 //!
 //! Rust バイナリから Python ワーカープロセスを起動し、
 //! stdin/stdout で NDJSON 通信を行う。
@@ -6,229 +6,142 @@
 pub mod module_table;
 pub mod strategies;
 pub mod tsuchinoko_error;
+pub mod bridge_error;
+pub mod protocol;
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use uuid::Uuid;
 
-/// serde_json::Value を人間が読みやすい形式で表示するヘルパー
-/// Value::String の場合は引用符なしで中身を表示
-pub fn display_value(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }
-}
+use self::bridge_error::BridgeError;
+use self::protocol::{Command as BridgeCmd, Response, TnkValue};
 
 /// 埋め込み Python ワーカーコード
-const WORKER_CODE: &str = include_str!("worker.py");
+const WORKER_CODE: &str = include_str!("python/v1_7_0_worker.py");
 
 /// Python ワーカーとの通信を管理する構造体
 pub struct PythonBridge {
     process: Child,
     request_id: AtomicU64,
+    session_id: String,
 }
 
 impl PythonBridge {
     /// Python ワーカーを起動
-    pub fn new() -> Result<Self, String> {
-        let process = Command::new("python")
+    pub fn new() -> Result<Self, BridgeError> {
+        let process = Command::new("python3") // Ensure python3
             .args(["-u", "-c", WORKER_CODE])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .map_err(|e| format!("Failed to spawn Python worker: {e}"))?;
+            .map_err(|e| BridgeError::Io(e))?;
 
         Ok(Self {
             process,
             request_id: AtomicU64::new(1),
+            session_id: Uuid::new_v4().to_string(),
         })
     }
 
-    /// リクエストを送信してレスポンスを受信
-    fn send_request(&mut self, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    /// 汎用リクエスト送信
+    fn send_command(&mut self, cmd: BridgeCmd) -> Result<TnkValue, BridgeError> {
         // リクエスト送信
-        let stdin = self.process.stdin.as_mut().ok_or("Failed to get stdin")?;
-        writeln!(stdin, "{request}").map_err(|e| format!("Failed to write to stdin: {e}"))?;
-        stdin
-            .flush()
-            .map_err(|e| format!("Failed to flush stdin: {e}"))?;
+        let stdin = self.process.stdin.as_mut().ok_or(BridgeError::Unknown("Failed to get stdin".into()))?;
+        let json_req = serde_json::to_string(&cmd)?;
+        writeln!(stdin, "{}", json_req)?;
+        stdin.flush()?;
 
         // レスポンス受信
-        let stdout = self.process.stdout.as_mut().ok_or("Failed to get stdout")?;
+        let stdout = self.process.stdout.as_mut().ok_or(BridgeError::Unknown("Failed to get stdout".into()))?;
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .map_err(|e| format!("Failed to read from stdout: {e}"))?;
+        reader.read_line(&mut line)?;
 
-        let response: serde_json::Value =
-            serde_json::from_str(&line).map_err(|e| format!("Failed to parse response: {e}"))?;
+        if line.is_empty() {
+             return Err(BridgeError::WorkerCrash("Worker closed stdout (EOF)".into()));
+        }
 
-        if response["ok"].as_bool() == Some(true) {
-            Ok(response["result"].clone())
-        } else {
-            Err(format!("Python error: {}", response["error"]))
+        let response: Response = serde_json::from_str(&line)?;
+
+        match response {
+            Response::Ok { value, .. } => Ok(value),
+            Response::Error { error, .. } => Err(BridgeError::from_api_error(
+                &error.code,
+                error.message,
+                error.py_type,
+                error.traceback
+            )),
         }
     }
 
-    fn call_raw(
-        &mut self,
-        target: &str,
-        args: &[serde_json::Value],
-    ) -> Result<serde_json::Value, String> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+    // --- V1.7.0 New APIs ---
 
-        let request = serde_json::json!({
-            "id": id,
-            "op": "call",
-            "target": target,
-            "args": args,
-        });
-
-        self.send_request(request)
+    pub fn call_function(&mut self, target: &str, args: Vec<TnkValue>) -> Result<TnkValue, BridgeError> {
+        let req_id = self.request_id.fetch_add(1, Ordering::SeqCst).to_string();
+        self.send_command(BridgeCmd::CallFunction {
+            session_id: self.session_id.clone(),
+            req_id: Some(req_id),
+            target: target.to_string(),
+            args,
+        })
     }
 
-    /// i64 を返す呼び出し
-    pub fn call_i64(&mut self, target: &str, args: &[serde_json::Value]) -> Result<i64, String> {
-        let result = self.call_raw(target, args)?;
-        result
-            .as_i64()
-            .ok_or_else(|| format!("Expected i64, got: {result}"))
+    pub fn call_method(&mut self, target_handle: &str, method: &str, args: Vec<TnkValue>) -> Result<TnkValue, BridgeError> {
+        let req_id = self.request_id.fetch_add(1, Ordering::SeqCst).to_string();
+        self.send_command(BridgeCmd::CallMethod {
+            session_id: self.session_id.clone(),
+            req_id: Some(req_id),
+            target: target_handle.to_string(),
+            method: method.to_string(),
+            args,
+        })
+    }
+    
+    pub fn get_attribute(&mut self, target_handle: &str, name: &str) -> Result<TnkValue, BridgeError> {
+        let req_id = self.request_id.fetch_add(1, Ordering::SeqCst).to_string();
+        self.send_command(BridgeCmd::GetAttribute {
+            session_id: self.session_id.clone(),
+            req_id: Some(req_id),
+            target: target_handle.to_string(),
+            name: name.to_string(),
+        })
     }
 
-    /// f64 を返す呼び出し
-    pub fn call_f64(&mut self, target: &str, args: &[serde_json::Value]) -> Result<f64, String> {
-        let result = self.call_raw(target, args)?;
-        result
-            .as_f64()
-            .ok_or_else(|| format!("Expected f64, got: {result}"))
+    pub fn get_item(&mut self, target_handle: &str, key: TnkValue) -> Result<TnkValue, BridgeError> {
+        let req_id = self.request_id.fetch_add(1, Ordering::SeqCst).to_string();
+        self.send_command(BridgeCmd::GetItem {
+            session_id: self.session_id.clone(),
+            req_id: Some(req_id),
+            target: target_handle.to_string(),
+            key,
+        })
+    }
+    
+    pub fn slice(&mut self, target_handle: &str, start: TnkValue, stop: TnkValue, step: TnkValue) -> Result<TnkValue, BridgeError> {
+        let req_id = self.request_id.fetch_add(1, Ordering::SeqCst).to_string();
+        self.send_command(BridgeCmd::Slice {
+            session_id: self.session_id.clone(),
+            req_id: Some(req_id),
+            target: target_handle.to_string(),
+            start,
+            stop,
+            step,
+        })
     }
 
-    /// String を返す呼び出し
-    pub fn call_string(
-        &mut self,
-        target: &str,
-        args: &[serde_json::Value],
-    ) -> Result<String, String> {
-        let result = self.call_raw(target, args)?;
-        result
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| format!("Expected string, got: {result}"))
-    }
-
-    /// Vec<i64> を返す呼び出し
-    pub fn call_vec_i64(
-        &mut self,
-        target: &str,
-        args: &[serde_json::Value],
-    ) -> Result<Vec<i64>, String> {
-        let result = self.call_raw(target, args)?;
-        result
-            .as_array()
-            .ok_or_else(|| format!("Expected array, got: {result}"))?
-            .iter()
-            .map(|v| {
-                v.as_i64()
-                    .ok_or_else(|| format!("Expected i64 in array, got: {v}"))
-            })
-            .collect()
-    }
-
-    /// Vec<f64> を返す呼び出し
-    pub fn call_vec_f64(
-        &mut self,
-        target: &str,
-        args: &[serde_json::Value],
-    ) -> Result<Vec<f64>, String> {
-        let result = self.call_raw(target, args)?;
-        result
-            .as_array()
-            .ok_or_else(|| format!("Expected array, got: {result}"))?
-            .iter()
-            .map(|v| {
-                v.as_f64()
-                    .ok_or_else(|| format!("Expected f64 in array, got: {v}"))
-            })
-            .collect()
-    }
-
-    /// JSON を返す呼び出し（汎用、自動変換サポート）
-    pub fn call_json<T: serde::de::DeserializeOwned>(
-        &mut self,
-        target: &str,
-        args: &[serde_json::Value],
-    ) -> Result<T, String> {
-        let result = self.call_raw(target, args)?;
-        serde_json::from_value(result).map_err(|e| format!("Type conversion failed: {e}"))
-    }
-
-    /// ハンドルに対してメソッドを呼び出し、結果を返す
-    pub fn call_json_method<T: serde::de::DeserializeOwned>(
-        &mut self,
-        handle: serde_json::Value,
-        method: &str,
-        args: &[serde_json::Value],
-    ) -> Result<T, String> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let request = serde_json::json!({
-            "id": id,
-            "op": "method",
-            "handle": handle,
-            "method": method,
-            "args": args,
-        });
-
-        let result = self.send_request(request)?;
-        serde_json::from_value(result)
-            .map_err(|e| format!("Method result type conversion failed: {e}"))
-    }
-
-    /// ping テスト
-    pub fn ping(&mut self) -> Result<bool, String> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let request = serde_json::json!({
-            "id": id,
-            "op": "ping",
-        });
-
-        let stdin = self.process.stdin.as_mut().ok_or("Failed to get stdin")?;
-        writeln!(stdin, "{request}").map_err(|e| format!("Failed to write to stdin: {e}"))?;
-        stdin
-            .flush()
-            .map_err(|e| format!("Failed to flush stdin: {e}"))?;
-
-        let stdout = self.process.stdout.as_mut().ok_or("Failed to get stdout")?;
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .map_err(|e| format!("Failed to read from stdout: {e}"))?;
-
-        let response: serde_json::Value =
-            serde_json::from_str(&line).map_err(|e| format!("Failed to parse response: {e}"))?;
-
-        Ok(response["ok"].as_bool() == Some(true) && response["result"] == "pong")
-    }
-
-    /// ワーカーを終了
-    pub fn shutdown(&mut self) -> Result<(), String> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let request = serde_json::json!({
-            "id": id,
-            "op": "shutdown",
-        });
-
-        if let Some(stdin) = self.process.stdin.as_mut() {
-            let _ = writeln!(stdin, "{request}");
-            let _ = stdin.flush();
+    pub fn shutdown(&mut self) -> Result<(), BridgeError> {
+        // Just kill it or let it die on stdin close (Worker doesn't have shutdown cmd? Checks `op=="shutdown"`, but new one checks main loop)
+        // v1_7_0_worker.py terminates on empty line (EOF) or invalid JSON?
+        // Let's rely on Drop or a manual kill.
+        // Actually, let's close stdin.
+        if let Some(_stdin) = self.process.stdin.as_mut() {
+            // New worker doesn't implement specific "shutdown" command yet in DISPATCHER?
+            // "delete" is there. 
+            // `main()` loop: `for line in sys.stdin`. So closing stdin terminates loop.
         }
-
-        self.process
-            .wait()
-            .map_err(|e| format!("Failed to wait for worker: {e}"))?;
+        self.process.kill().map_err(|e| BridgeError::Io(e))?;
         Ok(())
     }
 }

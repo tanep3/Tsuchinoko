@@ -2423,6 +2423,108 @@ use pyo3::types::PyList;
             IrExpr::Unwrap(inner) => {
                 format!("{}.unwrap()", self.emit_expr_internal(inner))
             }
+            IrExpr::BridgeMethodCall {
+                target,
+                method,
+                args,
+            } => {
+                self.needs_resident = true;
+                // V1.5.2: Use ? for error propagation
+                self.current_func_may_raise = true;
+                self.uses_tsuchinoko_error = true;
+
+                let target_str = self.emit_expr(target);
+                let args_str: Vec<_> = args
+                    .iter()
+                    .map(|a| {
+                        if matches!(a, IrExpr::NoneLit) {
+                            "tsuchinoko::bridge::protocol::TnkValue::Value { value: None }".to_string()
+                        } else {
+                            format!(
+                                "tsuchinoko::bridge::protocol::TnkValue::from({})",
+                                self.emit_expr_no_outer_parens(a)
+                            )
+                        }
+                    })
+                    .collect();
+
+                format!(
+                    "py_bridge.call_method(&{}, \"{}\", &[{}]).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
+                    target_str,
+                    method,
+                    args_str.join(", ")
+                )
+            }
+            IrExpr::BridgeAttributeAccess { target, attribute } => {
+                self.needs_resident = true;
+                self.current_func_may_raise = true;
+                self.uses_tsuchinoko_error = true;
+                let target_str = self.emit_expr(target);
+                format!(
+                    "py_bridge.get_attribute(&{}, \"{}\").map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
+                    target_str, attribute
+                )
+            }
+            IrExpr::BridgeItemAccess { target, index } => {
+                self.needs_resident = true;
+                self.current_func_may_raise = true;
+                self.uses_tsuchinoko_error = true;
+                let target_str = self.emit_expr(target);
+                let index_str = if matches!(index.as_ref(), IrExpr::NoneLit) {
+                    "tsuchinoko::bridge::protocol::TnkValue::Value { value: None }".to_string()
+                } else {
+                    format!(
+                        "tsuchinoko::bridge::protocol::TnkValue::from({})",
+                        self.emit_expr(index)
+                    )
+                };
+
+                format!(
+                    "py_bridge.get_item(&{}, &{}).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
+                    target_str, index_str
+                )
+            }
+            IrExpr::BridgeSlice {
+                target,
+                start,
+                stop,
+                step,
+            } => {
+                self.needs_resident = true;
+                self.current_func_may_raise = true;
+                self.uses_tsuchinoko_error = true;
+                let target_str = self.emit_expr(target);
+
+                let start_str = if matches!(start.as_ref(), IrExpr::NoneLit) {
+                    "tsuchinoko::bridge::protocol::TnkValue::Value { value: None }".to_string()
+                } else {
+                    format!(
+                        "tsuchinoko::bridge::protocol::TnkValue::from({})",
+                        self.emit_expr(start)
+                    )
+                };
+                let stop_str = if matches!(stop.as_ref(), IrExpr::NoneLit) {
+                    "tsuchinoko::bridge::protocol::TnkValue::Value { value: None }".to_string()
+                } else {
+                    format!(
+                        "tsuchinoko::bridge::protocol::TnkValue::from({})",
+                        self.emit_expr(stop)
+                    )
+                };
+                let step_str = if matches!(step.as_ref(), IrExpr::NoneLit) {
+                    "tsuchinoko::bridge::protocol::TnkValue::Value { value: None }".to_string()
+                } else {
+                    format!(
+                        "tsuchinoko::bridge::protocol::TnkValue::from({})",
+                        self.emit_expr(step)
+                    )
+                };
+
+                format!(
+                    "py_bridge.slice(&{}, {}, {}, {}).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
+                    target_str, start_str, stop_str, step_str
+                )
+            }
             IrExpr::PyO3Call {
                 module,
                 method,

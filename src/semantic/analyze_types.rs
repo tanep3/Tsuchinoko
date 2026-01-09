@@ -49,6 +49,8 @@ impl SemanticAnalyzer {
                     } else {
                         Type::Unknown
                     }
+                } else if matches!(target_ty, Type::Any) {
+                    Type::Any
                 } else {
                     Type::Unknown
                 }
@@ -225,6 +227,11 @@ impl SemanticAnalyzer {
                             return info.ty.clone();
                         }
                     }
+                }
+                // If target is Type::Any, attribute access returns Type::Any
+                let target_ty = self.infer_type(value);
+                if matches!(target_ty, Type::Any) {
+                    return Type::Any;
                 }
                 Type::Unknown
             }

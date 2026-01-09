@@ -694,6 +694,26 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                // V1.7.0: Handle method calls on Any types (BridgeMethodCall)
+                if let Expr::Attribute { value, attr } = func.as_ref() {
+                    let value_ty = self.infer_type(value);
+                    if matches!(value_ty, Type::Any) {
+                        let ir_target = self.analyze_expr(value)?;
+                        let ir_args: Vec<IrExpr> = args
+                            .iter()
+                            .map(|a| self.analyze_expr(a))
+                            .collect::<Result<Vec<_>, _>>()?;
+
+                        self.current_func_may_raise = true;
+
+                        return Ok(IrExpr::BridgeMethodCall {
+                            target: Box::new(ir_target),
+                            method: attr.clone(),
+                            args: ir_args,
+                        });
+                    }
+                }
+
                 // Handle PyO3 module calls: np.array(...) -> np.call_method1("array", (...))?
                 if let Expr::Attribute { value, attr } = func.as_ref() {
                     if let Expr::Ident(module_alias) = value.as_ref() {
@@ -1179,13 +1199,12 @@ impl SemanticAnalyzer {
                         )?;
 
                         if matches!(target_ty, Type::Any) {
-                            // V1.5.2: PyO3 method calls can fail
+                            // V1.7.0: Remote Attribute Access via Bridge
                             self.current_func_may_raise = true;
 
-                            return Ok(IrExpr::PyO3MethodCall {
+                            return Ok(IrExpr::BridgeAttributeAccess {
                                 target: Box::new(ir_target),
-                                method: method_name.to_string(),
-                                args: ir_args,
+                                attribute: method_name.to_string(),
                             });
                         }
 
@@ -1279,13 +1298,12 @@ impl SemanticAnalyzer {
                 // For sequence indexing, ensure the index is cast to usize
                 let target_ty = self.infer_type(target);
                 if matches!(target_ty, Type::Any) {
-                    // V1.5.2: PyO3 method calls can fail
+                    // V1.7.0: Remote Item Access via Bridge
                     self.current_func_may_raise = true;
 
-                    return Ok(IrExpr::PyO3MethodCall {
+                    return Ok(IrExpr::BridgeItemAccess {
                         target: Box::new(ir_target),
-                        method: "__getitem__".to_string(),
-                        args: vec![ir_index],
+                        index: Box::new(ir_index),
                     });
                 }
 
@@ -1803,6 +1821,31 @@ impl SemanticAnalyzer {
                 let ir_target = self.analyze_expr(target)?;
                 let target_type = self.infer_type(target);
 
+                // V1.7.0: Bridge Slice for Any type (Remote Handle)
+                if matches!(target_type, Type::Any) {
+                    self.current_func_may_raise = true;
+                    // Handle start/end/step options, default to NoneLit
+                    let ir_start = match start {
+                        Some(s) => Box::new(self.analyze_expr(s)?),
+                        None => Box::new(IrExpr::NoneLit),
+                    };
+                    let ir_stop = match end {
+                        Some(e) => Box::new(self.analyze_expr(e)?),
+                        None => Box::new(IrExpr::NoneLit),
+                    };
+                    let ir_step = match step {
+                        Some(s) => Box::new(self.analyze_expr(s)?),
+                        None => Box::new(IrExpr::NoneLit),
+                    };
+
+                    return Ok(IrExpr::BridgeSlice {
+                        target: Box::new(ir_target),
+                        start: ir_start,
+                        stop: ir_stop,
+                        step: ir_step,
+                    });
+                }
+
                 let ir_start = match start {
                     Some(s) => Some(Box::new(self.analyze_expr(s)?)),
                     None => None,
@@ -1901,6 +1944,16 @@ impl SemanticAnalyzer {
                             }
                         }
                     }
+                }
+
+                // V1.7.0: Remote Attribute Access via Bridge
+                let target_ty = self.infer_type(value);
+                if matches!(target_ty, Type::Any) {
+                    self.current_func_may_raise = true;
+                    return Ok(IrExpr::BridgeAttributeAccess {
+                        target: Box::new(self.analyze_expr(value)?),
+                        attribute: attr.clone(),
+                    });
                 }
 
                 // Standalone attribute access (not call)

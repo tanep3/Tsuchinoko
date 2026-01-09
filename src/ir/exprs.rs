@@ -60,11 +60,34 @@ pub enum IrExpr {
         method: String,
         args: Vec<IrExpr>,
     },
-    /// PyO3メソッド呼び出し (Type::Any対象)
+    /// PyO3メソッド呼び出し (Type::Any対象) - Deprecated in V1.7.0 favor of BridgeMethodCall
     PyO3MethodCall {
         target: Box<IrExpr>,
         method: String,
         args: Vec<IrExpr>,
+    },
+    /// V1.7.0: ブリッジ経由のメソッド呼び出し (obj.method(...))
+    BridgeMethodCall {
+        target: Box<IrExpr>,
+        method: String,
+        args: Vec<IrExpr>,
+    },
+    /// V1.7.0: ブリッジ経由の属性アクセス (obj.attr)
+    BridgeAttributeAccess {
+        target: Box<IrExpr>,
+        attribute: String,
+    },
+    /// V1.7.0: ブリッジ経由のアイテムアクセス (obj[key])
+    BridgeItemAccess {
+        target: Box<IrExpr>,
+        index: Box<IrExpr>,
+    },
+    /// V1.7.0: ブリッジ経由のスライス (obj[start:stop:step])
+    BridgeSlice {
+        target: Box<IrExpr>,
+        start: Box<IrExpr>,
+        stop: Box<IrExpr>,
+        step: Box<IrExpr>,
     },
 
     // --- コレクション ---

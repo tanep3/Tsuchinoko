@@ -3,6 +3,7 @@
 //! Extracted from mod.rs for better code organization.
 
 #![allow(clippy::approx_constant)]
+mod v1_7_0_bridge;
 use super::*;
 use crate::parser::parse;
 
