@@ -174,6 +174,12 @@ pub enum IrExpr {
         name: String,
         fields: Vec<(String, IrExpr)>,
     },
+    /// V1.6.0: DynamicValue でラップ (isinstance 対応)
+    DynamicWrap {
+        enum_name: String,    // "DynamicValue"
+        variant: String,      // "Int", "Str", etc.
+        value: Box<IrExpr>,
+    },
 }
 
 #[cfg(test)]

@@ -1476,6 +1476,48 @@ impl SemanticAnalyzer {
         }
         None
     }
+
+    /// V1.6.0 FT-005: Extract isinstance check: isinstance(x, T) -> (x, T)
+    fn extract_isinstance_check(&self, condition: &Expr) -> Option<(String, Type)> {
+        if let Expr::Call { func, args, .. } = condition {
+            if let Expr::Ident(name) = func.as_ref() {
+                if name == "isinstance" && args.len() == 2 {
+                    // isinstance(x, T)
+                    if let Expr::Ident(var_name) = &args[0] {
+                        let ty = match &args[1] {
+                            Expr::Ident(type_name) => match type_name.as_str() {
+                                "int" => Some(Type::Int),
+                                "str" => Some(Type::String),
+                                "float" => Some(Type::Float),
+                                "bool" => Some(Type::Bool),
+                                "list" => Some(Type::List(Box::new(Type::Unknown))),
+                                "dict" => Some(Type::Dict(Box::new(Type::Unknown), Box::new(Type::Unknown))),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        if let Some(t) = ty {
+                            return Some((var_name.clone(), t));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// V1.6.0 FT-005: Convert Type to DynamicValue variant name
+    fn type_to_dynamic_variant(&self, ty: &Type) -> String {
+        match ty {
+            Type::Int => "Int".to_string(),
+            Type::String => "Str".to_string(),
+            Type::Float => "Float".to_string(),
+            Type::Bool => "Bool".to_string(),
+            Type::List(_) => "List".to_string(),
+            Type::Dict(_, _) => "Dict".to_string(),
+            _ => "Other".to_string(),
+        }
+    }
     fn get_func_name_for_debug(&self, expr: &Expr) -> String {
         match expr {
             Expr::Ident(name) => name.clone(),

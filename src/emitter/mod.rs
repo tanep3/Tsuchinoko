@@ -1202,6 +1202,36 @@ use pyo3::types::PyList;
                 let inner_code = inner.join("\n");
                 format!("{{\n{inner_code}\n}}")
             }
+            // V1.6.0: DynamicValue enum definition (for isinstance)
+            IrNode::DynamicEnumDef { name, variants } => {
+                let mut result = format!("{indent}#[derive(Clone, Debug)]\n");
+                result.push_str(&format!("{indent}enum {name} {{\n"));
+                for (variant_name, inner_ty) in variants {
+                    let rust_type = inner_ty.to_rust_string();
+                    result.push_str(&format!("{indent}    {variant_name}({rust_type}),\n"));
+                }
+                result.push_str(&format!("{indent}}}"));
+                result
+            }
+            // V1.6.0: match expression (for isinstance)
+            IrNode::Match { value, arms } => {
+                let value_str = self.emit_expr(value);
+                let mut result = format!("{indent}match {value_str} {{\n");
+                for arm in arms {
+                    let variant = &arm.variant;
+                    let binding = &arm.binding;
+                    result.push_str(&format!("{indent}    DynamicValue::{variant}({binding}) => {{\n"));
+                    self.indent += 2;
+                    for stmt in &arm.body {
+                        result.push_str(&self.emit_node(stmt));
+                        result.push('\n');
+                    }
+                    self.indent -= 2;
+                    result.push_str(&format!("{indent}    }}\n"));
+                }
+                result.push_str(&format!("{indent}}}"));
+                result
+            }
         }
     }
 
@@ -2382,6 +2412,10 @@ use pyo3::types::PyList;
                     })
                     .collect();
                 format!("{} {{ {} }}", name, field_inits.join(", "))
+            }
+            // V1.6.0: DynamicWrap - wrap value in enum variant
+            IrExpr::DynamicWrap { enum_name, variant, value } => {
+                format!("{}::{}({})", enum_name, variant, self.emit_expr(value))
             }
             IrExpr::Unwrap(inner) => {
                 format!("{}.unwrap()", self.emit_expr_internal(inner))

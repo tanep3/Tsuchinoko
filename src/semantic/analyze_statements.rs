@@ -780,6 +780,67 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                // V1.6.0 FT-005: Check for isinstance pattern: if isinstance(x, T): ...
+                if let Some((var_name, checked_type)) = self.extract_isinstance_check(condition) {
+                    // Collect all isinstance arms from if-elif-else chain
+                    let mut arms: Vec<crate::ir::nodes::MatchArm> = Vec::new();
+                    
+                    // First arm from if condition
+                    self.scope.push();
+                    let variant = self.type_to_dynamic_variant(&checked_type);
+                    self.scope.define(&var_name, checked_type.clone(), false);
+                    let body: Vec<IrNode> = then_body.iter()
+                        .filter_map(|s| self.analyze_stmt(s).ok())
+                        .collect();
+                    self.scope.pop();
+                    
+                    arms.push(crate::ir::nodes::MatchArm {
+                        variant,
+                        binding: var_name.clone(),
+                        body,
+                    });
+                    
+                    // Check elif clauses for more isinstance checks
+                    for (elif_cond, elif_body) in elif_clauses {
+                        if let Some((_elif_var, elif_type)) = self.extract_isinstance_check(elif_cond) {
+                            self.scope.push();
+                            let variant = self.type_to_dynamic_variant(&elif_type);
+                            self.scope.define(&var_name, elif_type, false);
+                            let body: Vec<IrNode> = elif_body.iter()
+                                .filter_map(|s| self.analyze_stmt(s).ok())
+                                .collect();
+                            self.scope.pop();
+                            
+                            arms.push(crate::ir::nodes::MatchArm {
+                                variant,
+                                binding: var_name.clone(),
+                                body,
+                            });
+                        }
+                    }
+                    
+                    // If there's an else clause, add catch-all arm
+                    if let Some(else_stmts) = else_body {
+                        self.scope.push();
+                        let body: Vec<IrNode> = else_stmts.iter()
+                            .filter_map(|s| self.analyze_stmt(s).ok())
+                            .collect();
+                        self.scope.pop();
+                        
+                        // Add "other" variant for catch-all
+                        arms.push(crate::ir::nodes::MatchArm {
+                            variant: "_".to_string(),
+                            binding: "other".to_string(),
+                            body,
+                        });
+                    }
+                    
+                    return Ok(IrNode::Match {
+                        value: IrExpr::Var(var_name),
+                        arms,
+                    });
+                }
+
                 // Check for type narrowing pattern: `if x is None:` or `if x is not None:`
                 // Extract variable name and narrowing direction
                 let narrowing_info = self.extract_none_check(condition);
