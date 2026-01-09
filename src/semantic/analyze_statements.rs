@@ -570,6 +570,9 @@ impl SemanticAnalyzer {
                     // For variadic parameters (*args), wrap in Vec<T>
                     let ty = if p.variadic {
                         Type::List(Box::new(base_ty))
+                    // V1.6.0 FT-006: kwargs (**kwargs) は HashMap<String, serde_json::Value>
+                    } else if p.is_kwargs {
+                        Type::Dict(Box::new(Type::String), Box::new(Type::Any))
                     } else {
                         base_ty
                     };

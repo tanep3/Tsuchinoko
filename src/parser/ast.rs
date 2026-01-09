@@ -257,7 +257,8 @@ pub struct Param {
     pub name: String,
     pub type_hint: Option<TypeHint>,
     pub default: Option<Expr>,
-    pub variadic: bool,
+    pub variadic: bool,      // *args
+    pub is_kwargs: bool,     // V1.6.0: **kwargs
 }
 
 /// Type hint

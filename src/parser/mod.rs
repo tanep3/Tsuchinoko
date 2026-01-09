@@ -704,6 +704,7 @@ fn parse_method_def(
                 type_hint: Some(parse_type_hint(type_str)?),
                 default: None,
                 variadic: false,
+                is_kwargs: false,
             }
         } else {
             Param {
@@ -711,6 +712,7 @@ fn parse_method_def(
                 type_hint: None,
                 default: None,
                 variadic: false,
+                is_kwargs: false,
             }
         };
         params.push(param);
@@ -1190,6 +1192,31 @@ fn parse_block(lines: &[&str], start: usize) -> Result<(Vec<Stmt>, usize), Tsuch
 fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoError> {
     let param_str = param_str.trim();
 
+    // V1.6.0: Check for kwargs parameter (**kwargs)
+    if param_str.starts_with("**") {
+        let rest = param_str[2..].trim();
+        // Check if there's a type hint (**kwargs: dict)
+        if let Some(colon_pos) = rest.find(':') {
+            let name = rest[..colon_pos].trim().to_string();
+            let type_str = rest[colon_pos + 1..].trim();
+            return Ok(Param {
+                name,
+                type_hint: Some(parse_type_hint(type_str)?),
+                default: None,
+                variadic: false,
+                is_kwargs: true,
+            });
+        } else {
+            return Ok(Param {
+                name: rest.to_string(),
+                type_hint: None,
+                default: None,
+                variadic: false,
+                is_kwargs: true,
+            });
+        }
+    }
+
     // Check for variadic parameter (*args or *args: type)
     if param_str.starts_with('*') && !param_str.starts_with("**") {
         let rest = param_str[1..].trim();
@@ -1202,6 +1229,7 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
                 type_hint: Some(parse_type_hint(type_str)?),
                 default: None,
                 variadic: true,
+                is_kwargs: false,
             });
         } else {
             return Ok(Param {
@@ -1209,6 +1237,7 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
                 type_hint: None,
                 default: None,
                 variadic: true,
+                is_kwargs: false,
             });
         }
     }
@@ -1246,6 +1275,7 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
                     type_hint: Some(parse_type_hint(type_str)?),
                     default: Some(default_expr),
                     variadic: false,
+                    is_kwargs: false,
                 });
             } else {
                 return Ok(Param {
@@ -1253,6 +1283,7 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
                     type_hint: None,
                     default: Some(default_expr),
                     variadic: false,
+                    is_kwargs: false,
                 });
             }
         }
@@ -1267,6 +1298,7 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
             type_hint: Some(parse_type_hint(type_str)?),
             default: None,
             variadic: false,
+            is_kwargs: false,
         })
     } else {
         Ok(Param {
@@ -1274,6 +1306,7 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
             type_hint: None,
             default: None,
             variadic: false,
+            is_kwargs: false,
         })
     }
 }
