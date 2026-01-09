@@ -5,7 +5,7 @@
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-1.6.0-green.svg)](Cargo.toml)
-[![Coverage](https://img.shields.io/badge/Python構文カバレッジ-57%25-blue.svg)](#機能ドキュメント)
+[![Coverage](https://img.shields.io/badge/Python構文カバレッジ-58%25-blue.svg)](#機能ドキュメント)
 [![Changelog](https://img.shields.io/badge/History-変更履歴-blue.svg)](CHANGELOG_jp.md)
 
 [🇺🇸 English version](README.md)
@@ -15,7 +15,7 @@
 TsuchinokoはPythonの型ヒント付きコードをRustに変換するトランスパイラです。
 Pythonの読みやすい構文でアルゴリズムロジックを書き、Rustの安全性とパフォーマンスを得ることができます。
 
-> **カバレッジ**: Python構文機能の57%(86機能)をサポート。変数、演算子、制御フロー、関数、クラス（継承含む）、@property、データ構造、コレクション(list/dict/set)、文字列メソッド、リソース管理(with文)、Result型によるロバストなエラー処理など、アルゴリズムプログラミングに必要な基本構造をカバーしています。
+> **カバレッジ**: Python構文機能の58%(86機能)をサポート。変数、演算子、制御フロー、関数、クラス（継承含む）、@property、データ構造、コレクション(list/dict/set)、文字列メソッド、リソース管理(with文)、Result型によるロバストなエラー処理など、アルゴリズムプログラミングに必要な基本構造をカバーしています。
 
 ## 設計理念 (Design Philosophy)
 

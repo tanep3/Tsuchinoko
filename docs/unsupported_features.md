@@ -40,10 +40,8 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 
 ### Arguments
 
-- **`**kwargs`** (keyword variable-length arguments)
-
 > [!NOTE]
-> Both `*args` and `**kwargs` are supported (V1.6.0).
+> `*args` (positional var-args) and `**kwargs` (keyword var-args) are supported (V1.6.0).
 
 ## Exception Handling
 
@@ -53,7 +51,6 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 
 ### Inheritance & OOP
 
-- **Multiple inheritance** (more than one base class)
 - **Multiple inheritance**
 - **Abstract base classes** (`abc` module)
 - **Metaclasses**
@@ -92,7 +89,7 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 ## Built-in Functions (Native Transpilation)
 
 - **Reflection**: `getattr()`, `setattr()`, `hasattr()`, `delattr()`
-- **Type checking**: `isinstance()`, `issubclass()`, `type()`
+- **Type checking**: `issubclass()`, `type()` (*`isinstance` is partially supported*)
 - **Introspection**: `dir()`, `vars()`, `locals()`, `globals()`
 - **Object identity**: `id()`, `hash()`
 - **Iteration**: `iter()`, `next()`
