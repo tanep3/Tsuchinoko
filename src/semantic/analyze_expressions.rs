@@ -1810,6 +1810,29 @@ impl SemanticAnalyzer {
                         AstUnaryOp::Pos => unreachable!(),
                         AstUnaryOp::BitNot => IrUnaryOp::BitNot, // V1.3.0
                     };
+
+                    // V1.6.0 FT-008: not 演算子のオペランドが Type::Any の場合、as_bool().unwrap_or(false) を適用
+                    let ir_operand = if matches!(ir_op, IrUnaryOp::Not) {
+                        let operand_ty = self.infer_type(operand);
+                        if matches!(operand_ty, Type::Any) {
+                            IrExpr::MethodCall {
+                                target_type: Type::Any,
+                                target: Box::new(IrExpr::MethodCall {
+                                    target_type: Type::Any,
+                                    target: Box::new(ir_operand),
+                                    method: "as_bool".to_string(),
+                                    args: vec![],
+                                }),
+                                method: "unwrap_or".to_string(),
+                                args: vec![IrExpr::BoolLit(false)],
+                            }
+                        } else {
+                            ir_operand
+                        }
+                    } else {
+                        ir_operand
+                    };
+
                     Ok(IrExpr::UnaryOp {
                         op: ir_op,
                         operand: Box::new(ir_operand),
