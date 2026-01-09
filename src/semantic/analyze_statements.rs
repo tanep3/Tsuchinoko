@@ -1033,17 +1033,31 @@ impl SemanticAnalyzer {
             }
             Stmt::ClassDef {
                 name,
+                bases,
                 fields,
                 methods,
             } => {
                 // Convert AST fields to IR fields with types
-                let ir_fields: Vec<(String, Type)> = fields
+                let mut ir_fields: Vec<(String, Type)> = fields
                     .iter()
                     .map(|f| {
                         let ty = self.type_from_hint(&f.type_hint);
                         (f.name.clone(), ty)
                     })
                     .collect();
+
+                // V1.6.0: If class has bases, add "base" field for composition
+                let base_class = if !bases.is_empty() {
+                    // For now, support single inheritance only
+                    let parent_name = &bases[0];
+                    // Add "base" field of parent type
+                    ir_fields.insert(0, ("base".to_string(), Type::Struct(parent_name.clone())));
+                    // V1.6.0: Register inheritance relationship
+                    self.struct_bases.insert(name.clone(), parent_name.clone());
+                    Some(parent_name.clone())
+                } else {
+                    None
+                };
 
                 // Save field types for constructor type checking
                 self.struct_field_types
@@ -1070,6 +1084,7 @@ impl SemanticAnalyzer {
                 let mut result_nodes = vec![IrNode::StructDef {
                     name: name.clone(),
                     fields: ir_fields.clone(),
+                    base: base_class.clone(),
                 }];
 
                 if !methods.is_empty() {
@@ -1103,6 +1118,8 @@ impl SemanticAnalyzer {
 
                         // Analyze method body with self in scope
                         self.scope.push();
+                        // V1.6.0: Set current class base for self.field -> self.base.field transform
+                        self.current_class_base = base_class.clone();
                         // Define self as this struct type
                         self.scope.define("self", Type::Struct(name.clone()), false);
                         // Define struct fields as self.field_name for type inference
@@ -1120,6 +1137,20 @@ impl SemanticAnalyzer {
                                 false,
                             );
                         }
+                        // V1.6.0: Also register parent fields as self.field (for inheritance)
+                        if let Some(ref parent) = base_class {
+                            if let Some(parent_fields) = self.struct_field_types.get(parent).cloned() {
+                                for (pf_name, pf_ty) in parent_fields {
+                                    if pf_name != "base" {
+                                        self.scope.define(
+                                            &format!("self.{pf_name}"),
+                                            pf_ty.clone(),
+                                            false,
+                                        );
+                                    }
+                                }
+                            }
+                        }
                         // Define method params
                         for (p_name, p_ty) in &ir_params {
                             self.scope.define(p_name, p_ty.clone(), false);
@@ -1128,6 +1159,9 @@ impl SemanticAnalyzer {
                         // V1.5.2: Save and reset may_raise flag for this method
                         let old_may_raise = self.current_func_may_raise;
                         self.current_func_may_raise = false;
+                        // FIX: Save and set current_return_type for return value coercion
+                        let old_return_type = self.current_return_type.take();
+                        self.current_return_type = Some(ret_ty.clone());
 
                         let ir_body: Vec<IrNode> = method
                             .body
@@ -1135,9 +1169,10 @@ impl SemanticAnalyzer {
                             .map(|s| self.analyze_stmt(s))
                             .collect::<Result<Vec<_>, _>>()?;
 
-                        // Capture method's may_raise status
+                        // Capture method's may_raise status and restore state
                         let method_may_raise = self.current_func_may_raise;
                         self.current_func_may_raise = old_may_raise;
+                        self.current_return_type = old_return_type;
 
                         self.scope.pop_without_promotion();
 

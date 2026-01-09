@@ -493,7 +493,26 @@ fn parse_class_def(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchi
             message: "Missing colon in class definition".to_string(),
         })?;
 
-    let name = class_part[..colon_pos].trim().to_string();
+    // V1.6.0: Parse class name and bases (e.g., "Dog(Animal)" or "Dog")
+    let name_and_bases = class_part[..colon_pos].trim();
+    let (name, bases) = if let Some(paren_start) = name_and_bases.find('(') {
+        // Class with inheritance: class Dog(Animal):
+        let class_name = name_and_bases[..paren_start].trim().to_string();
+        let paren_end = name_and_bases.rfind(')').ok_or_else(|| TsuchinokoError::ParseError {
+            line: line_num,
+            message: "Missing closing parenthesis in class bases".to_string(),
+        })?;
+        let bases_str = &name_and_bases[paren_start + 1..paren_end];
+        let base_list: Vec<String> = bases_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        (class_name, base_list)
+    } else {
+        // Class without inheritance: class Dog:
+        (name_and_bases.to_string(), vec![])
+    };
 
     // Parse class body (fields and methods)
     let (fields, methods, body_consumed) = parse_class_body(lines, i + 1)?;
@@ -503,6 +522,7 @@ fn parse_class_def(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchi
     Ok((
         Stmt::ClassDef {
             name,
+            bases,
             fields,
             methods,
         },

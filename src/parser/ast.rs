@@ -218,8 +218,10 @@ pub enum Stmt {
     /// Expression statement
     Expr(Expr),
     /// Class definition (dataclass -> struct, or class with methods)
+    /// V1.6.0: bases field for inheritance support
     ClassDef {
         name: String,
+        bases: Vec<String>,  // V1.6.0: 継承元クラス名
         fields: Vec<Field>,
         methods: Vec<MethodDef>,
     },

@@ -68,6 +68,10 @@ pub struct SemanticAnalyzer {
     current_func_may_raise: bool,
     /// V1.5.2: Functions that may raise (for callee_may_raise detection)
     may_raise_funcs: std::collections::HashSet<String>,
+    /// V1.6.0: Struct name -> parent class name (for inheritance/composition)
+    struct_bases: std::collections::HashMap<String, String>,
+    /// V1.6.0: Current class being analyzed (for self.field -> self.base.field)
+    current_class_base: Option<String>,
 }
 
 impl Default for SemanticAnalyzer {
@@ -90,6 +94,8 @@ impl SemanticAnalyzer {
             func_base_depth: 0,
             current_func_may_raise: false,
             may_raise_funcs: std::collections::HashSet::new(),
+            struct_bases: std::collections::HashMap::new(),
+            current_class_base: None,
         }
     }
 

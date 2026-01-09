@@ -961,6 +961,51 @@ impl SemanticAnalyzer {
                                             (field_name.clone(), default_val)
                                         })
                                         .collect()
+                                } else if let Some(parent_name) = self.struct_bases.get(name).cloned() {
+                                    // V1.6.0: If this struct has a base class, transform base field
+                                    // Dog("Rex", "Labrador") -> Dog { base: Animal { name: "Rex" }, breed: "Labrador" }
+                                    if let Some(parent_field_types) = self.struct_field_types.get(&parent_name).cloned() {
+                                        // Get parent field names (excluding base)
+                                        let parent_fields: Vec<String> = parent_field_types
+                                            .iter()
+                                            .filter(|(n, _)| n != "base")
+                                            .map(|(n, _)| n.clone())
+                                            .collect();
+                                        let parent_count = parent_fields.len();
+                                        
+                                        // Split args: first N go to parent, rest to child
+                                        let (parent_args, child_args): (Vec<_>, Vec<_>) = ir_args
+                                            .into_iter()
+                                            .enumerate()
+                                            .partition(|(i, _)| *i < parent_count);
+                                        
+                                        // Create parent struct
+                                        let parent_struct = IrExpr::StructConstruct {
+                                            name: parent_name.clone(),
+                                            fields: parent_fields
+                                                .into_iter()
+                                                .zip(parent_args.into_iter().map(|(_, v)| v))
+                                                .collect(),
+                                        };
+                                        
+                                        // Build child fields with base = parent struct
+                                        let mut result_fields = vec![("base".to_string(), parent_struct)];
+                                        
+                                        // Child's own fields (excluding base)
+                                        let child_field_names: Vec<String> = field_names
+                                            .iter()
+                                            .filter(|n| *n != "base")
+                                            .cloned()
+                                            .collect();
+                                        result_fields.extend(
+                                            child_field_names
+                                                .into_iter()
+                                                .zip(child_args.into_iter().map(|(_, v)| v)),
+                                        );
+                                        result_fields
+                                    } else {
+                                        field_names.into_iter().zip(ir_args).collect()
+                                    }
                                 } else {
                                     field_names.into_iter().zip(ir_args).collect()
                                 };
@@ -1781,6 +1826,34 @@ impl SemanticAnalyzer {
                                 return Ok(IrExpr::RawCode("f64::NAN".to_string()));
                             }
                             _ => {}
+                        }
+                    }
+                }
+
+                // V1.6.0: Check for self.field access that should be self.base.field
+                if let Expr::Ident(target_name) = value.as_ref() {
+                    if target_name == "self" {
+                        // Check if this field belongs to parent class
+                        if let Some(ref parent) = self.current_class_base {
+                            if let Some(parent_fields) = self.struct_field_types.get(parent) {
+                                // Strip dunder prefix for comparison
+                                let rust_attr = if attr.starts_with("__") && !attr.ends_with("__") {
+                                    attr.trim_start_matches("__")
+                                } else {
+                                    attr.as_str()
+                                };
+                                // Check if this is a parent field
+                                if parent_fields.iter().any(|(f, _)| f == rust_attr) {
+                                    // Transform self.field -> self.base.field
+                                    return Ok(IrExpr::FieldAccess {
+                                        target: Box::new(IrExpr::FieldAccess {
+                                            target: Box::new(IrExpr::Var("self".to_string())),
+                                            field: "base".to_string(),
+                                        }),
+                                        field: rust_attr.to_string(),
+                                    });
+                                }
+                            }
                         }
                     }
                 }

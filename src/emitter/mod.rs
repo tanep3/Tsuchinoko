@@ -56,6 +56,8 @@ pub struct RustEmitter {
     current_func_may_raise: bool,
     /// V1.5.2: Whether we are inside try body closure (? not allowed, use .unwrap())
     in_try_body: bool,
+    /// V1.6.0: Map of struct name -> base class name (for composition)
+    struct_bases: HashMap<String, String>,
 }
 
 /// Convert camelCase/PascalCase to snake_case
@@ -96,6 +98,7 @@ impl RustEmitter {
             uses_tsuchinoko_error: false,
             current_func_may_raise: false,
             in_try_body: false,
+            struct_bases: HashMap::new(),
         }
     }
 
@@ -788,10 +791,15 @@ use pyo3::types::PyList;
                 }
                 format!("{}{};\n", indent, self.emit_expr(expr))
             }
-            IrNode::StructDef { name, fields } => {
+            IrNode::StructDef { name, fields, base } => {
                 // Register struct definition for constructor emission
                 let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
                 self.struct_defs.insert(name.clone(), field_names);
+
+                // V1.6.0: Track base class for constructor generation
+                if let Some(base_name) = base {
+                    self.struct_bases.insert(name.clone(), base_name.clone());
+                }
 
                 let mut result = format!("{indent}#[derive(Clone)]\n");
                 result.push_str(&format!("{indent}struct {name} {{\n"));

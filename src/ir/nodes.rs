@@ -106,9 +106,11 @@ pub enum IrNode {
 
     // --- 構造体・型 ---
     /// struct定義 (@dataclass由来)
+    /// V1.6.0: base field for composition (inheritance)
     StructDef {
         name: String,
         fields: Vec<(String, Type)>,
+        base: Option<String>,  // V1.6.0: コンポジション用の親クラス名
     },
     /// implブロック
     ImplBlock {
