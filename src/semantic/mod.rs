@@ -72,6 +72,8 @@ pub struct SemanticAnalyzer {
     struct_bases: std::collections::HashMap<String, String>,
     /// V1.6.0: Current class being analyzed (for self.field -> self.base.field)
     current_class_base: Option<String>,
+    /// V1.6.0 FT-005: Types checked by isinstance (for DynamicValue enum generation)
+    isinstance_types: Vec<Type>,
 }
 
 impl Default for SemanticAnalyzer {
@@ -96,6 +98,7 @@ impl SemanticAnalyzer {
             may_raise_funcs: std::collections::HashSet::new(),
             struct_bases: std::collections::HashMap::new(),
             current_class_base: None,
+            isinstance_types: Vec::new(),
         }
     }
 
@@ -746,6 +749,21 @@ impl SemanticAnalyzer {
                 hoisted_vars: vec![],
                 may_raise: false,
             });
+        }
+        // V1.6.0 FT-005: If isinstance was used, generate DynamicValue enum at the top
+        if !self.isinstance_types.is_empty() {
+            let variants: Vec<(String, Type)> = self.isinstance_types
+                .iter()
+                .map(|ty| (self.type_to_dynamic_variant(ty), ty.clone()))
+                .collect();
+            
+            let enum_def = IrNode::DynamicEnumDef {
+                name: "DynamicValue".to_string(),
+                variants,
+            };
+            
+            // Insert enum definition at the beginning
+            other_decls.insert(0, enum_def);
         }
 
         Ok(other_decls)
@@ -1478,7 +1496,7 @@ impl SemanticAnalyzer {
     }
 
     /// V1.6.0 FT-005: Extract isinstance check: isinstance(x, T) -> (x, T)
-    fn extract_isinstance_check(&self, condition: &Expr) -> Option<(String, Type)> {
+    fn extract_isinstance_check(&mut self, condition: &Expr) -> Option<(String, Type)> {
         if let Expr::Call { func, args, .. } = condition {
             if let Expr::Ident(name) = func.as_ref() {
                 if name == "isinstance" && args.len() == 2 {
@@ -1497,6 +1515,10 @@ impl SemanticAnalyzer {
                             _ => None,
                         };
                         if let Some(t) = ty {
+                            // V1.6.0: Track this type for DynamicValue enum generation
+                            if !self.isinstance_types.contains(&t) {
+                                self.isinstance_types.push(t.clone());
+                            }
                             return Some((var_name.clone(), t));
                         }
                     }

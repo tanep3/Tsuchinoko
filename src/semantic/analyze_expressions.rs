@@ -653,6 +653,37 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                // V1.6.0 FT-002: Handle super().method() -> self.base.method()
+                if let Expr::Attribute { value, attr } = func.as_ref() {
+                    // Check if value is super() call
+                    if let Expr::Call { func: super_func, args: super_args, .. } = value.as_ref() {
+                        if let Expr::Ident(super_name) = super_func.as_ref() {
+                            if super_name == "super" && super_args.is_empty() {
+                                // This is super().method(...) pattern
+                                // Transform to self.base.method(...)
+                                let ir_args: Vec<IrExpr> = args
+                                    .iter()
+                                    .map(|a| self.analyze_expr(a))
+                                    .collect::<Result<Vec<_>, _>>()?;
+                                
+                                // self.base
+                                let base_access = IrExpr::FieldAccess {
+                                    target: Box::new(IrExpr::Var("self".to_string())),
+                                    field: "base".to_string(),
+                                };
+                                
+                                // self.base.method(args)
+                                return Ok(IrExpr::MethodCall {
+                                    target_type: Type::Unknown,
+                                    target: Box::new(base_access),
+                                    method: attr.clone(),
+                                    args: ir_args,
+                                });
+                            }
+                        }
+                    }
+                }
+
                 // Handle PyO3 module calls: np.array(...) -> np.call_method1("array", (...))?
                 if let Expr::Attribute { value, attr } = func.as_ref() {
                     if let Expr::Ident(module_alias) = value.as_ref() {
