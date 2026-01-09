@@ -72,6 +72,9 @@ fn main() -> Result<()> {
     // V1.4.0: Check if external libraries are used (PythonBridge indicates external imports)
     let uses_external_libs = rust_code.contains("PythonBridge");
 
+    // V1.6.0: Check if **kwargs is used (HashMap<String, serde_json::Value>)
+    let uses_kwargs = rust_code.contains("HashMap<String, serde_json::Value>");
+
     // V1.4.0: Enforce --project when external libraries are used
     if uses_external_libs && cli.project.is_none() {
         eprintln!("Error: This code uses external Python libraries.");
@@ -88,6 +91,24 @@ fn main() -> Result<()> {
         eprintln!();
         eprintln!("       After generation, run:");
         eprintln!("         source venv/bin/activate");
+        eprintln!("         cd ./output_project && cargo run --release");
+        std::process::exit(1);
+    }
+
+    // V1.6.0: Enforce --project when **kwargs is used
+    if uses_kwargs && cli.project.is_none() {
+        eprintln!("Error: This code uses **kwargs (dynamic keyword arguments).");
+        eprintln!("       Please use --project option to generate a complete project:");
+        eprintln!();
+        eprintln!(
+            "       tnk {} --project ./output_project",
+            cli.input.display()
+        );
+        eprintln!();
+        eprintln!("       The --project option generates a Cargo project with:");
+        eprintln!("         - Cargo.toml: Dependencies (serde, serde_json)");
+        eprintln!();
+        eprintln!("       After generation, run:");
         eprintln!("         cd ./output_project && cargo run --release");
         std::process::exit(1);
     }

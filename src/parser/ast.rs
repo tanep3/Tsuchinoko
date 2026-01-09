@@ -38,6 +38,13 @@ pub enum Expr {
         iter: Box<Expr>,
         condition: Option<Box<Expr>>,
     },
+    /// Set comprehension {elt for target in iter if cond} (V1.6.0)
+    SetComp {
+        elt: Box<Expr>,
+        target: String,
+        iter: Box<Expr>,
+        condition: Option<Box<Expr>>,
+    },
     /// Dict comprehension {key: value for target in iter} or {k: v for k, v in items if cond} (V1.3.0)
     DictComp {
         key: Box<Expr>,
@@ -211,8 +218,10 @@ pub enum Stmt {
     /// Expression statement
     Expr(Expr),
     /// Class definition (dataclass -> struct, or class with methods)
+    /// V1.6.0: bases field for inheritance support
     ClassDef {
         name: String,
+        bases: Vec<String>, // V1.6.0: 継承元クラス名
         fields: Vec<Field>,
         methods: Vec<MethodDef>,
     },
@@ -242,6 +251,12 @@ pub enum Stmt {
     Continue,
     /// Assert statement (V1.3.0)
     Assert { test: Expr, msg: Option<Expr> },
+    /// With statement (V1.6.0)
+    With {
+        context_expr: Box<Expr>,
+        optional_vars: Option<String>, // as NAME
+        body: Vec<Stmt>,
+    },
 }
 
 /// Function parameter with optional default value
@@ -250,7 +265,8 @@ pub struct Param {
     pub name: String,
     pub type_hint: Option<TypeHint>,
     pub default: Option<Expr>,
-    pub variadic: bool,
+    pub variadic: bool,  // *args
+    pub is_kwargs: bool, // V1.6.0: **kwargs
 }
 
 /// Type hint
@@ -276,7 +292,9 @@ pub struct MethodDef {
     pub params: Vec<Param>, // Excludes 'self'
     pub return_type: Option<TypeHint>,
     pub body: Vec<Stmt>,
-    pub is_static: bool, // @staticmethod
+    pub is_static: bool,            // @staticmethod
+    pub is_property: bool,          // V1.6.0: @property (getter)
+    pub setter_for: Option<String>, // V1.6.0: @name.setter (setter for property "name")
 }
 
 /// Except clause (V1.5.0)

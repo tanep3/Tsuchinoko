@@ -56,6 +56,8 @@ pub struct RustEmitter {
     current_func_may_raise: bool,
     /// V1.5.2: Whether we are inside try body closure (? not allowed, use .unwrap())
     in_try_body: bool,
+    /// V1.6.0: Map of struct name -> base class name (for composition)
+    struct_bases: HashMap<String, String>,
 }
 
 /// Convert camelCase/PascalCase to snake_case
@@ -96,6 +98,7 @@ impl RustEmitter {
             uses_tsuchinoko_error: false,
             current_func_may_raise: false,
             in_try_body: false,
+            struct_bases: HashMap::new(),
         }
     }
 
@@ -368,7 +371,7 @@ use pyo3::types::PyList;
                 value,
             } => {
                 format!(
-                    "{}{}[{} as usize] = {};",
+                    "{}{}[{}] = {};",
                     indent,
                     self.emit_expr(target),
                     self.emit_expr(index),
@@ -788,10 +791,15 @@ use pyo3::types::PyList;
                 }
                 format!("{}{};\n", indent, self.emit_expr(expr))
             }
-            IrNode::StructDef { name, fields } => {
+            IrNode::StructDef { name, fields, base } => {
                 // Register struct definition for constructor emission
                 let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
                 self.struct_defs.insert(name.clone(), field_names);
+
+                // V1.6.0: Track base class for constructor generation
+                if let Some(base_name) = base {
+                    self.struct_bases.insert(name.clone(), base_name.clone());
+                }
 
                 let mut result = format!("{indent}#[derive(Clone)]\n");
                 result.push_str(&format!("{indent}struct {name} {{\n"));
@@ -1184,6 +1192,44 @@ use pyo3::types::PyList;
 
                 // Don't emit anything here - imports are handled in main wrapper
                 String::new()
+            }
+            // V1.6.0: Scoped block (from with statement)
+            IrNode::Block { stmts } => {
+                let inner: Vec<String> = stmts.iter().map(|s| self.emit_node(s)).collect();
+                let inner_code = inner.join("\n");
+                format!("{{\n{inner_code}\n}}")
+            }
+            // V1.6.0: DynamicValue enum definition (for isinstance)
+            IrNode::DynamicEnumDef { name, variants } => {
+                let mut result = format!("{indent}#[derive(Clone, Debug)]\n");
+                result.push_str(&format!("{indent}enum {name} {{\n"));
+                for (variant_name, inner_ty) in variants {
+                    let rust_type = inner_ty.to_rust_string();
+                    result.push_str(&format!("{indent}    {variant_name}({rust_type}),\n"));
+                }
+                result.push_str(&format!("{indent}}}"));
+                result
+            }
+            // V1.6.0: match expression (for isinstance)
+            IrNode::Match { value, arms } => {
+                let value_str = self.emit_expr(value);
+                let mut result = format!("{indent}match {value_str} {{\n");
+                for arm in arms {
+                    let variant = &arm.variant;
+                    let binding = &arm.binding;
+                    result.push_str(&format!(
+                        "{indent}    DynamicValue::{variant}({binding}) => {{\n"
+                    ));
+                    self.indent += 2;
+                    for stmt in &arm.body {
+                        result.push_str(&self.emit_node(stmt));
+                        result.push('\n');
+                    }
+                    self.indent -= 2;
+                    result.push_str(&format!("{indent}    }}\n"));
+                }
+                result.push_str(&format!("{indent}}}"));
+                result
             }
         }
     }
@@ -1768,6 +1814,56 @@ use pyo3::types::PyList;
                     )
                 }
             }
+            // V1.6.0: Set comprehension {x for target in iter if condition}
+            IrExpr::SetComp {
+                elt,
+                target,
+                iter,
+                condition,
+            } => {
+                let elt_str = self.emit_expr_internal(elt);
+
+                let target_has_comma = target.contains(',');
+                let target_snake = if target_has_comma {
+                    let parts: Vec<String> =
+                        target.split(',').map(|s| to_snake_case(s.trim())).collect();
+                    format!("({})", parts.join(", "))
+                } else {
+                    to_snake_case(target)
+                };
+
+                let closure_var = if target_has_comma || elt_str.contains(&target_snake) {
+                    target_snake.clone()
+                } else {
+                    "_".to_string()
+                };
+
+                let iter_str = self.emit_expr_internal(iter);
+
+                let iter_chain = match iter.as_ref() {
+                    IrExpr::Range { .. } => format!("({iter_str})"),
+                    IrExpr::MethodCall { method, .. }
+                        if method.contains("iter")
+                            || method.contains("filter")
+                            || method.contains("map") =>
+                    {
+                        iter_str
+                    }
+                    _ => format!("{iter_str}.iter().cloned()"),
+                };
+
+                if let Some(cond) = condition {
+                    let cond_str = self.emit_expr_internal(cond);
+                    format!(
+                        "{}.filter(|{}| {}).map(|{}| {}).collect::<std::collections::HashSet<_>>()",
+                        iter_chain, &target_snake, cond_str, closure_var, elt_str
+                    )
+                } else {
+                    format!(
+                        "{iter_chain}.map(|{closure_var}| {elt_str}).collect::<std::collections::HashSet<_>>()"
+                    )
+                }
+            }
             IrExpr::Closure {
                 params,
                 body,
@@ -2315,6 +2411,14 @@ use pyo3::types::PyList;
                     })
                     .collect();
                 format!("{} {{ {} }}", name, field_inits.join(", "))
+            }
+            // V1.6.0: DynamicWrap - wrap value in enum variant
+            IrExpr::DynamicWrap {
+                enum_name,
+                variant,
+                value,
+            } => {
+                format!("{}::{}({})", enum_name, variant, self.emit_expr(value))
             }
             IrExpr::Unwrap(inner) => {
                 format!("{}.unwrap()", self.emit_expr_internal(inner))

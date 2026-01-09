@@ -6,9 +6,9 @@ mod utils;
 pub use ast::*;
 
 use utils::{
-    find_char_balanced, find_char_balanced_rtl, find_keyword_balanced, find_matching_bracket,
-    find_matching_bracket_rtl, find_operator_balanced, find_operator_balanced_rtl,
-    split_by_comma_balanced,
+    find_all_comparison_operators_balanced, find_char_balanced, find_char_balanced_rtl,
+    find_keyword_balanced, find_matching_bracket, find_matching_bracket_rtl,
+    find_operator_balanced, find_operator_balanced_rtl, split_by_comma_balanced,
 };
 
 use crate::error::TsuchinokoError;
@@ -278,6 +278,14 @@ pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
             continue;
         }
 
+        // V1.6.0: Try to parse with statement
+        if line.starts_with("with ") {
+            let (stmt, consumed) = parse_with_stmt(&lines, i)?;
+            statements.push(stmt);
+            i += consumed;
+            continue;
+        }
+
         // Try to parse single-line statement
         if let Some(stmt) = parse_line(line, i + 1)? {
             statements.push(stmt);
@@ -341,6 +349,53 @@ fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchin
             except_clauses,
             else_body,
             finally_body,
+        },
+        total_consumed,
+    ))
+}
+
+/// V1.6.0: Parse a with statement: with EXPR as NAME:
+fn parse_with_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), TsuchinokoError> {
+    let line = lines[start].trim();
+    let line_num = start + 1;
+
+    // Remove "with " prefix and trailing ":"
+    let content = line
+        .strip_prefix("with ")
+        .ok_or_else(|| TsuchinokoError::ParseError {
+            line: line_num,
+            message: "Expected 'with' statement".to_string(),
+        })?
+        .trim()
+        .strip_suffix(':')
+        .ok_or_else(|| TsuchinokoError::ParseError {
+            line: line_num,
+            message: "Expected ':' at end of with statement".to_string(),
+        })?
+        .trim();
+
+    // Parse "EXPR as NAME" or just "EXPR"
+    let (expr_str, optional_vars) = if let Some(as_pos) = content.rfind(" as ") {
+        let expr_part = content[..as_pos].trim();
+        let name = content[as_pos + 4..].trim().to_string();
+        (expr_part, Some(name))
+    } else {
+        (content, None)
+    };
+
+    // Parse the context expression
+    let context_expr = parse_expr(expr_str, line_num)?;
+
+    // Parse body block
+    let (body, body_consumed) = parse_block(lines, start + 1)?;
+
+    let total_consumed = 1 + body_consumed;
+
+    Ok((
+        Stmt::With {
+            context_expr: Box::new(context_expr),
+            optional_vars,
+            body,
         },
         total_consumed,
     ))
@@ -438,7 +493,28 @@ fn parse_class_def(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchi
             message: "Missing colon in class definition".to_string(),
         })?;
 
-    let name = class_part[..colon_pos].trim().to_string();
+    // V1.6.0: Parse class name and bases (e.g., "Dog(Animal)" or "Dog")
+    let name_and_bases = class_part[..colon_pos].trim();
+    let (name, bases) = if let Some(paren_start) = name_and_bases.find('(') {
+        // Class with inheritance: class Dog(Animal):
+        let class_name = name_and_bases[..paren_start].trim().to_string();
+        let paren_end = name_and_bases
+            .rfind(')')
+            .ok_or_else(|| TsuchinokoError::ParseError {
+                line: line_num,
+                message: "Missing closing parenthesis in class bases".to_string(),
+            })?;
+        let bases_str = &name_and_bases[paren_start + 1..paren_end];
+        let base_list: Vec<String> = bases_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        (class_name, base_list)
+    } else {
+        // Class without inheritance: class Dog:
+        (name_and_bases.to_string(), vec![])
+    };
 
     // Parse class body (fields and methods)
     let (fields, methods, body_consumed) = parse_class_body(lines, i + 1)?;
@@ -448,6 +524,7 @@ fn parse_class_def(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchi
     Ok((
         Stmt::ClassDef {
             name,
+            bases,
             fields,
             methods,
         },
@@ -510,7 +587,7 @@ fn parse_class_body(
             }
             let method_line = lines[i].trim();
             if method_line.starts_with("def ") {
-                let (method, consumed) = parse_method_def(lines, i, true)?;
+                let (method, consumed) = parse_method_def(lines, i, true, false, None)?;
                 methods.push(method);
                 i += consumed;
             } else {
@@ -522,9 +599,62 @@ fn parse_class_body(
             continue;
         }
 
+        // V1.6.0: Check for @property decorator
+        if line_trim == "@property" {
+            i += 1;
+            if i >= lines.len() {
+                return Err(TsuchinokoError::ParseError {
+                    line: i,
+                    message: "Expected method after @property".to_string(),
+                });
+            }
+            let method_line = lines[i].trim();
+            if method_line.starts_with("def ") {
+                let (method, consumed) = parse_method_def(lines, i, false, true, None)?;
+                methods.push(method);
+                i += consumed;
+            } else {
+                return Err(TsuchinokoError::ParseError {
+                    line: i + 1,
+                    message: "Expected method definition after @property".to_string(),
+                });
+            }
+            continue;
+        }
+
+        // V1.6.0: Check for @name.setter decorator (e.g., @radius.setter)
+        if line_trim.starts_with("@") && line_trim.ends_with(".setter") {
+            let property_name = line_trim
+                .strip_prefix("@")
+                .unwrap()
+                .strip_suffix(".setter")
+                .unwrap()
+                .to_string();
+            i += 1;
+            if i >= lines.len() {
+                return Err(TsuchinokoError::ParseError {
+                    line: i,
+                    message: format!("Expected method after @{property_name}.setter"),
+                });
+            }
+            let method_line = lines[i].trim();
+            if method_line.starts_with("def ") {
+                let (method, consumed) =
+                    parse_method_def(lines, i, false, false, Some(property_name))?;
+                methods.push(method);
+                i += consumed;
+            } else {
+                return Err(TsuchinokoError::ParseError {
+                    line: i + 1,
+                    message: "Expected method definition after setter decorator".to_string(),
+                });
+            }
+            continue;
+        }
+
         // Check for method definition
         if line_trim.starts_with("def ") {
-            let (method, consumed) = parse_method_def(lines, i, false)?;
+            let (method, consumed) = parse_method_def(lines, i, false, false, None)?;
 
             // Extract fields from __init__ method
             if method.name == "__init__" {
@@ -604,6 +734,8 @@ fn parse_method_def(
     lines: &[&str],
     start: usize,
     is_static: bool,
+    is_property: bool,
+    setter_for: Option<String>,
 ) -> Result<(MethodDef, usize), TsuchinokoError> {
     let line = lines[start].trim();
     let line_num = start + 1;
@@ -650,6 +782,7 @@ fn parse_method_def(
                 type_hint: Some(parse_type_hint(type_str)?),
                 default: None,
                 variadic: false,
+                is_kwargs: false,
             }
         } else {
             Param {
@@ -657,6 +790,7 @@ fn parse_method_def(
                 type_hint: None,
                 default: None,
                 variadic: false,
+                is_kwargs: false,
             }
         };
         params.push(param);
@@ -686,6 +820,8 @@ fn parse_method_def(
             return_type,
             body,
             is_static,
+            is_property,
+            setter_for,
         },
         1 + body_consumed,
     ))
@@ -1120,6 +1256,14 @@ fn parse_block(lines: &[&str], start: usize) -> Result<(Vec<Stmt>, usize), Tsuch
             continue;
         }
 
+        // V1.6.0: Parse with statement
+        if line_trim.starts_with("with ") {
+            let (stmt, consumed) = parse_with_stmt(lines, i)?;
+            statements.push(stmt);
+            i += consumed;
+            continue;
+        }
+
         // Parse single-line statement
         if let Some(stmt) = parse_line(line_trim, i + 1)? {
             statements.push(stmt);
@@ -1134,6 +1278,31 @@ fn parse_block(lines: &[&str], start: usize) -> Result<(Vec<Stmt>, usize), Tsuch
 fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoError> {
     let param_str = param_str.trim();
 
+    // V1.6.0: Check for kwargs parameter (**kwargs)
+    if let Some(stripped) = param_str.strip_prefix("**") {
+        let rest = stripped.trim();
+        // Check if there's a type hint (**kwargs: dict)
+        if let Some(colon_pos) = rest.find(':') {
+            let name = rest[..colon_pos].trim().to_string();
+            let type_str = rest[colon_pos + 1..].trim();
+            return Ok(Param {
+                name,
+                type_hint: Some(parse_type_hint(type_str)?),
+                default: None,
+                variadic: false,
+                is_kwargs: true,
+            });
+        } else {
+            return Ok(Param {
+                name: rest.to_string(),
+                type_hint: None,
+                default: None,
+                variadic: false,
+                is_kwargs: true,
+            });
+        }
+    }
+
     // Check for variadic parameter (*args or *args: type)
     if param_str.starts_with('*') && !param_str.starts_with("**") {
         let rest = param_str[1..].trim();
@@ -1146,6 +1315,7 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
                 type_hint: Some(parse_type_hint(type_str)?),
                 default: None,
                 variadic: true,
+                is_kwargs: false,
             });
         } else {
             return Ok(Param {
@@ -1153,6 +1323,7 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
                 type_hint: None,
                 default: None,
                 variadic: true,
+                is_kwargs: false,
             });
         }
     }
@@ -1190,6 +1361,7 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
                     type_hint: Some(parse_type_hint(type_str)?),
                     default: Some(default_expr),
                     variadic: false,
+                    is_kwargs: false,
                 });
             } else {
                 return Ok(Param {
@@ -1197,6 +1369,7 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
                     type_hint: None,
                     default: Some(default_expr),
                     variadic: false,
+                    is_kwargs: false,
                 });
             }
         }
@@ -1211,6 +1384,7 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
             type_hint: Some(parse_type_hint(type_str)?),
             default: None,
             variadic: false,
+            is_kwargs: false,
         })
     } else {
         Ok(Param {
@@ -1218,6 +1392,7 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
             type_hint: None,
             default: None,
             variadic: false,
+            is_kwargs: false,
         })
     }
 }
@@ -1910,13 +2085,14 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         }
 
         // V1.3.0: Check for dict comprehension {k: v for target in iter}
+        // V1.6.0: Or set comprehension {x for target in iter} (no colon in kv_part)
         if let Some(for_pos) = find_keyword_balanced(inner, "for") {
-            // This is a dict comprehension
             let kv_part = &inner[..for_pos].trim();
             let comp_part = &inner[for_pos + 3..]; // skip "for"
 
-            // Parse key: value
+            // Check if this is dict comprehension (has colon) or set comprehension (no colon)
             if let Some(colon_pos) = utils::find_char_balanced(kv_part, ':') {
+                // Dict comprehension: {k: v for target in iter}
                 let key = parse_expr(kv_part[..colon_pos].trim(), line_num)?;
                 let value = parse_expr(kv_part[colon_pos + 1..].trim(), line_num)?;
 
@@ -1939,6 +2115,31 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
                     return Ok(Expr::DictComp {
                         key: Box::new(key),
                         value: Box::new(value),
+                        target: target_str,
+                        iter: Box::new(iter),
+                        condition,
+                    });
+                }
+            } else {
+                // V1.6.0: Set comprehension: {x for target in iter}
+                let elt = parse_expr(kv_part, line_num)?;
+
+                if let Some(in_pos) = find_keyword_balanced(comp_part, "in") {
+                    let target_str = comp_part[..in_pos].trim().to_string();
+                    let after_in = comp_part[in_pos + 2..].trim();
+
+                    let (iter_str, condition) =
+                        if let Some(if_pos) = find_keyword_balanced(after_in, "if") {
+                            let iter_part = after_in[..if_pos].trim();
+                            let cond_part = after_in[if_pos + 2..].trim();
+                            (iter_part, Some(Box::new(parse_expr(cond_part, line_num)?)))
+                        } else {
+                            (after_in, None)
+                        };
+
+                    let iter = parse_expr(iter_str, line_num)?;
+                    return Ok(Expr::SetComp {
+                        elt: Box::new(elt),
                         target: target_str,
                         iter: Box::new(iter),
                         condition,
@@ -2089,7 +2290,62 @@ fn parse_expr(expr_str: &str, line_num: usize) -> Result<Expr, TsuchinokoError> 
         });
     }
 
-    // Comparison operators (check longer ones first)
+    // V1.6.0: Chained comparison operators (e.g., a < b < c -> a < b && b < c)
+    // First, detect if there are multiple comparison operators
+    let cmp_ops = find_all_comparison_operators_balanced(expr_str);
+    if cmp_ops.len() >= 2 {
+        // Chained comparison detected! Build operands and operators.
+        let mut operands = Vec::new();
+        let mut operators = Vec::new();
+        let mut last_end = 0;
+
+        for (pos, op_str) in &cmp_ops {
+            let operand_str = &expr_str[last_end..*pos];
+            operands.push(operand_str.trim());
+            operators.push(op_str.as_str());
+            last_end = pos + op_str.len();
+        }
+        // Add the final operand
+        operands.push(expr_str[last_end..].trim());
+
+        // Build chained comparison: (a op1 b) && (b op2 c) && ...
+        let mut result_expr: Option<Expr> = None;
+
+        for i in 0..operators.len() {
+            let left = parse_expr(operands[i], line_num)?;
+            let right = parse_expr(operands[i + 1], line_num)?;
+            let op = match operators[i] {
+                "==" => BinOp::Eq,
+                "!=" => BinOp::NotEq,
+                ">=" => BinOp::GtEq,
+                "<=" => BinOp::LtEq,
+                ">" => BinOp::Gt,
+                "<" => BinOp::Lt,
+                _ => BinOp::Eq, // fallback
+            };
+
+            let cmp_expr = Expr::BinOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+
+            result_expr = match result_expr {
+                None => Some(cmp_expr),
+                Some(prev) => Some(Expr::BinOp {
+                    left: Box::new(prev),
+                    op: BinOp::And,
+                    right: Box::new(cmp_expr),
+                }),
+            };
+        }
+
+        if let Some(expr) = result_expr {
+            return Ok(expr);
+        }
+    }
+
+    // Single comparison operator (original logic)
     for (op_str, op) in [
         ("==", BinOp::Eq),
         ("!=", BinOp::NotEq),

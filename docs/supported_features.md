@@ -11,6 +11,7 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Optional patterns**: `x or default` → `unwrap_or`, ternary with None check (V1.5.0)
 - **Arithmetic operators**: `+`, `-`, `*`, `/`, `//`, `%`, `**`, `@` (V1.3.0)
 - **Comparison operators**: `==`, `!=`, `<`, `>`, `<=`, `>=`
+- **Chained comparisons** (`0 < x < 10` → `0 < x && x < 10`) (V1.6.0)
 - **Logical operators**: `and`, `or`, `not`
 - **Membership operators**: `in`, `not in` (V1.3.0)
 - **Identity operators**: `is`, `is not` (with `None` comparison)
@@ -37,6 +38,7 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Higher-order functions** (passing functions as arguments)
 - **Named arguments** (`func(name="value")`)
 - **Default argument values** (`def func(x=10)`) (V1.2.0)
+- **\*\*kwargs** (`def func(**kwargs)` → `HashMap<String, Value>`) (V1.6.0)
 
 ## Data Structures
 
@@ -46,6 +48,7 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Dictionary literals** and operations
 - **Tuple literals** and unpacking
 - **Set literals** (`{1, 2, 3}` → `HashSet`) (V1.5.0)
+- **Set comprehensions** (`{x*2 for x in nums}` → `HashSet`) (V1.6.0)
 - **Struct definitions** (via class syntax)
 - **Negative indexing** (`nums[-1]`)
 - **Slice notation** (`[:3]`, `[-3:]`, `[1:n-1]`)
@@ -64,6 +67,14 @@ This document lists all Python features currently supported by Tsuchinoko transp
 - **Method definitions**
 - **Static methods** (`@staticmethod`)
 - **Dataclasses** (`@dataclass`) (V1.2.0 Partial)
+- **Single inheritance** (`class Child(Parent)`) → Composition (V1.6.0)
+- **super() calls** (`super().method()` → `self.base.method()`) (V1.6.0)
+- **@property decorator** → getter/setter methods (V1.6.0)
+
+## Resource Management (V1.6.0)
+
+- **with statement** → RAII scope (`with open(...) as f:` → `{ let f = ...; }`)
+- Automatic resource cleanup via Rust's Drop trait
 
 ## Resident Python Worker (V1.2.0) 🆕
 
@@ -109,6 +120,7 @@ Tsuchinoko now supports persisting Python objects across bridge calls. This allo
 - `round()` - rounding with precision (V1.5.0)
 - `chr()`, `ord()` - character/code point conversion (V1.5.0)
 - `bin()`, `hex()`, `oct()` - number format conversion (V1.5.0)
+- `isinstance()` - type checking → `DynamicValue` enum + `match` (V1.6.0)
 
 ## Math Module (V1.3.0 / V1.4.0)
 

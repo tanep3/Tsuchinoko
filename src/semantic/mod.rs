@@ -68,6 +68,12 @@ pub struct SemanticAnalyzer {
     current_func_may_raise: bool,
     /// V1.5.2: Functions that may raise (for callee_may_raise detection)
     may_raise_funcs: std::collections::HashSet<String>,
+    /// V1.6.0: Struct name -> parent class name (for inheritance/composition)
+    struct_bases: std::collections::HashMap<String, String>,
+    /// V1.6.0: Current class being analyzed (for self.field -> self.base.field)
+    current_class_base: Option<String>,
+    /// V1.6.0 FT-005: Types checked by isinstance (for DynamicValue enum generation)
+    isinstance_types: Vec<Type>,
 }
 
 impl Default for SemanticAnalyzer {
@@ -90,6 +96,9 @@ impl SemanticAnalyzer {
             func_base_depth: 0,
             current_func_may_raise: false,
             may_raise_funcs: std::collections::HashSet::new(),
+            struct_bases: std::collections::HashMap::new(),
+            current_class_base: None,
+            isinstance_types: Vec::new(),
         }
     }
 
@@ -741,6 +750,22 @@ impl SemanticAnalyzer {
                 may_raise: false,
             });
         }
+        // V1.6.0 FT-005: If isinstance was used, generate DynamicValue enum at the top
+        if !self.isinstance_types.is_empty() {
+            let variants: Vec<(String, Type)> = self
+                .isinstance_types
+                .iter()
+                .map(|ty| (self.type_to_dynamic_variant(ty), ty.clone()))
+                .collect();
+
+            let enum_def = IrNode::DynamicEnumDef {
+                name: "DynamicValue".to_string(),
+                variants,
+            };
+
+            // Insert enum definition at the beginning
+            other_decls.insert(0, enum_def);
+        }
 
         Ok(other_decls)
     }
@@ -1333,6 +1358,47 @@ impl SemanticAnalyzer {
                     || matches!(&result_type, Type::Ref(inner) if matches!(inner.as_ref(), Type::List(_)));
 
                 if is_decl {
+                    // V1.6.0 FT-008: PyO3 タプルアンパッキング
+                    // Type::Any (PyO3 戻り値) の場合は、個別のインデックスアクセスに展開
+                    if matches!(result_type, Type::Any) {
+                        let mut nodes = Vec::new();
+
+                        // まず一時変数に結果を格納
+                        let temp_var = "_tuple_result".to_string();
+                        nodes.push(IrNode::VarDecl {
+                            name: temp_var.clone(),
+                            ty: Type::Any,
+                            mutable: false,
+                            init: Some(Box::new(ir_value)),
+                        });
+
+                        // 各要素をインデックスアクセスで取得
+                        for (i, target) in targets.iter().enumerate() {
+                            let is_mutable = reassigned_vars.contains(target);
+                            self.scope.define(target, Type::Any, is_mutable);
+                            let index_access = IrExpr::MethodCall {
+                                target_type: Type::Any,
+                                target: Box::new(IrExpr::Index {
+                                    target: Box::new(IrExpr::Var(temp_var.clone())),
+                                    index: Box::new(IrExpr::Cast {
+                                        target: Box::new(IrExpr::IntLit(i as i64)),
+                                        ty: "usize".to_string(),
+                                    }),
+                                }),
+                                method: "clone".to_string(),
+                                args: vec![],
+                            };
+                            nodes.push(IrNode::VarDecl {
+                                name: target.clone(),
+                                ty: Type::Any,
+                                mutable: is_mutable,
+                                init: Some(Box::new(index_access)),
+                            });
+                        }
+
+                        return Ok(IrNode::Sequence(nodes));
+                    }
+
                     let elem_types = if let Type::Tuple(types) = &result_type {
                         if types.len() == targets.len() {
                             types.clone()
@@ -1428,6 +1494,55 @@ impl SemanticAnalyzer {
             _ => {}
         }
         None
+    }
+
+    /// V1.6.0 FT-005: Extract isinstance check: isinstance(x, T) -> (x, T)
+    fn extract_isinstance_check(&mut self, condition: &Expr) -> Option<(String, Type)> {
+        if let Expr::Call { func, args, .. } = condition {
+            if let Expr::Ident(name) = func.as_ref() {
+                if name == "isinstance" && args.len() == 2 {
+                    // isinstance(x, T)
+                    if let Expr::Ident(var_name) = &args[0] {
+                        let ty = match &args[1] {
+                            Expr::Ident(type_name) => match type_name.as_str() {
+                                "int" => Some(Type::Int),
+                                "str" => Some(Type::String),
+                                "float" => Some(Type::Float),
+                                "bool" => Some(Type::Bool),
+                                "list" => Some(Type::List(Box::new(Type::Unknown))),
+                                "dict" => Some(Type::Dict(
+                                    Box::new(Type::Unknown),
+                                    Box::new(Type::Unknown),
+                                )),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        if let Some(t) = ty {
+                            // V1.6.0: Track this type for DynamicValue enum generation
+                            if !self.isinstance_types.contains(&t) {
+                                self.isinstance_types.push(t.clone());
+                            }
+                            return Some((var_name.clone(), t));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// V1.6.0 FT-005: Convert Type to DynamicValue variant name
+    fn type_to_dynamic_variant(&self, ty: &Type) -> String {
+        match ty {
+            Type::Int => "Int".to_string(),
+            Type::String => "Str".to_string(),
+            Type::Float => "Float".to_string(),
+            Type::Bool => "Bool".to_string(),
+            Type::List(_) => "List".to_string(),
+            Type::Dict(_, _) => "Dict".to_string(),
+            _ => "Other".to_string(),
+        }
     }
     fn get_func_name_for_debug(&self, expr: &Expr) -> String {
         match expr {

@@ -106,9 +106,11 @@ pub enum IrNode {
 
     // --- 構造体・型 ---
     /// struct定義 (@dataclass由来)
+    /// V1.6.0: base field for composition (inheritance)
     StructDef {
         name: String,
         fields: Vec<(String, Type)>,
+        base: Option<String>, // V1.6.0: コンポジション用の親クラス名
     },
     /// implブロック
     ImplBlock {
@@ -154,6 +156,26 @@ pub enum IrNode {
         /// For "from module import a, b, c" - contains ["a", "b", "c"]
         items: Option<Vec<String>>,
     },
+    /// V1.6.0: スコープブロック (with 文から生成)
+    Block { stmts: Vec<IrNode> },
+    /// V1.6.0: DynamicValue enum 定義 (isinstance 対応)
+    DynamicEnumDef {
+        name: String,
+        variants: Vec<(String, Type)>, // (variant_name, inner_type)
+    },
+    /// V1.6.0: match 式 (isinstance → match 変換)
+    Match { value: IrExpr, arms: Vec<MatchArm> },
+}
+
+/// V1.6.0: match 式のアーム
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    /// パターン: DynamicValue::Int(n) の "Int" 部分
+    pub variant: String,
+    /// バインドされる変数名
+    pub binding: String,
+    /// アームの本体
+    pub body: Vec<IrNode>,
 }
 
 #[cfg(test)]

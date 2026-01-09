@@ -11,6 +11,7 @@ Tsuchinokoトランスパイラが現在サポートしているPython機能の�
 - **Optionalパターン**: `x or default` → `unwrap_or`, 三項演算子+Noneチェック (V1.5.0)
 - **算術演算子**: `+`, `-`, `*`, `/`, `//`, `%`, `**`, `@` (V1.3.0)
 - **比較演算子**: `==`, `!=`, `<`, `>`, `<=`, `>=`
+- **連鎖比較** (`0 < x < 10` → `0 < x && x < 10`) (V1.6.0)
 - **論理演算子**: `and`, `or`, `not`
 - **包含演算子**: `in`, `not in` (V1.3.0)
 - **同一性演算子**: `is`, `is not` (`None`との比較)
@@ -37,6 +38,7 @@ Tsuchinokoトランスパイラが現在サポートしているPython機能の�
 - **高階関数** (関数を引数として渡す)
 - **名前付き引数** (`func(name="value")`)
 - **デフォルト引数** (`def func(x=10)`) (V1.2.0)
+- **\*\*kwargs** (`def func(**kwargs)` → `HashMap<String, Value>`) (V1.6.0)
 
 ## データ構造
 
@@ -46,6 +48,7 @@ Tsuchinokoトランスパイラが現在サポートしているPython機能の�
 - **辞書リテラル** と操作
 - **タプルリテラル** とアンパック
 - **Setリテラル** (`{1, 2, 3}` → `HashSet`) (V1.5.0)
+- **Set内包表記** (`{x*2 for x in nums}` → `HashSet`) (V1.6.0)
 - **構造体定義** (クラス構文経由)
 - **負のインデックス** (`nums[-1]`)
 - **スライス記法** (`[:3]`, `[-3:]`, `[1:n-1]`)
@@ -64,6 +67,14 @@ Tsuchinokoトランスパイラが現在サポートしているPython機能の�
 - **メソッド定義**
 - **静的メソッド** (`@staticmethod`)
 - **Dataclass** (`@dataclass`) (V1.2.0 部分対応)
+- **単一継承** (`class Child(Parent)`) → コンポジション (V1.6.0)
+- **super()呼び出し** (`super().method()` → `self.base.method()`) (V1.6.0)
+- **@propertyデコレータ** → getter/setterメソッド (V1.6.0)
+
+## リソース管理 (V1.6.0)
+
+- **with文** → RAIIスコープ (`with open(...) as f:` → `{ let f = ...; }`)
+- RustのDroptraitによる自動リソース解放
 
 ## 常駐プロセス方式 (Resident Python Worker) (V1.2.0) 🆕
 
@@ -109,6 +120,7 @@ Python オブジェクトをブリッジ呼び出しをまたいで保持でき�
 - `round()` - 四捨五入（精度指定可） (V1.5.0)
 - `chr()`, `ord()` - 文字・コードポイント変換 (V1.5.0)
 - `bin()`, `hex()`, `oct()` - 数値フォーマット変換 (V1.5.0)
+- `isinstance()` - 型チェック → `DynamicValue` enum + `match` (V1.6.0)
 
 ## Mathモジュール (V1.3.0 / V1.4.0)
 

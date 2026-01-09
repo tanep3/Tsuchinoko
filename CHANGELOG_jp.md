@@ -2,6 +2,44 @@
 
 本プロジェクトの主要な変更点をここに記録します。
 
+## [1.6.0] - 2026-01-10 - オブジェクト指向 & リソース管理
+
+### 追加 - クラス継承 (コンポジションパターン)
+
+- **単一継承**: `class Child(Parent):` → `struct Child { base: Parent, ... }`
+- **`super()` 呼び出し**: `super().method()` → `self.base.method()`
+- **フィールド継承**: `self.parent_field` → `self.base.parent_field`
+- **コンストラクタ変換**: `super().__init__(args)` → `base: Parent::new(args)`
+
+### 追加 - リソース管理
+
+- **`with` 文**: Python のコンテキストマネージャ → RAII スコープ
+  - `with open(...) as f:` → `{ let f = File::open(...)?; ... }`
+  - Rust の Drop トレイトによる自動リソース解放
+
+### 追加 - 動的型ハンドリング
+
+- **`isinstance()` → `DynamicValue` enum + `match`**
+  - `enum DynamicValue { Int(i64), Str(String), ... }` を自動生成し、型チェックをパターンマッチに変換
+- **`**kwargs`**: `def func(**kwargs)` → `HashMap<String, serde_json::Value>`
+
+### 追加 - 構文拡張
+
+- **`@property` デコレータ**: Getter/Setter メソッド自動生成
+- **セット内包表記**: `{x*2 for x in nums}` → `HashSet`
+- **連鎖比較**: `0 < x < 10` → `0 < x && x < 10`
+- **PyO3 タプルアンパッキング**: `ret, frame = camera.read()` (OpenCV等)
+
+### 修正
+
+- **IndexAssign 二重キャスト**: インデックス代入における冗長な `as usize` キャストを削除
+- **カバレッジ表記**: README のカバレッジ表記を正確な値 (57%) に修正
+
+### テスト
+
+- **リグレッションテスト**: 85/85 パス (100%)
+- **カバレッジ**: 全体機能の 57% (86機能) を公式サポート
+
 ## [1.5.2] - 2026-01-08 - Result型エラーハンドリング
 
 ### 追加 - 例外チェイン (`raise from`)

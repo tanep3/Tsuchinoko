@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-01-10 - OOP & Resource Management
+
+### Added - Resource Management
+
+- **`with` statement**: Python's context manager → RAII scope
+  - `with open(...) as f:` → `{ let f = File::open(...)?; ... }`
+  - Automatic resource cleanup via Rust's Drop trait
+
+### Added - Class Inheritance (Composition Pattern)
+
+- **Single inheritance**: `class Child(Parent):` → `struct Child { base: Parent, ... }`
+- **`super()` calls**: `super().method()` → `self.base.method()`
+- **Field inheritance**: `self.parent_field` → `self.base.parent_field`
+- **Constructor conversion**: `super().__init__(args)` → `base: Parent::new(args)`
+
+### Added - Property Decorator
+
+- **`@property`**: Getter method generation
+- **`@property.setter`**: Setter method generation (`set_x()`)
+
+### Added - Dynamic Type Handling
+
+- **`isinstance()` → `DynamicValue` enum + `match`**
+  - Auto-generates `enum DynamicValue { Int(i64), Str(String), ... }`
+  - `if isinstance(x, str):` → `match x { DynamicValue::Str(v) => ... }`
+- **`**kwargs`**: `def func(**kwargs)` → `HashMap<String, serde_json::Value>`
+
+### Added - Syntax Enhancements
+
+- **Set comprehensions**: `{x*2 for x in nums}` → `HashSet`
+- **Chained comparisons**: `0 < x < 10` → `0 < x && x < 10`
+- **PyO3 tuple unpacking**: `ret, frame = camera.read()` → indexed access
+
+### Fixed
+
+- **IndexAssign double cast**: Removed redundant `as usize` in index assignments
+
+### Tests
+
+- **Regression Tests**: 84/84 passed (100%)
+- **New Tests**: `v1_6_0_with_test.py`, `v1_6_0_inheritance_test.py`, `v1_6_0_property_test.py`, etc.
+
+---
+
 ## [1.5.2] - 2026-01-08 - Result Type Error Handling
 
 ### Added - Exception Chaining (`raise from`)

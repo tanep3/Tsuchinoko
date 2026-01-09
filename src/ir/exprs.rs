@@ -95,6 +95,13 @@ pub enum IrExpr {
         iter: Box<IrExpr>,
         condition: Option<Box<IrExpr>>,
     },
+    /// セット内包表記 {elt for target in iter if condition} (V1.6.0)
+    SetComp {
+        elt: Box<IrExpr>,
+        target: String,
+        iter: Box<IrExpr>,
+        condition: Option<Box<IrExpr>>,
+    },
     /// 辞書内包表記 {k: v for target in iter if condition} (V1.3.0)
     DictComp {
         key: Box<IrExpr>,
@@ -166,6 +173,12 @@ pub enum IrExpr {
     StructConstruct {
         name: String,
         fields: Vec<(String, IrExpr)>,
+    },
+    /// V1.6.0: DynamicValue でラップ (isinstance 対応)
+    DynamicWrap {
+        enum_name: String, // "DynamicValue"
+        variant: String,   // "Int", "Str", etc.
+        value: Box<IrExpr>,
     },
 }
 

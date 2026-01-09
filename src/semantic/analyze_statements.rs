@@ -360,6 +360,47 @@ impl SemanticAnalyzer {
                     // Try to infer types if possible, otherwise Unknown
                     // If value is a call, we might not know the return type yet without a better symbol table
                     let result_type = self.infer_type(value);
+
+                    // V1.6.0 FT-008: PyO3 タプルアンパッキング
+                    // Type::Any (PyO3 戻り値) の場合は、個別のインデックスアクセスに展開
+                    if matches!(result_type, Type::Any) {
+                        let mut nodes = Vec::new();
+
+                        // まず一時変数に結果を格納
+                        let temp_var = "_tuple_result".to_string();
+                        nodes.push(IrNode::VarDecl {
+                            name: temp_var.clone(),
+                            ty: Type::Any,
+                            mutable: false,
+                            init: Some(Box::new(ir_value)),
+                        });
+
+                        // 各要素をインデックスアクセスで取得
+                        for (i, target) in targets.iter().enumerate() {
+                            self.scope.define(target, Type::Any, false);
+                            let index_access = IrExpr::MethodCall {
+                                target_type: Type::Any,
+                                target: Box::new(IrExpr::Index {
+                                    target: Box::new(IrExpr::Var(temp_var.clone())),
+                                    index: Box::new(IrExpr::Cast {
+                                        target: Box::new(IrExpr::IntLit(i as i64)),
+                                        ty: "usize".to_string(),
+                                    }),
+                                }),
+                                method: "clone".to_string(),
+                                args: vec![],
+                            };
+                            nodes.push(IrNode::VarDecl {
+                                name: target.clone(),
+                                ty: Type::Any,
+                                mutable: false,
+                                init: Some(Box::new(index_access)),
+                            });
+                        }
+
+                        return Ok(IrNode::Sequence(nodes));
+                    }
+
                     let elem_types = if let Type::Tuple(types) = result_type {
                         if types.len() == targets.len() {
                             types
@@ -529,6 +570,9 @@ impl SemanticAnalyzer {
                     // For variadic parameters (*args), wrap in Vec<T>
                     let ty = if p.variadic {
                         Type::List(Box::new(base_ty))
+                    // V1.6.0 FT-006: kwargs (**kwargs) は HashMap<String, serde_json::Value>
+                    } else if p.is_kwargs {
+                        Type::Dict(Box::new(Type::String), Box::new(Type::Any))
                     } else {
                         base_ty
                     };
@@ -736,11 +780,95 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                // V1.6.0 FT-005: Check for isinstance pattern: if isinstance(x, T): ...
+                if let Some((var_name, checked_type)) = self.extract_isinstance_check(condition) {
+                    // Collect all isinstance arms from if-elif-else chain
+                    let mut arms: Vec<crate::ir::nodes::MatchArm> = Vec::new();
+
+                    // First arm from if condition
+                    self.scope.push();
+                    let variant = self.type_to_dynamic_variant(&checked_type);
+                    self.scope.define(&var_name, checked_type.clone(), false);
+                    let body: Vec<IrNode> = then_body
+                        .iter()
+                        .filter_map(|s| self.analyze_stmt(s).ok())
+                        .collect();
+                    self.scope.pop();
+
+                    arms.push(crate::ir::nodes::MatchArm {
+                        variant,
+                        binding: var_name.clone(),
+                        body,
+                    });
+
+                    // Check elif clauses for more isinstance checks
+                    for (elif_cond, elif_body) in elif_clauses {
+                        if let Some((_elif_var, elif_type)) =
+                            self.extract_isinstance_check(elif_cond)
+                        {
+                            self.scope.push();
+                            let variant = self.type_to_dynamic_variant(&elif_type);
+                            self.scope.define(&var_name, elif_type, false);
+                            let body: Vec<IrNode> = elif_body
+                                .iter()
+                                .filter_map(|s| self.analyze_stmt(s).ok())
+                                .collect();
+                            self.scope.pop();
+
+                            arms.push(crate::ir::nodes::MatchArm {
+                                variant,
+                                binding: var_name.clone(),
+                                body,
+                            });
+                        }
+                    }
+
+                    // If there's an else clause, add catch-all arm
+                    if let Some(else_stmts) = else_body {
+                        self.scope.push();
+                        let body: Vec<IrNode> = else_stmts
+                            .iter()
+                            .filter_map(|s| self.analyze_stmt(s).ok())
+                            .collect();
+                        self.scope.pop();
+
+                        // Add "other" variant for catch-all
+                        arms.push(crate::ir::nodes::MatchArm {
+                            variant: "_".to_string(),
+                            binding: "other".to_string(),
+                            body,
+                        });
+                    }
+
+                    return Ok(IrNode::Match {
+                        value: IrExpr::Var(var_name),
+                        arms,
+                    });
+                }
+
                 // Check for type narrowing pattern: `if x is None:` or `if x is not None:`
                 // Extract variable name and narrowing direction
                 let narrowing_info = self.extract_none_check(condition);
 
                 let ir_cond = self.analyze_expr(condition)?;
+
+                // V1.6.0 FT-008: Type::Any を条件式で使用する場合、as_bool().unwrap_or(false) に変換
+                let cond_ty = self.infer_type(condition);
+                let ir_cond = if matches!(cond_ty, Type::Any) {
+                    IrExpr::MethodCall {
+                        target_type: Type::Any,
+                        target: Box::new(IrExpr::MethodCall {
+                            target_type: Type::Any,
+                            target: Box::new(ir_cond),
+                            method: "as_bool".to_string(),
+                            args: vec![],
+                        }),
+                        method: "unwrap_or".to_string(),
+                        args: vec![IrExpr::BoolLit(false)],
+                    }
+                } else {
+                    ir_cond
+                };
 
                 // Analyze then block with narrowing (if applicable)
                 self.scope.push();
@@ -971,17 +1099,31 @@ impl SemanticAnalyzer {
             }
             Stmt::ClassDef {
                 name,
+                bases,
                 fields,
                 methods,
             } => {
                 // Convert AST fields to IR fields with types
-                let ir_fields: Vec<(String, Type)> = fields
+                let mut ir_fields: Vec<(String, Type)> = fields
                     .iter()
                     .map(|f| {
                         let ty = self.type_from_hint(&f.type_hint);
                         (f.name.clone(), ty)
                     })
                     .collect();
+
+                // V1.6.0: If class has bases, add "base" field for composition
+                let base_class = if !bases.is_empty() {
+                    // For now, support single inheritance only
+                    let parent_name = &bases[0];
+                    // Add "base" field of parent type
+                    ir_fields.insert(0, ("base".to_string(), Type::Struct(parent_name.clone())));
+                    // V1.6.0: Register inheritance relationship
+                    self.struct_bases.insert(name.clone(), parent_name.clone());
+                    Some(parent_name.clone())
+                } else {
+                    None
+                };
 
                 // Save field types for constructor type checking
                 self.struct_field_types
@@ -1008,6 +1150,7 @@ impl SemanticAnalyzer {
                 let mut result_nodes = vec![IrNode::StructDef {
                     name: name.clone(),
                     fields: ir_fields.clone(),
+                    base: base_class.clone(),
                 }];
 
                 if !methods.is_empty() {
@@ -1041,6 +1184,8 @@ impl SemanticAnalyzer {
 
                         // Analyze method body with self in scope
                         self.scope.push();
+                        // V1.6.0: Set current class base for self.field -> self.base.field transform
+                        self.current_class_base = base_class.clone();
                         // Define self as this struct type
                         self.scope.define("self", Type::Struct(name.clone()), false);
                         // Define struct fields as self.field_name for type inference
@@ -1058,6 +1203,22 @@ impl SemanticAnalyzer {
                                 false,
                             );
                         }
+                        // V1.6.0: Also register parent fields as self.field (for inheritance)
+                        if let Some(ref parent) = base_class {
+                            if let Some(parent_fields) =
+                                self.struct_field_types.get(parent).cloned()
+                            {
+                                for (pf_name, pf_ty) in parent_fields {
+                                    if pf_name != "base" {
+                                        self.scope.define(
+                                            &format!("self.{pf_name}"),
+                                            pf_ty.clone(),
+                                            false,
+                                        );
+                                    }
+                                }
+                            }
+                        }
                         // Define method params
                         for (p_name, p_ty) in &ir_params {
                             self.scope.define(p_name, p_ty.clone(), false);
@@ -1066,6 +1227,9 @@ impl SemanticAnalyzer {
                         // V1.5.2: Save and reset may_raise flag for this method
                         let old_may_raise = self.current_func_may_raise;
                         self.current_func_may_raise = false;
+                        // FIX: Save and set current_return_type for return value coercion
+                        let old_return_type = self.current_return_type.take();
+                        self.current_return_type = Some(ret_ty.clone());
 
                         let ir_body: Vec<IrNode> = method
                             .body
@@ -1073,9 +1237,10 @@ impl SemanticAnalyzer {
                             .map(|s| self.analyze_stmt(s))
                             .collect::<Result<Vec<_>, _>>()?;
 
-                        // Capture method's may_raise status
+                        // Capture method's may_raise status and restore state
                         let method_may_raise = self.current_func_may_raise;
                         self.current_func_may_raise = old_may_raise;
+                        self.current_return_type = old_return_type;
 
                         self.scope.pop_without_promotion();
 
@@ -1084,8 +1249,18 @@ impl SemanticAnalyzer {
                             .iter()
                             .any(|node| matches!(node, IrNode::FieldAssign { .. }));
 
+                        // V1.6.0 FT-003: @property setter -> set_xxx メソッドに変換
+                        let method_name = if let Some(ref prop_name) = method.setter_for {
+                            format!("set_{}", prop_name)
+                        } else {
+                            method.name.clone()
+                        };
+
+                        // V1.6.0 FT-003: setter は &mut self を取る
+                        let takes_mut_self = takes_mut_self || method.setter_for.is_some();
+
                         ir_methods.push(IrNode::MethodDecl {
-                            name: method.name.clone(),
+                            name: method_name,
                             params: ir_params,
                             ret: ret_ty,
                             body: ir_body,
@@ -1232,7 +1407,97 @@ impl SemanticAnalyzer {
                     items: items.clone(),
                 })
             }
+            // V1.6.0: with statement -> scoped block with variable binding
+            Stmt::With {
+                context_expr,
+                optional_vars,
+                body,
+            } => {
+                // V1.6.0: Transform open() calls to File::open/create
+                // open("path", "r") -> File::open("path")?
+                // open("path", "w") -> File::create("path")?
+                let ir_context = self.transform_with_context(context_expr)?;
+
+                // Analyze body statements
+                let ir_body: Vec<IrNode> = body
+                    .iter()
+                    .map(|s| self.analyze_stmt(s))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                // Create a block with optional variable binding
+                if let Some(var_name) = optional_vars {
+                    // with EXPR as NAME: -> { let NAME = EXPR; BODY }
+                    let decl = IrNode::VarDecl {
+                        name: var_name.clone(),
+                        ty: Type::Unknown, // Type inference will determine
+                        init: Some(Box::new(ir_context)),
+                        mutable: true, // Files need to be mutable for write operations
+                    };
+
+                    let mut block_body = vec![decl];
+                    block_body.extend(ir_body);
+
+                    Ok(IrNode::Block { stmts: block_body })
+                } else {
+                    // with EXPR: -> { EXPR; BODY }
+                    let expr_stmt = IrNode::Expr(ir_context);
+                    let mut block_body = vec![expr_stmt];
+                    block_body.extend(ir_body);
+
+                    Ok(IrNode::Block { stmts: block_body })
+                }
+            }
         }
+    }
+
+    /// V1.6.0: Transform with statement context expression
+    /// Converts Python's open() to Rust's File::open/create
+    fn transform_with_context(&mut self, expr: &Expr) -> Result<IrExpr, TsuchinokoError> {
+        // Check for open() call
+        if let Expr::Call {
+            func,
+            args,
+            kwargs: _,
+        } = expr
+        {
+            if let Expr::Ident(func_name) = func.as_ref() {
+                if func_name == "open" && !args.is_empty() {
+                    // Get the file path
+                    let path = self.analyze_expr(&args[0])?;
+
+                    // Determine mode: "r" (default), "w", "a", etc.
+                    let mode = if args.len() > 1 {
+                        if let Expr::StringLiteral(m) = &args[1] {
+                            m.as_str()
+                        } else {
+                            "r"
+                        }
+                    } else {
+                        "r"
+                    };
+
+                    // Transform based on mode
+                    let (struct_name, method_name) = match mode {
+                        "w" | "w+" | "wb" => ("File", "create"),
+                        "a" | "a+" | "ab" => ("File", "options"), // append needs OpenOptions
+                        _ => ("File", "open"),                    // "r", "r+", "rb" -> open
+                    };
+
+                    // Generate: File::open(path)? or File::create(path)?
+                    return Ok(IrExpr::Unwrap(Box::new(IrExpr::Call {
+                        func: Box::new(IrExpr::RawCode(format!(
+                            "{}::{}",
+                            struct_name, method_name
+                        ))),
+                        args: vec![path],
+                        callee_may_raise: true,
+                    })));
+                }
+            }
+        }
+
+        // Fallback: just analyze the expression normally
+        self.analyze_expr(expr)
     }
 }
 
