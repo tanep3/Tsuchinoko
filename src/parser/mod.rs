@@ -278,6 +278,14 @@ pub fn parse(source: &str) -> Result<Program, TsuchinokoError> {
             continue;
         }
 
+        // V1.6.0: Try to parse with statement
+        if line.starts_with("with ") {
+            let (stmt, consumed) = parse_with_stmt(&lines, i)?;
+            statements.push(stmt);
+            i += consumed;
+            continue;
+        }
+
         // Try to parse single-line statement
         if let Some(stmt) = parse_line(line, i + 1)? {
             statements.push(stmt);
@@ -341,6 +349,53 @@ fn parse_try_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchin
             except_clauses,
             else_body,
             finally_body,
+        },
+        total_consumed,
+    ))
+}
+
+/// V1.6.0: Parse a with statement: with EXPR as NAME:
+fn parse_with_stmt(lines: &[&str], start: usize) -> Result<(Stmt, usize), TsuchinokoError> {
+    let line = lines[start].trim();
+    let line_num = start + 1;
+
+    // Remove "with " prefix and trailing ":"
+    let content = line
+        .strip_prefix("with ")
+        .ok_or_else(|| TsuchinokoError::ParseError {
+            line: line_num,
+            message: "Expected 'with' statement".to_string(),
+        })?
+        .trim()
+        .strip_suffix(':')
+        .ok_or_else(|| TsuchinokoError::ParseError {
+            line: line_num,
+            message: "Expected ':' at end of with statement".to_string(),
+        })?
+        .trim();
+
+    // Parse "EXPR as NAME" or just "EXPR"
+    let (expr_str, optional_vars) = if let Some(as_pos) = content.rfind(" as ") {
+        let expr_part = content[..as_pos].trim();
+        let name = content[as_pos + 4..].trim().to_string();
+        (expr_part, Some(name))
+    } else {
+        (content, None)
+    };
+
+    // Parse the context expression
+    let context_expr = parse_expr(expr_str, line_num)?;
+
+    // Parse body block
+    let (body, body_consumed) = parse_block(lines, start + 1)?;
+
+    let total_consumed = 1 + body_consumed;
+
+    Ok((
+        Stmt::With {
+            context_expr: Box::new(context_expr),
+            optional_vars,
+            body,
         },
         total_consumed,
     ))
@@ -1173,6 +1228,14 @@ fn parse_block(lines: &[&str], start: usize) -> Result<(Vec<Stmt>, usize), Tsuch
         // Parse try-except
         if line_trim.starts_with("try:") || line_trim == "try:" {
             let (stmt, consumed) = parse_try_stmt(lines, i)?;
+            statements.push(stmt);
+            i += consumed;
+            continue;
+        }
+
+        // V1.6.0: Parse with statement
+        if line_trim.starts_with("with ") {
+            let (stmt, consumed) = parse_with_stmt(lines, i)?;
             statements.push(stmt);
             i += consumed;
             continue;

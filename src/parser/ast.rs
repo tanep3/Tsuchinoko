@@ -249,6 +249,12 @@ pub enum Stmt {
     Continue,
     /// Assert statement (V1.3.0)
     Assert { test: Expr, msg: Option<Expr> },
+    /// With statement (V1.6.0)
+    With {
+        context_expr: Box<Expr>,
+        optional_vars: Option<String>,  // as NAME
+        body: Vec<Stmt>,
+    },
 }
 
 /// Function parameter with optional default value

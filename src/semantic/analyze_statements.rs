@@ -1304,7 +1304,89 @@ impl SemanticAnalyzer {
                     items: items.clone(),
                 })
             }
+            // V1.6.0: with statement -> scoped block with variable binding
+            Stmt::With {
+                context_expr,
+                optional_vars,
+                body,
+            } => {
+                // V1.6.0: Transform open() calls to File::open/create
+                // open("path", "r") -> File::open("path")?
+                // open("path", "w") -> File::create("path")?
+                let ir_context = self.transform_with_context(context_expr)?;
+                
+                // Analyze body statements
+                let ir_body: Vec<IrNode> = body
+                    .iter()
+                    .map(|s| self.analyze_stmt(s))
+                    .collect::<Result<Vec<_>, _>>()?;
+                
+                // Create a block with optional variable binding
+                if let Some(var_name) = optional_vars {
+                    // with EXPR as NAME: -> { let NAME = EXPR; BODY }
+                    let decl = IrNode::VarDecl {
+                        name: var_name.clone(),
+                        ty: Type::Unknown, // Type inference will determine
+                        init: Some(Box::new(ir_context)),
+                        mutable: true, // Files need to be mutable for write operations
+                    };
+                    
+                    let mut block_body = vec![decl];
+                    block_body.extend(ir_body);
+                    
+                    Ok(IrNode::Block { stmts: block_body })
+                } else {
+                    // with EXPR: -> { EXPR; BODY }
+                    let expr_stmt = IrNode::Expr(ir_context);
+                    let mut block_body = vec![expr_stmt];
+                    block_body.extend(ir_body);
+                    
+                    Ok(IrNode::Block { stmts: block_body })
+                }
+            }
         }
+    }
+
+    /// V1.6.0: Transform with statement context expression
+    /// Converts Python's open() to Rust's File::open/create
+    fn transform_with_context(&mut self, expr: &Expr) -> Result<IrExpr, TsuchinokoError> {
+        // Check for open() call
+        if let Expr::Call { func, args, kwargs: _ } = expr {
+            if let Expr::Ident(func_name) = func.as_ref() {
+                if func_name == "open" && !args.is_empty() {
+                    // Get the file path
+                    let path = self.analyze_expr(&args[0])?;
+                    
+                    // Determine mode: "r" (default), "w", "a", etc.
+                    let mode = if args.len() > 1 {
+                        if let Expr::StringLiteral(m) = &args[1] {
+                            m.as_str()
+                        } else {
+                            "r"
+                        }
+                    } else {
+                        "r"
+                    };
+                    
+                    // Transform based on mode
+                    let (struct_name, method_name) = match mode {
+                        "w" | "w+" | "wb" => ("File", "create"),
+                        "a" | "a+" | "ab" => ("File", "options"), // append needs OpenOptions
+                        _ => ("File", "open"), // "r", "r+", "rb" -> open
+                    };
+                    
+                    // Generate: File::open(path)? or File::create(path)?
+                    return Ok(IrExpr::Unwrap(Box::new(IrExpr::Call {
+                        func: Box::new(IrExpr::RawCode(format!("{}::{}", struct_name, method_name))),
+                        args: vec![path],
+                        callee_may_raise: true,
+                    })));
+                }
+            }
+        }
+        
+        // Fallback: just analyze the expression normally
+        self.analyze_expr(expr)
     }
 }
 

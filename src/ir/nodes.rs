@@ -154,6 +154,10 @@ pub enum IrNode {
         /// For "from module import a, b, c" - contains ["a", "b", "c"]
         items: Option<Vec<String>>,
     },
+    /// V1.6.0: スコープブロック (with 文から生成)
+    Block {
+        stmts: Vec<IrNode>,
+    },
 }
 
 #[cfg(test)]
