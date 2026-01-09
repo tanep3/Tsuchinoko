@@ -1143,8 +1143,18 @@ impl SemanticAnalyzer {
                             .iter()
                             .any(|node| matches!(node, IrNode::FieldAssign { .. }));
 
+                        // V1.6.0 FT-003: @property setter -> set_xxx メソッドに変換
+                        let method_name = if let Some(ref prop_name) = method.setter_for {
+                            format!("set_{}", prop_name)
+                        } else {
+                            method.name.clone()
+                        };
+
+                        // V1.6.0 FT-003: setter は &mut self を取る
+                        let takes_mut_self = takes_mut_self || method.setter_for.is_some();
+
                         ir_methods.push(IrNode::MethodDecl {
-                            name: method.name.clone(),
+                            name: method_name,
                             params: ir_params,
                             ret: ret_ty,
                             body: ir_body,

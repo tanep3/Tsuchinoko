@@ -510,7 +510,7 @@ fn parse_class_body(
             }
             let method_line = lines[i].trim();
             if method_line.starts_with("def ") {
-                let (method, consumed) = parse_method_def(lines, i, true)?;
+                let (method, consumed) = parse_method_def(lines, i, true, false, None)?;
                 methods.push(method);
                 i += consumed;
             } else {
@@ -522,9 +522,61 @@ fn parse_class_body(
             continue;
         }
 
+        // V1.6.0: Check for @property decorator
+        if line_trim == "@property" {
+            i += 1;
+            if i >= lines.len() {
+                return Err(TsuchinokoError::ParseError {
+                    line: i,
+                    message: "Expected method after @property".to_string(),
+                });
+            }
+            let method_line = lines[i].trim();
+            if method_line.starts_with("def ") {
+                let (method, consumed) = parse_method_def(lines, i, false, true, None)?;
+                methods.push(method);
+                i += consumed;
+            } else {
+                return Err(TsuchinokoError::ParseError {
+                    line: i + 1,
+                    message: "Expected method definition after @property".to_string(),
+                });
+            }
+            continue;
+        }
+
+        // V1.6.0: Check for @name.setter decorator (e.g., @radius.setter)
+        if line_trim.starts_with("@") && line_trim.ends_with(".setter") {
+            let property_name = line_trim
+                .strip_prefix("@")
+                .unwrap()
+                .strip_suffix(".setter")
+                .unwrap()
+                .to_string();
+            i += 1;
+            if i >= lines.len() {
+                return Err(TsuchinokoError::ParseError {
+                    line: i,
+                    message: format!("Expected method after @{property_name}.setter"),
+                });
+            }
+            let method_line = lines[i].trim();
+            if method_line.starts_with("def ") {
+                let (method, consumed) = parse_method_def(lines, i, false, false, Some(property_name))?;
+                methods.push(method);
+                i += consumed;
+            } else {
+                return Err(TsuchinokoError::ParseError {
+                    line: i + 1,
+                    message: "Expected method definition after setter decorator".to_string(),
+                });
+            }
+            continue;
+        }
+
         // Check for method definition
         if line_trim.starts_with("def ") {
-            let (method, consumed) = parse_method_def(lines, i, false)?;
+            let (method, consumed) = parse_method_def(lines, i, false, false, None)?;
 
             // Extract fields from __init__ method
             if method.name == "__init__" {
@@ -604,6 +656,8 @@ fn parse_method_def(
     lines: &[&str],
     start: usize,
     is_static: bool,
+    is_property: bool,
+    setter_for: Option<String>,
 ) -> Result<(MethodDef, usize), TsuchinokoError> {
     let line = lines[start].trim();
     let line_num = start + 1;
@@ -686,6 +740,8 @@ fn parse_method_def(
             return_type,
             body,
             is_static,
+            is_property,
+            setter_for,
         },
         1 + body_consumed,
     ))

@@ -272,6 +272,27 @@ impl SemanticAnalyzer {
                 let ir_left = self.analyze_expr(left)?;
                 let ir_right = self.analyze_expr(right)?;
                 let ir_op = self.convert_binop(op);
+
+                // V1.6.0: 比較演算で左辺がfloat、右辺がintリテラルの場合に右辺をfloatに変換
+                // Python: `value < 0` (value: float) → Rust: `value < 0.0f64`
+                let ir_right = if matches!(
+                    op,
+                    AstBinOp::Lt | AstBinOp::Gt | AstBinOp::LtEq | AstBinOp::GtEq | AstBinOp::Eq | AstBinOp::NotEq
+                ) {
+                    let left_ty = self.infer_type(left);
+                    if matches!(left_ty, Type::Float) {
+                        if let IrExpr::IntLit(n) = ir_right {
+                            IrExpr::FloatLit(n as f64)
+                        } else {
+                            ir_right
+                        }
+                    } else {
+                        ir_right
+                    }
+                } else {
+                    ir_right
+                };
+
                 Ok(IrExpr::BinOp {
                     left: Box::new(ir_left),
                     op: ir_op,

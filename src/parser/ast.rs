@@ -283,7 +283,9 @@ pub struct MethodDef {
     pub params: Vec<Param>, // Excludes 'self'
     pub return_type: Option<TypeHint>,
     pub body: Vec<Stmt>,
-    pub is_static: bool, // @staticmethod
+    pub is_static: bool,        // @staticmethod
+    pub is_property: bool,      // V1.6.0: @property (getter)
+    pub setter_for: Option<String>, // V1.6.0: @name.setter (setter for property "name")
 }
 
 /// Except clause (V1.5.0)
