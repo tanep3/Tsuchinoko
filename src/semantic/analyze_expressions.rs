@@ -277,7 +277,12 @@ impl SemanticAnalyzer {
                 // Python: `value < 0` (value: float) → Rust: `value < 0.0f64`
                 let ir_right = if matches!(
                     op,
-                    AstBinOp::Lt | AstBinOp::Gt | AstBinOp::LtEq | AstBinOp::GtEq | AstBinOp::Eq | AstBinOp::NotEq
+                    AstBinOp::Lt
+                        | AstBinOp::Gt
+                        | AstBinOp::LtEq
+                        | AstBinOp::GtEq
+                        | AstBinOp::Eq
+                        | AstBinOp::NotEq
                 ) {
                     let left_ty = self.infer_type(left);
                     if matches!(left_ty, Type::Float) {
@@ -656,7 +661,12 @@ impl SemanticAnalyzer {
                 // V1.6.0 FT-002: Handle super().method() -> self.base.method()
                 if let Expr::Attribute { value, attr } = func.as_ref() {
                     // Check if value is super() call
-                    if let Expr::Call { func: super_func, args: super_args, .. } = value.as_ref() {
+                    if let Expr::Call {
+                        func: super_func,
+                        args: super_args,
+                        ..
+                    } = value.as_ref()
+                    {
                         if let Expr::Ident(super_name) = super_func.as_ref() {
                             if super_name == "super" && super_args.is_empty() {
                                 // This is super().method(...) pattern
@@ -665,13 +675,13 @@ impl SemanticAnalyzer {
                                     .iter()
                                     .map(|a| self.analyze_expr(a))
                                     .collect::<Result<Vec<_>, _>>()?;
-                                
+
                                 // self.base
                                 let base_access = IrExpr::FieldAccess {
                                     target: Box::new(IrExpr::Var("self".to_string())),
                                     field: "base".to_string(),
                                 };
-                                
+
                                 // self.base.method(args)
                                 return Ok(IrExpr::MethodCall {
                                     target_type: Type::Unknown,
@@ -954,92 +964,96 @@ impl SemanticAnalyzer {
 
                             // Build field list with names and values
                             // V1.5.2: If no arguments provided but fields exist, use default values from __init__
-                            let fields: Vec<(String, IrExpr)> =
-                                if ir_args.is_empty() && !field_names.is_empty() {
-                                    // Get default values from struct_field_defaults (populated from __init__)
-                                    let defaults = self
-                                        .struct_field_defaults
-                                        .get(name)
-                                        .cloned()
-                                        .unwrap_or_default();
-                                    let defaults_map: std::collections::HashMap<_, _> =
-                                        defaults.into_iter().collect();
+                            let fields: Vec<(String, IrExpr)> = if ir_args.is_empty()
+                                && !field_names.is_empty()
+                            {
+                                // Get default values from struct_field_defaults (populated from __init__)
+                                let defaults = self
+                                    .struct_field_defaults
+                                    .get(name)
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let defaults_map: std::collections::HashMap<_, _> =
+                                    defaults.into_iter().collect();
 
-                                    field_types
+                                field_types
+                                    .iter()
+                                    .map(|(field_name, ty)| {
+                                        // Use actual default value from __init__ if available
+                                        let default_val =
+                                            if let Some(ir) = defaults_map.get(field_name) {
+                                                ir.clone()
+                                            } else {
+                                                // Fallback to type-based default (should rarely happen)
+                                                match ty {
+                                                    Type::Int => IrExpr::IntLit(0),
+                                                    Type::Float => IrExpr::FloatLit(0.0),
+                                                    Type::Bool => IrExpr::BoolLit(false),
+                                                    Type::String => IrExpr::MethodCall {
+                                                        target_type: Type::Unknown,
+                                                        target: Box::new(IrExpr::StringLit(
+                                                            String::new(),
+                                                        )),
+                                                        method: "to_string".to_string(),
+                                                        args: vec![],
+                                                    },
+                                                    _ => IrExpr::IntLit(0),
+                                                }
+                                            };
+                                        (field_name.clone(), default_val)
+                                    })
+                                    .collect()
+                            } else if let Some(parent_name) = self.struct_bases.get(name).cloned() {
+                                // V1.6.0: If this struct has a base class, transform base field
+                                // Dog("Rex", "Labrador") -> Dog { base: Animal { name: "Rex" }, breed: "Labrador" }
+                                if let Some(parent_field_types) =
+                                    self.struct_field_types.get(&parent_name).cloned()
+                                {
+                                    // Get parent field names (excluding base)
+                                    let parent_fields: Vec<String> = parent_field_types
                                         .iter()
-                                        .map(|(field_name, ty)| {
-                                            // Use actual default value from __init__ if available
-                                            let default_val =
-                                                if let Some(ir) = defaults_map.get(field_name) {
-                                                    ir.clone()
-                                                } else {
-                                                    // Fallback to type-based default (should rarely happen)
-                                                    match ty {
-                                                        Type::Int => IrExpr::IntLit(0),
-                                                        Type::Float => IrExpr::FloatLit(0.0),
-                                                        Type::Bool => IrExpr::BoolLit(false),
-                                                        Type::String => IrExpr::MethodCall {
-                                                            target_type: Type::Unknown,
-                                                            target: Box::new(IrExpr::StringLit(
-                                                                String::new(),
-                                                            )),
-                                                            method: "to_string".to_string(),
-                                                            args: vec![],
-                                                        },
-                                                        _ => IrExpr::IntLit(0),
-                                                    }
-                                                };
-                                            (field_name.clone(), default_val)
-                                        })
-                                        .collect()
-                                } else if let Some(parent_name) = self.struct_bases.get(name).cloned() {
-                                    // V1.6.0: If this struct has a base class, transform base field
-                                    // Dog("Rex", "Labrador") -> Dog { base: Animal { name: "Rex" }, breed: "Labrador" }
-                                    if let Some(parent_field_types) = self.struct_field_types.get(&parent_name).cloned() {
-                                        // Get parent field names (excluding base)
-                                        let parent_fields: Vec<String> = parent_field_types
-                                            .iter()
-                                            .filter(|(n, _)| n != "base")
-                                            .map(|(n, _)| n.clone())
-                                            .collect();
-                                        let parent_count = parent_fields.len();
-                                        
-                                        // Split args: first N go to parent, rest to child
-                                        let (parent_args, child_args): (Vec<_>, Vec<_>) = ir_args
+                                        .filter(|(n, _)| n != "base")
+                                        .map(|(n, _)| n.clone())
+                                        .collect();
+                                    let parent_count = parent_fields.len();
+
+                                    // Split args: first N go to parent, rest to child
+                                    let (parent_args, child_args): (Vec<_>, Vec<_>) = ir_args
+                                        .into_iter()
+                                        .enumerate()
+                                        .partition(|(i, _)| *i < parent_count);
+
+                                    // Create parent struct
+                                    let parent_struct = IrExpr::StructConstruct {
+                                        name: parent_name.clone(),
+                                        fields: parent_fields
                                             .into_iter()
-                                            .enumerate()
-                                            .partition(|(i, _)| *i < parent_count);
-                                        
-                                        // Create parent struct
-                                        let parent_struct = IrExpr::StructConstruct {
-                                            name: parent_name.clone(),
-                                            fields: parent_fields
-                                                .into_iter()
-                                                .zip(parent_args.into_iter().map(|(_, v)| v))
-                                                .collect(),
-                                        };
-                                        
-                                        // Build child fields with base = parent struct
-                                        let mut result_fields = vec![("base".to_string(), parent_struct)];
-                                        
-                                        // Child's own fields (excluding base)
-                                        let child_field_names: Vec<String> = field_names
-                                            .iter()
-                                            .filter(|n| *n != "base")
-                                            .cloned()
-                                            .collect();
-                                        result_fields.extend(
-                                            child_field_names
-                                                .into_iter()
-                                                .zip(child_args.into_iter().map(|(_, v)| v)),
-                                        );
-                                        result_fields
-                                    } else {
-                                        field_names.into_iter().zip(ir_args).collect()
-                                    }
+                                            .zip(parent_args.into_iter().map(|(_, v)| v))
+                                            .collect(),
+                                    };
+
+                                    // Build child fields with base = parent struct
+                                    let mut result_fields =
+                                        vec![("base".to_string(), parent_struct)];
+
+                                    // Child's own fields (excluding base)
+                                    let child_field_names: Vec<String> = field_names
+                                        .iter()
+                                        .filter(|n| *n != "base")
+                                        .cloned()
+                                        .collect();
+                                    result_fields.extend(
+                                        child_field_names
+                                            .into_iter()
+                                            .zip(child_args.into_iter().map(|(_, v)| v)),
+                                    );
+                                    result_fields
                                 } else {
                                     field_names.into_iter().zip(ir_args).collect()
-                                };
+                                }
+                            } else {
+                                field_names.into_iter().zip(ir_args).collect()
+                            };
 
                             return Ok(IrExpr::StructConstruct {
                                 name: name.clone(),

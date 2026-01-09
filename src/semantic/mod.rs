@@ -752,16 +752,17 @@ impl SemanticAnalyzer {
         }
         // V1.6.0 FT-005: If isinstance was used, generate DynamicValue enum at the top
         if !self.isinstance_types.is_empty() {
-            let variants: Vec<(String, Type)> = self.isinstance_types
+            let variants: Vec<(String, Type)> = self
+                .isinstance_types
                 .iter()
                 .map(|ty| (self.type_to_dynamic_variant(ty), ty.clone()))
                 .collect();
-            
+
             let enum_def = IrNode::DynamicEnumDef {
                 name: "DynamicValue".to_string(),
                 variants,
             };
-            
+
             // Insert enum definition at the beginning
             other_decls.insert(0, enum_def);
         }
@@ -1509,7 +1510,10 @@ impl SemanticAnalyzer {
                                 "float" => Some(Type::Float),
                                 "bool" => Some(Type::Bool),
                                 "list" => Some(Type::List(Box::new(Type::Unknown))),
-                                "dict" => Some(Type::Dict(Box::new(Type::Unknown), Box::new(Type::Unknown))),
+                                "dict" => Some(Type::Dict(
+                                    Box::new(Type::Unknown),
+                                    Box::new(Type::Unknown),
+                                )),
                                 _ => None,
                             },
                             _ => None,

@@ -110,7 +110,7 @@ pub enum IrNode {
     StructDef {
         name: String,
         fields: Vec<(String, Type)>,
-        base: Option<String>,  // V1.6.0: コンポジション用の親クラス名
+        base: Option<String>, // V1.6.0: コンポジション用の親クラス名
     },
     /// implブロック
     ImplBlock {
@@ -157,19 +157,14 @@ pub enum IrNode {
         items: Option<Vec<String>>,
     },
     /// V1.6.0: スコープブロック (with 文から生成)
-    Block {
-        stmts: Vec<IrNode>,
-    },
+    Block { stmts: Vec<IrNode> },
     /// V1.6.0: DynamicValue enum 定義 (isinstance 対応)
     DynamicEnumDef {
         name: String,
-        variants: Vec<(String, Type)>,  // (variant_name, inner_type)
+        variants: Vec<(String, Type)>, // (variant_name, inner_type)
     },
     /// V1.6.0: match 式 (isinstance → match 変換)
-    Match {
-        value: IrExpr,
-        arms: Vec<MatchArm>,
-    },
+    Match { value: IrExpr, arms: Vec<MatchArm> },
 }
 
 /// V1.6.0: match 式のアーム

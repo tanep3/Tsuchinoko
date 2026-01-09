@@ -461,7 +461,7 @@ pub fn find_all_comparison_operators_balanced(s: &str) -> Vec<(usize, String)> {
     let mut string_char = ' ';
 
     let chars: Vec<char> = s.chars().collect();
-    
+
     // Operators to detect: ==, !=, >=, <=, >, < (in order of length - longest first)
     let operators = vec!["==", "!=", ">=", "<=", ">", "<"];
 

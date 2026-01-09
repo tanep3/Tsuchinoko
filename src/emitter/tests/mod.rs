@@ -341,6 +341,7 @@ fn test_emit_struct_def() {
     let node = IrNode::StructDef {
         name: "Point".to_string(),
         fields: vec![("x".to_string(), Type::Int), ("y".to_string(), Type::Int)],
+        base: None,
     };
     let result = emit(&[node]);
     assert!(result.contains("struct Point"));

@@ -608,7 +608,7 @@ impl SemanticAnalyzer {
                     Type::Ref(inner) => inner.as_ref(),
                     _ => _target_ty,
                 };
-                
+
                 match inner_ty {
                     // V1.6.0 FT-006: kwargs (Dict<String, Any>) の場合は特殊処理
                     Type::Dict(_, value_ty) if matches!(value_ty.as_ref(), Type::Any) => {
@@ -620,12 +620,12 @@ impl SemanticAnalyzer {
                             // kwargs (HashMap<String, Value>) の場合、get は &str を受け付ける
                             args: vec![key],
                         };
-                        
+
                         if args.len() >= 2 {
                             // get(k, default) -> get(&k).and_then(|v| v.as_T()).unwrap_or(default)
                             let default = self.analyze_expr(&args[1])?;
                             let default_ty = self.infer_type(&args[1]);
-                            
+
                             // Determine the appropriate as_* method based on default type
                             let (as_method, default_ir, result_ty) = match &default_ty {
                                 Type::String => ("as_str", default, Type::String),
@@ -634,16 +634,19 @@ impl SemanticAnalyzer {
                                 Type::Float => ("as_f64", default, Type::Float),
                                 _ => ("as_str", default, Type::String), // default to string
                             };
-                            
+
                             // Build: kwargs.get(&key).and_then(|v| v.as_T()).unwrap_or(default)
                             // For strings: kwargs.get(&key).and_then(|v| v.as_str()).unwrap_or("default").to_string()
                             let and_then_call = IrExpr::MethodCall {
                                 target_type: Type::Unknown,
                                 target: Box::new(get_call),
                                 method: "and_then".to_string(),
-                                args: vec![IrExpr::RawCode(format!("|v: &serde_json::Value| v.{}()", as_method))],
+                                args: vec![IrExpr::RawCode(format!(
+                                    "|v: &serde_json::Value| v.{}()",
+                                    as_method
+                                ))],
                             };
-                            
+
                             let unwrap_call = if matches!(result_ty, Type::String) {
                                 // For string: unwrap_or("default").to_string()
                                 let unwrap = IrExpr::MethodCall {
@@ -666,7 +669,7 @@ impl SemanticAnalyzer {
                                     args: vec![default_ir],
                                 }
                             };
-                            
+
                             Ok(Some(unwrap_call))
                         } else {
                             // get(k) without default - this is less common for kwargs

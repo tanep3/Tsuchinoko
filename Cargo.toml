@@ -1,6 +1,6 @@
 [package]
 name = "tsuchinoko"
-version = "1.5.2"
+version = "1.6.0"
 edition = "2021"
 authors = ["Tane Channel Technology"]
 description = "Python to Rust transpiler"

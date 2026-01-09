@@ -26,24 +26,24 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 - **`yield from`** (generator delegation)
 - **Generator expressions** (`(x for x in items)`)
 
-### Comprehensions
 
-- **Set comprehensions** (`{x for x in items}`)
 
 > [!NOTE]
-> List comprehensions and dict comprehensions are supported.
+> List comprehensions, dict comprehensions, and set comprehensions are supported.
 
 ### Context Managers
 
-- **`with` statement** (context managers)
-- **`__enter__` / `__exit__`** protocol
+- **Custom context managers** (`__enter__` / `__exit__` protocol)
+
+> [!NOTE]
+> Basic `with open(...) as f:` and similar patterns are supported (V1.6.0).
 
 ### Arguments
 
 - **`**kwargs`** (keyword variable-length arguments)
 
 > [!NOTE]
-> `*args` is supported for variadic positional arguments.
+> Both `*args` and `**kwargs` are supported (V1.6.0).
 
 ## Exception Handling
 
@@ -53,16 +53,18 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 
 ### Inheritance & OOP
 
-- **Class inheritance** (except basic struct-like classes)
+- **Multiple inheritance** (more than one base class)
 - **Multiple inheritance**
 - **Abstract base classes** (`abc` module)
 - **Metaclasses**
 
 ### Decorators
 
-- **Decorators** (except `@staticmethod`, `@dataclass`)
-- **Properties** (`@property`, `@property.setter`)
+- **Custom decorators** (except `@staticmethod`, `@dataclass`, `@property`)
 - **Class methods** (`@classmethod`)
+
+> [!NOTE]
+> Single inheritance, `super()`, and `@property` are supported (V1.6.0).
 
 ### Magic Methods
 
@@ -95,8 +97,10 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 - **Object identity**: `id()`, `hash()`
 - **Iteration**: `iter()`, `next()`
 - **Dynamic execution**: `exec()`, `eval()`, `compile()`
-- **Object creation**: `object()`, `super()`
 - **Formatting**: `format()`, `repr()`
+
+> [!NOTE]
+> `isinstance()` and `super()` are supported (V1.6.0).
 - **Memory**: `memoryview()`, `bytearray()`
 
 > [!NOTE]
@@ -104,10 +108,8 @@ This document lists Python features NOT currently supported by Tsuchinoko transp
 
 ## Operators & Expressions
 
-- **Chained comparisons** (`a < b < c`)
-
 > [!NOTE]
-> Single comparisons (`a < b and b < c`) work.
+> Chained comparisons (`a < b < c`) are supported (V1.6.0).
 
 ## Standard Library (Native Transpilation)
 

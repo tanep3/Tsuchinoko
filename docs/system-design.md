@@ -1,8 +1,8 @@
 # Tsuchinoko システム設計書
 
 > **著者**: Tane Channel Technology  
-> **バージョン**: 1.5.2  
-> **最終更新**: 2026-01-08
+> **バージョン**: 1.6.0  
+> **最終更新**: 2026-01-10
 
 ---
 
@@ -312,6 +312,75 @@ find_first_even([1, 2, 3])  # 呼び出し側: [i64]
 ```rust
 fn find_first_even(nums: &[i64]) -> i64 {
     ...
+}
+```
+
+---
+
+### 3.6 V1.6.0 OOP & リソース管理
+
+#### クラス継承 → コンポジション
+
+Pythonの継承を Rust のコンポジション（Has-A関係）で表現。
+
+```mermaid
+flowchart LR
+    subgraph Python
+        P_PARENT[Animal]
+        P_CHILD[Dog extends Animal]
+    end
+    
+    subgraph Rust
+        R_PARENT[struct Animal]
+        R_CHILD["struct Dog { base: Animal }"]
+    end
+    
+    P_PARENT --> R_PARENT
+    P_CHILD --> R_CHILD
+```
+
+| Python | Rust |
+|--------|------|
+| `class Dog(Animal):` | `struct Dog { base: Animal, ... }` |
+| `super().method()` | `self.base.method()` |
+| `self.parent_field` | `self.base.parent_field` |
+
+#### with 文 → RAII スコープ
+
+```python
+with open("file.txt") as f:
+    content = f.read()
+```
+
+↓
+
+```rust
+{
+    let f = File::open("file.txt")?;
+    let content = std::io::read_to_string(&f)?;
+}  // Drop で自動解放
+```
+
+#### isinstance → DynamicValue enum
+
+```python
+if isinstance(x, str):
+    return x.upper()
+elif isinstance(x, int):
+    return x * 2
+```
+
+↓
+
+```rust
+enum DynamicValue {
+    Str(String),
+    Int(i64),
+}
+
+match x {
+    DynamicValue::Str(v) => v.to_uppercase(),
+    DynamicValue::Int(v) => v * 2,
 }
 ```
 

@@ -784,33 +784,37 @@ impl SemanticAnalyzer {
                 if let Some((var_name, checked_type)) = self.extract_isinstance_check(condition) {
                     // Collect all isinstance arms from if-elif-else chain
                     let mut arms: Vec<crate::ir::nodes::MatchArm> = Vec::new();
-                    
+
                     // First arm from if condition
                     self.scope.push();
                     let variant = self.type_to_dynamic_variant(&checked_type);
                     self.scope.define(&var_name, checked_type.clone(), false);
-                    let body: Vec<IrNode> = then_body.iter()
+                    let body: Vec<IrNode> = then_body
+                        .iter()
                         .filter_map(|s| self.analyze_stmt(s).ok())
                         .collect();
                     self.scope.pop();
-                    
+
                     arms.push(crate::ir::nodes::MatchArm {
                         variant,
                         binding: var_name.clone(),
                         body,
                     });
-                    
+
                     // Check elif clauses for more isinstance checks
                     for (elif_cond, elif_body) in elif_clauses {
-                        if let Some((_elif_var, elif_type)) = self.extract_isinstance_check(elif_cond) {
+                        if let Some((_elif_var, elif_type)) =
+                            self.extract_isinstance_check(elif_cond)
+                        {
                             self.scope.push();
                             let variant = self.type_to_dynamic_variant(&elif_type);
                             self.scope.define(&var_name, elif_type, false);
-                            let body: Vec<IrNode> = elif_body.iter()
+                            let body: Vec<IrNode> = elif_body
+                                .iter()
                                 .filter_map(|s| self.analyze_stmt(s).ok())
                                 .collect();
                             self.scope.pop();
-                            
+
                             arms.push(crate::ir::nodes::MatchArm {
                                 variant,
                                 binding: var_name.clone(),
@@ -818,15 +822,16 @@ impl SemanticAnalyzer {
                             });
                         }
                     }
-                    
+
                     // If there's an else clause, add catch-all arm
                     if let Some(else_stmts) = else_body {
                         self.scope.push();
-                        let body: Vec<IrNode> = else_stmts.iter()
+                        let body: Vec<IrNode> = else_stmts
+                            .iter()
                             .filter_map(|s| self.analyze_stmt(s).ok())
                             .collect();
                         self.scope.pop();
-                        
+
                         // Add "other" variant for catch-all
                         arms.push(crate::ir::nodes::MatchArm {
                             variant: "_".to_string(),
@@ -834,7 +839,7 @@ impl SemanticAnalyzer {
                             body,
                         });
                     }
-                    
+
                     return Ok(IrNode::Match {
                         value: IrExpr::Var(var_name),
                         arms,
@@ -846,7 +851,7 @@ impl SemanticAnalyzer {
                 let narrowing_info = self.extract_none_check(condition);
 
                 let ir_cond = self.analyze_expr(condition)?;
-                
+
                 // V1.6.0 FT-008: Type::Any を条件式で使用する場合、as_bool().unwrap_or(false) に変換
                 let cond_ty = self.infer_type(condition);
                 let ir_cond = if matches!(cond_ty, Type::Any) {
@@ -1200,7 +1205,9 @@ impl SemanticAnalyzer {
                         }
                         // V1.6.0: Also register parent fields as self.field (for inheritance)
                         if let Some(ref parent) = base_class {
-                            if let Some(parent_fields) = self.struct_field_types.get(parent).cloned() {
+                            if let Some(parent_fields) =
+                                self.struct_field_types.get(parent).cloned()
+                            {
                                 for (pf_name, pf_ty) in parent_fields {
                                     if pf_name != "base" {
                                         self.scope.define(
@@ -1410,13 +1417,13 @@ impl SemanticAnalyzer {
                 // open("path", "r") -> File::open("path")?
                 // open("path", "w") -> File::create("path")?
                 let ir_context = self.transform_with_context(context_expr)?;
-                
+
                 // Analyze body statements
                 let ir_body: Vec<IrNode> = body
                     .iter()
                     .map(|s| self.analyze_stmt(s))
                     .collect::<Result<Vec<_>, _>>()?;
-                
+
                 // Create a block with optional variable binding
                 if let Some(var_name) = optional_vars {
                     // with EXPR as NAME: -> { let NAME = EXPR; BODY }
@@ -1426,17 +1433,17 @@ impl SemanticAnalyzer {
                         init: Some(Box::new(ir_context)),
                         mutable: true, // Files need to be mutable for write operations
                     };
-                    
+
                     let mut block_body = vec![decl];
                     block_body.extend(ir_body);
-                    
+
                     Ok(IrNode::Block { stmts: block_body })
                 } else {
                     // with EXPR: -> { EXPR; BODY }
                     let expr_stmt = IrNode::Expr(ir_context);
                     let mut block_body = vec![expr_stmt];
                     block_body.extend(ir_body);
-                    
+
                     Ok(IrNode::Block { stmts: block_body })
                 }
             }
@@ -1447,12 +1454,17 @@ impl SemanticAnalyzer {
     /// Converts Python's open() to Rust's File::open/create
     fn transform_with_context(&mut self, expr: &Expr) -> Result<IrExpr, TsuchinokoError> {
         // Check for open() call
-        if let Expr::Call { func, args, kwargs: _ } = expr {
+        if let Expr::Call {
+            func,
+            args,
+            kwargs: _,
+        } = expr
+        {
             if let Expr::Ident(func_name) = func.as_ref() {
                 if func_name == "open" && !args.is_empty() {
                     // Get the file path
                     let path = self.analyze_expr(&args[0])?;
-                    
+
                     // Determine mode: "r" (default), "w", "a", etc.
                     let mode = if args.len() > 1 {
                         if let Expr::StringLiteral(m) = &args[1] {
@@ -1463,24 +1475,27 @@ impl SemanticAnalyzer {
                     } else {
                         "r"
                     };
-                    
+
                     // Transform based on mode
                     let (struct_name, method_name) = match mode {
                         "w" | "w+" | "wb" => ("File", "create"),
                         "a" | "a+" | "ab" => ("File", "options"), // append needs OpenOptions
-                        _ => ("File", "open"), // "r", "r+", "rb" -> open
+                        _ => ("File", "open"),                    // "r", "r+", "rb" -> open
                     };
-                    
+
                     // Generate: File::open(path)? or File::create(path)?
                     return Ok(IrExpr::Unwrap(Box::new(IrExpr::Call {
-                        func: Box::new(IrExpr::RawCode(format!("{}::{}", struct_name, method_name))),
+                        func: Box::new(IrExpr::RawCode(format!(
+                            "{}::{}",
+                            struct_name, method_name
+                        ))),
                         args: vec![path],
                         callee_may_raise: true,
                     })));
                 }
             }
         }
-        
+
         // Fallback: just analyze the expression normally
         self.analyze_expr(expr)
     }

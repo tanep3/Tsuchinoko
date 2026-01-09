@@ -498,10 +498,12 @@ fn parse_class_def(lines: &[&str], start: usize) -> Result<(Stmt, usize), Tsuchi
     let (name, bases) = if let Some(paren_start) = name_and_bases.find('(') {
         // Class with inheritance: class Dog(Animal):
         let class_name = name_and_bases[..paren_start].trim().to_string();
-        let paren_end = name_and_bases.rfind(')').ok_or_else(|| TsuchinokoError::ParseError {
-            line: line_num,
-            message: "Missing closing parenthesis in class bases".to_string(),
-        })?;
+        let paren_end = name_and_bases
+            .rfind(')')
+            .ok_or_else(|| TsuchinokoError::ParseError {
+                line: line_num,
+                message: "Missing closing parenthesis in class bases".to_string(),
+            })?;
         let bases_str = &name_and_bases[paren_start + 1..paren_end];
         let base_list: Vec<String> = bases_str
             .split(',')
@@ -637,7 +639,8 @@ fn parse_class_body(
             }
             let method_line = lines[i].trim();
             if method_line.starts_with("def ") {
-                let (method, consumed) = parse_method_def(lines, i, false, false, Some(property_name))?;
+                let (method, consumed) =
+                    parse_method_def(lines, i, false, false, Some(property_name))?;
                 methods.push(method);
                 i += consumed;
             } else {
@@ -1276,8 +1279,8 @@ fn parse_param(param_str: &str, line_num: usize) -> Result<Param, TsuchinokoErro
     let param_str = param_str.trim();
 
     // V1.6.0: Check for kwargs parameter (**kwargs)
-    if param_str.starts_with("**") {
-        let rest = param_str[2..].trim();
+    if let Some(stripped) = param_str.strip_prefix("**") {
+        let rest = stripped.trim();
         // Check if there's a type hint (**kwargs: dict)
         if let Some(colon_pos) = rest.find(':') {
             let name = rest[..colon_pos].trim().to_string();

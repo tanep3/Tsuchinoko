@@ -1195,10 +1195,7 @@ use pyo3::types::PyList;
             }
             // V1.6.0: Scoped block (from with statement)
             IrNode::Block { stmts } => {
-                let inner: Vec<String> = stmts
-                    .iter()
-                    .map(|s| self.emit_node(s))
-                    .collect();
+                let inner: Vec<String> = stmts.iter().map(|s| self.emit_node(s)).collect();
                 let inner_code = inner.join("\n");
                 format!("{{\n{inner_code}\n}}")
             }
@@ -1220,7 +1217,9 @@ use pyo3::types::PyList;
                 for arm in arms {
                     let variant = &arm.variant;
                     let binding = &arm.binding;
-                    result.push_str(&format!("{indent}    DynamicValue::{variant}({binding}) => {{\n"));
+                    result.push_str(&format!(
+                        "{indent}    DynamicValue::{variant}({binding}) => {{\n"
+                    ));
                     self.indent += 2;
                     for stmt in &arm.body {
                         result.push_str(&self.emit_node(stmt));
@@ -2414,7 +2413,11 @@ use pyo3::types::PyList;
                 format!("{} {{ {} }}", name, field_inits.join(", "))
             }
             // V1.6.0: DynamicWrap - wrap value in enum variant
-            IrExpr::DynamicWrap { enum_name, variant, value } => {
+            IrExpr::DynamicWrap {
+                enum_name,
+                variant,
+                value,
+            } => {
                 format!("{}::{}({})", enum_name, variant, self.emit_expr(value))
             }
             IrExpr::Unwrap(inner) => {

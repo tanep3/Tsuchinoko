@@ -221,7 +221,7 @@ pub enum Stmt {
     /// V1.6.0: bases field for inheritance support
     ClassDef {
         name: String,
-        bases: Vec<String>,  // V1.6.0: 継承元クラス名
+        bases: Vec<String>, // V1.6.0: 継承元クラス名
         fields: Vec<Field>,
         methods: Vec<MethodDef>,
     },
@@ -254,7 +254,7 @@ pub enum Stmt {
     /// With statement (V1.6.0)
     With {
         context_expr: Box<Expr>,
-        optional_vars: Option<String>,  // as NAME
+        optional_vars: Option<String>, // as NAME
         body: Vec<Stmt>,
     },
 }
@@ -265,8 +265,8 @@ pub struct Param {
     pub name: String,
     pub type_hint: Option<TypeHint>,
     pub default: Option<Expr>,
-    pub variadic: bool,      // *args
-    pub is_kwargs: bool,     // V1.6.0: **kwargs
+    pub variadic: bool,  // *args
+    pub is_kwargs: bool, // V1.6.0: **kwargs
 }
 
 /// Type hint
@@ -292,8 +292,8 @@ pub struct MethodDef {
     pub params: Vec<Param>, // Excludes 'self'
     pub return_type: Option<TypeHint>,
     pub body: Vec<Stmt>,
-    pub is_static: bool,        // @staticmethod
-    pub is_property: bool,      // V1.6.0: @property (getter)
+    pub is_static: bool,            // @staticmethod
+    pub is_property: bool,          // V1.6.0: @property (getter)
     pub setter_for: Option<String>, // V1.6.0: @name.setter (setter for property "name")
 }
 
