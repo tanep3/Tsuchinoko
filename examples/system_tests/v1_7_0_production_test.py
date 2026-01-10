@@ -5,7 +5,7 @@ import unittest
 import uuid
 
 # Target Production Worker
-WORKER_SCRIPT = "src/bridge/python/v1_7_0_worker.py"
+WORKER_SCRIPT = "src/bridge/python/worker.py"
 
 class ProductionWorkerTest(unittest.TestCase):
     def setUp(self):

@@ -198,6 +198,34 @@ impl std::fmt::Display for JsonPrimitive {
     }
 }
 
+// Support tuple conversions
+macro_rules! impl_tuple_from {
+    ($($n:tt $name:ident)+) => {
+        impl<$($name: Into<TnkValue>),+> From<($($name,)+)> for TnkValue {
+            fn from(tuple: ($($name,)+)) -> Self {
+                TnkValue::Tuple {
+                    items: vec![$(tuple.$n.into()),+],
+                }
+            }
+        }
+    }
+}
+
+impl_tuple_from!(0 T0 1 T1);
+impl_tuple_from!(0 T0 1 T1 2 T2);
+impl_tuple_from!(0 T0 1 T1 2 T2 3 T3);
+impl_tuple_from!(0 T0 1 T1 2 T2 3 T3 4 T4);
+impl_tuple_from!(0 T0 1 T1 2 T2 3 T3 4 T4 5 T5);
+
+// Support Vec/List conversion
+impl<T: Into<TnkValue>> From<Vec<T>> for TnkValue {
+    fn from(vec: Vec<T>) -> Self {
+        TnkValue::List {
+            items: vec.into_iter().map(|i| i.into()).collect(),
+        }
+    }
+}
+
 impl std::fmt::Display for TnkValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -246,19 +274,23 @@ impl std::fmt::Display for TnkValue {
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
-pub enum Command {
+pub enum Command<'a> {
     CallFunction {
         session_id: String,
         req_id: Option<String>,
         target: String,
-        args: Vec<TnkValue>,
+        args: Vec<&'a TnkValue>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        kwargs: Option<std::collections::HashMap<String, &'a TnkValue>>,
     },
     CallMethod {
         session_id: String,
         req_id: Option<String>,
         target: String,
         method: String,
-        args: Vec<TnkValue>,
+        args: Vec<&'a TnkValue>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        kwargs: Option<std::collections::HashMap<String, &'a TnkValue>>,
     },
     GetAttribute {
         session_id: String,
@@ -270,13 +302,13 @@ pub enum Command {
         session_id: String,
         req_id: Option<String>,
         target: String,
-        key: TnkValue,
+        key: TnkValue, // Key is usually small (Int/String), keep owned for simplicity or Change to &'a TnkValue? Let's keep owned for Key for now to avoid complexity in simple getters? User wants ZERO Copy. Key should be ref.
     },
     Slice {
         session_id: String,
         req_id: Option<String>,
         target: String,
-        start: TnkValue,
+        start: TnkValue, // Slice args are small primitives usually.
         stop: TnkValue,
         step: TnkValue,
     },
@@ -367,6 +399,33 @@ impl PartialEq<&str> for TnkValue {
     }
 }
 
+impl PartialEq<(i64, i64, i64)> for TnkValue {
+    fn eq(&self, other: &(i64, i64, i64)) -> bool {
+        match self {
+            TnkValue::Tuple { items } if items.len() == 3 => {
+                items[0] == other.0 && items[1] == other.1 && items[2] == other.2
+            },
+            TnkValue::List { items } if items.len() == 3 => {
+                 items[0] == other.0 && items[1] == other.1 && items[2] == other.2
+            },
+            _ => false,
+        }
+    }
+}
+
+// Indexing support for tuple unpacking
+impl std::ops::Index<usize> for TnkValue {
+    type Output = TnkValue;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        match self {
+            TnkValue::List { items } => &items[index],
+            TnkValue::Tuple { items } => &items[index],
+            _ => panic!("Cannot index non-sequence TnkValue"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,6 +433,7 @@ mod tests {
 
     #[test]
     fn test_tnk_value_serialization() {
+// ... existing tests ...
         let v = TnkValue::Value { value: Some(JsonPrimitive::Float(42.0)) };
         let json = serde_json::to_string(&v).unwrap();
         assert_eq!(json, r#"{"kind":"value","value":42.0}"#);

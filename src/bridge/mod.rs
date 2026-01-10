@@ -20,11 +20,14 @@ use self::bridge_error::BridgeError;
 use self::protocol::{Command as BridgeCmd, Response, TnkValue};
 
 /// 埋め込み Python ワーカーコード
-const WORKER_CODE: &str = include_str!("python/v1_7_0_worker.py");
+const WORKER_CODE: &str = include_str!("python/worker.py");
+
+use std::cell::RefCell;
 
 /// Python ワーカーとの通信を管理する構造体
 pub struct PythonBridge {
-    process: Child,
+    // V1.7.0 Option B: Use RefCell for Interior Mutability to allow &self methods
+    process: RefCell<Child>,
     request_id: AtomicU64,
     session_id: String,
 }
@@ -32,37 +35,63 @@ pub struct PythonBridge {
 impl PythonBridge {
     /// Python ワーカーを起動
     pub fn new() -> Result<Self, BridgeError> {
-        let process = Command::new("python3") // Ensure python3
+        let (cmd_name, is_fallback) = if let Ok(path) = std::env::var("PYO3_PYTHON") {
+            (path, false)
+        } else {
+            ("python".to_string(), true)
+        };
+
+        eprintln!("[Tsuchinoko] Launching Python Worker with: {}", cmd_name);
+
+        let mut child_result = Command::new(&cmd_name)
             .args(["-u", "-c", WORKER_CODE])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|e| BridgeError::Io(e))?;
+            .spawn();
+
+        if child_result.is_err() && is_fallback {
+            eprintln!("[Tsuchinoko] 'python' failed, trying 'python3'...");
+            child_result = Command::new("python3")
+                .args(["-u", "-c", WORKER_CODE])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn();
+        }
+
+        let process = child_result.map_err(|e| {
+            eprintln!("[Tsuchinoko] Failed to launch Python Worker: {:?}", e);
+            BridgeError::Io(e)
+        })?;
 
         Ok(Self {
-            process,
+            process: RefCell::new(process),
             request_id: AtomicU64::new(1),
             session_id: Uuid::new_v4().to_string(),
         })
     }
 
     /// 汎用リクエスト送信
-    fn send_command(&mut self, cmd: BridgeCmd) -> Result<TnkValue, BridgeError> {
+    /// Uses interior mutability to lock valid only for the duration of the send/recv
+    /// Accepts Command with lifetimes
+    fn send_command<'a>(&self, cmd: BridgeCmd<'a>) -> Result<TnkValue, BridgeError> {
+        let mut process = self.process.borrow_mut();
+        
         // リクエスト送信
-        let stdin = self.process.stdin.as_mut().ok_or(BridgeError::Unknown("Failed to get stdin".into()))?;
+        let stdin = process.stdin.as_mut().ok_or(BridgeError::Unknown("Failed to get stdin".into()))?;
         let json_req = serde_json::to_string(&cmd)?;
         writeln!(stdin, "{}", json_req)?;
         stdin.flush()?;
 
         // レスポンス受信
-        let stdout = self.process.stdout.as_mut().ok_or(BridgeError::Unknown("Failed to get stdout".into()))?;
+        let stdout = process.stdout.as_mut().ok_or(BridgeError::Unknown("Failed to get stdout".into()))?;
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
         reader.read_line(&mut line)?;
 
         if line.is_empty() {
-             return Err(BridgeError::WorkerCrash("Worker closed stdout (EOF)".into()));
+             return Err(BridgeError::WorkerCrash("Worker closed stdout (EOF). This usually means the Python process crashed. Please check stderr output above for details.".into()));
         }
 
         let response: Response = serde_json::from_str(&line)?;
@@ -87,40 +116,59 @@ impl PythonBridge {
         }
     }
 
-    pub fn call_function(&mut self, target: &str, args: Vec<TnkValue>) -> Result<TnkValue, BridgeError> {
-        let req_id = self.request_id.fetch_add(1, Ordering::SeqCst).to_string();
-        self.send_command(BridgeCmd::CallFunction {
+    pub fn call_function(
+        &self, 
+        target: &str, 
+        args: Vec<&TnkValue>,
+        kwargs: Option<&std::collections::HashMap<String, &TnkValue>>,
+    ) -> Result<TnkValue, BridgeError> {
+        let cmd = BridgeCmd::CallFunction {
             session_id: self.session_id.clone(),
-            req_id: Some(req_id),
+            req_id: Some(uuid::Uuid::new_v4().to_string()),
             target: target.to_string(),
             args,
-        })
+            kwargs: kwargs.cloned(),
+        };
+        self.send_command(cmd)
     }
 
-    pub fn call_method(&mut self, target: &TnkValue, method: &str, args: &[TnkValue]) -> Result<TnkValue, BridgeError> {
+    pub fn call_method(
+        &self, 
+        target: &TnkValue, 
+        method: &str, 
+        args: &[&TnkValue],
+        kwargs: Option<&std::collections::HashMap<String, &TnkValue>>,
+    ) -> Result<TnkValue, BridgeError> {
+        // TnkValue::Handle contains ID. If value, we might need to wrap?
+        // Spec says target is ID string usually. 
+        // But protocol.rs takes target: String. 
+        // We need to extract ID from Handle or send Value?
+        // Existing implementation calls `extract_id`.
         let target_id = self.extract_id(target)?;
-        let req_id = self.request_id.fetch_add(1, Ordering::SeqCst).to_string();
-        self.send_command(BridgeCmd::CallMethod {
+        
+        let cmd = BridgeCmd::CallMethod {
             session_id: self.session_id.clone(),
-            req_id: Some(req_id),
+            req_id: Some(uuid::Uuid::new_v4().to_string()),
             target: target_id,
             method: method.to_string(),
             args: args.to_vec(),
-        })
+            kwargs: kwargs.cloned(),
+        };
+        self.send_command(cmd)
     }
     
-    pub fn get_attribute(&mut self, target: &TnkValue, name: &str) -> Result<TnkValue, BridgeError> {
+    pub fn get_attribute(&self, target: &TnkValue, attribute: &str) -> Result<TnkValue, BridgeError> {
         let target_id = self.extract_id(target)?;
         let req_id = self.request_id.fetch_add(1, Ordering::SeqCst).to_string();
         self.send_command(BridgeCmd::GetAttribute {
             session_id: self.session_id.clone(),
             req_id: Some(req_id),
             target: target_id,
-            name: name.to_string(),
+            name: attribute.to_string(), // Changed 'name' to 'attribute' in the parameter, but the field in BridgeCmd is still 'name'.
         })
     }
 
-    pub fn get_item(&mut self, target: &TnkValue, key: &TnkValue) -> Result<TnkValue, BridgeError> {
+    pub fn get_item(&self, target: &TnkValue, key: &TnkValue) -> Result<TnkValue, BridgeError> {
         let target_id = self.extract_id(target)?;
         let req_id = self.request_id.fetch_add(1, Ordering::SeqCst).to_string();
         self.send_command(BridgeCmd::GetItem {
@@ -131,21 +179,25 @@ impl PythonBridge {
         })
     }
     
-    pub fn slice(&mut self, target: &TnkValue, start: TnkValue, stop: TnkValue, step: TnkValue) -> Result<TnkValue, BridgeError> {
+    pub fn slice(&self, target: &TnkValue, start: Option<TnkValue>, stop: Option<TnkValue>, step: Option<TnkValue>) -> Result<TnkValue, BridgeError> {
         let target_id = self.extract_id(target)?;
         let req_id = self.request_id.fetch_add(1, Ordering::SeqCst).to_string();
+        
+        // Convert Option<TnkValue> to TnkValue (None -> TnkValue::Value { value: None })
+        let none_val = || TnkValue::Value { value: None };
+        
         self.send_command(BridgeCmd::Slice {
             session_id: self.session_id.clone(),
             req_id: Some(req_id),
             target: target_id,
-            start,
-            stop,
-            step,
+            start: start.unwrap_or_else(none_val),
+            stop: stop.unwrap_or_else(none_val),
+            step: step.unwrap_or_else(none_val),
         })
     }
 
-    pub fn shutdown(&mut self) -> Result<(), BridgeError> {
-        self.process.kill().map_err(|e| BridgeError::Io(e))?;
+    pub fn shutdown(&self) -> Result<(), BridgeError> {
+        self.process.borrow_mut().kill().map_err(|e| BridgeError::Io(e))?;
         Ok(())
     }
 }
@@ -158,9 +210,9 @@ pub fn display_value(value: &TnkValue) -> String {
 impl PythonBridge {
     pub fn call_json<T: serde::de::DeserializeOwned>(&mut self, target: &str, args: &[serde_json::Value]) -> Result<T, BridgeError> {
         let tnk_args: Vec<TnkValue> = args.iter().map(|v| crate::bridge::type_inference::from_value(v.clone())).collect();
-        // call_function for module functions? or call_method?
-        // Emitter uses call_json("numpy.matmul") -> Module function.
-        let result = self.call_function(target, tnk_args)?;
+        // call_function takes Vec<&TnkValue> (Zero-Copy Refactor)
+        let args_refs: Vec<&TnkValue> = tnk_args.iter().collect();
+        let result = self.call_function(target, args_refs, None)?;
         let json_val: serde_json::Value = result.into();
         serde_json::from_value(json_val).map_err(BridgeError::Json)
     }
@@ -175,7 +227,9 @@ impl PythonBridge {
         // Convert handle
         let target: TnkValue = crate::bridge::type_inference::from_value(handle);
         let tnk_args: Vec<TnkValue> = args.iter().map(|v| crate::bridge::type_inference::from_value(v.clone())).collect();
-        let result = self.call_method(&target, method, &tnk_args)?;
+        // call_method takes &[&TnkValue] (Zero-Copy Refactor)
+        let args_refs: Vec<&TnkValue> = tnk_args.iter().collect();
+        let result = self.call_method(&target, method, &args_refs, None)?;
         let json_val: serde_json::Value = result.into();
         serde_json::from_value(json_val).map_err(BridgeError::Json)
     }

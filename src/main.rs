@@ -217,7 +217,7 @@ edition = "2021"
         fs::write(format!("{name}/src/bridge/strategies/resident.rs"), include_str!("bridge/strategies/resident.rs"))?;
 
         // Copy Python Worker
-        fs::write(format!("{name}/src/bridge/python/v1_7_0_worker.py"), include_str!("bridge/python/v1_7_0_worker.py"))?;
+        fs::write(format!("{name}/src/bridge/python/worker.py"), include_str!("bridge/python/worker.py"))?;
     }
 
     // Create main.rs with transpiled code

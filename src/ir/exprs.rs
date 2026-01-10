@@ -71,6 +71,7 @@ pub enum IrExpr {
         target: Box<IrExpr>,
         method: String,
         args: Vec<IrExpr>,
+        keywords: Vec<(String, IrExpr)>,
     },
     /// V1.7.0: ブリッジ経由の属性アクセス (obj.attr)
     BridgeAttributeAccess {
@@ -89,6 +90,12 @@ pub enum IrExpr {
         stop: Box<IrExpr>,
         step: Box<IrExpr>,
     },
+
+    // --- Conversions (V1.7.0 Option B) ---
+    /// Reference (&expr) - Used for Zero-Copy Bridge calls
+    Ref(Box<IrExpr>),
+    /// TnkValue conversion (TnkValue::from(expr))
+    TnkValueFrom(Box<IrExpr>),
 
     // --- コレクション ---
     /// リスト/Vec リテラル

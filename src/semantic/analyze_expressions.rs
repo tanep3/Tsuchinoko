@@ -701,15 +701,39 @@ impl SemanticAnalyzer {
                         let ir_target = self.analyze_expr(value)?;
                         let ir_args: Vec<IrExpr> = args
                             .iter()
-                            .map(|a| self.analyze_expr(a))
-                            .collect::<Result<Vec<_>, _>>()?;
+                            .map(|a| {
+                                let arg_ty = self.infer_type(a);
+                                let ir_arg = self.analyze_expr(a)?;
+                                if matches!(arg_ty, Type::Any) {
+                                    // Zero-Copy: Pass reference to existing TnkValue
+                                    Ok::<IrExpr, crate::error::TsuchinokoError>(IrExpr::Ref(Box::new(ir_arg)))
+                                } else {
+                                    // Conversion: Create refined TnkValue then pass reference
+                                    Ok::<IrExpr, crate::error::TsuchinokoError>(IrExpr::Ref(Box::new(IrExpr::TnkValueFrom(Box::new(ir_arg)))))
+                                }
+                            })
+                            .collect::<Result<Vec<IrExpr>, crate::error::TsuchinokoError>>()?;
 
+                        // Analyze keyword args
+                        let mut ir_kwargs = Vec::new();
+                        for (k, v) in kwargs {
+                            let ir_v = self.analyze_expr(v)?;
+                            let arg_ty = self.infer_type(v);
+                            let wrapped_ir = if matches!(arg_ty, Type::Any) {
+                                IrExpr::Ref(Box::new(ir_v))
+                            } else {
+                                IrExpr::Ref(Box::new(IrExpr::TnkValueFrom(Box::new(ir_v))))
+                            };
+                            ir_kwargs.push((k.clone(), wrapped_ir));
+                        }
+ 
                         self.current_func_may_raise = true;
-
+ 
                         return Ok(IrExpr::BridgeMethodCall {
                             target: Box::new(ir_target),
                             method: attr.clone(),
                             args: ir_args,
+                            keywords: ir_kwargs,
                         });
                     }
                 }
@@ -1199,12 +1223,27 @@ impl SemanticAnalyzer {
                         )?;
 
                         if matches!(target_ty, Type::Any) {
-                            // V1.7.0: Remote Attribute Access via Bridge
+                            // V1.7.0: Remote Method Call via Bridge (with kwargs support)
                             self.current_func_may_raise = true;
 
-                            return Ok(IrExpr::BridgeAttributeAccess {
+                            // Analyze keyword args
+                            let mut ir_kwargs = Vec::new();
+                            for (k, v) in kwargs {
+                                let ir_v = self.analyze_expr(v)?;
+                                let arg_ty = self.infer_type(v);
+                                let wrapped_ir = if matches!(arg_ty, Type::Any) {
+                                    IrExpr::Ref(Box::new(ir_v))
+                                } else {
+                                    IrExpr::Ref(Box::new(IrExpr::TnkValueFrom(Box::new(ir_v))))
+                                };
+                                ir_kwargs.push((k.clone(), wrapped_ir));
+                            }
+
+                            return Ok(IrExpr::BridgeMethodCall {
                                 target: Box::new(ir_target),
-                                attribute: method_name.to_string(),
+                                method: method_name.to_string(),
+                                args: ir_args,
+                                keywords: ir_kwargs,
                             });
                         }
 

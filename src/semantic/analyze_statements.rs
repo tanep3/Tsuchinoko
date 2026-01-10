@@ -1390,12 +1390,16 @@ impl SemanticAnalyzer {
                         // "from module import a, b, c" - register each item as (module, item)
                         for item in item_list {
                             self.external_imports.push((module.clone(), item.clone()));
+                            // V1.7.0: Define imported items as Any/Handle in scope
+                            self.scope.define(item, Type::Any, false);
                         }
                     } else {
                         // "import module" or "import module as alias"
                         let effective_name = alias.as_ref().unwrap_or(module);
                         self.external_imports
                             .push((module.clone(), effective_name.clone()));
+                        // V1.7.0: Define module variable as Any/Handle in scope
+                        self.scope.define(effective_name, Type::Any, false);
                     }
                 }
 

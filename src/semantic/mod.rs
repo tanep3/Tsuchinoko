@@ -74,6 +74,8 @@ pub struct SemanticAnalyzer {
     current_class_base: Option<String>,
     /// V1.6.0 FT-005: Types checked by isinstance (for DynamicValue enum generation)
     isinstance_types: Vec<Type>,
+    /// V1.7.0: Counter for temporary variables (hoisting arguments)
+    temp_counter: usize,
 }
 
 impl Default for SemanticAnalyzer {
@@ -99,6 +101,7 @@ impl SemanticAnalyzer {
             struct_bases: std::collections::HashMap::new(),
             current_class_base: None,
             isinstance_types: Vec::new(),
+            temp_counter: 0,
         }
     }
 
@@ -705,7 +708,6 @@ impl SemanticAnalyzer {
                 | IrNode::StructDef { .. }
                 | IrNode::TypeAlias { .. }
                 | IrNode::ImplBlock { .. }
-                | IrNode::PyO3Import { .. }
                 | IrNode::Sequence(_) => {
                     other_decls.push(node);
                 }

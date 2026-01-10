@@ -481,20 +481,24 @@ use pyo3::types::PyList;
                     } else {
                         // V1.5.2: Wrap main in catch_unwind for panic diagnosis
                         format!(
-                            r#"fn main() {{
-    let result = std::panic::catch_unwind(|| {{
+                            r#"fn main() -> Result<(), Box<dyn std::error::Error>> {{
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<(), Box<dyn std::error::Error>> {{
 {body_str}
-    }});
-    if let Err(e) = result {{
-        let msg = if let Some(s) = e.downcast_ref::<&str>() {{
-            s.to_string()
-        }} else if let Some(s) = e.downcast_ref::<String>() {{
-            s.clone()
-        }} else {{
-            "Unknown panic".to_string()
-        }};
-        eprintln!("InternalError: {{}}", msg);
-        std::process::exit(1);
+        Ok(())
+    }}));
+    match result {{
+        Ok(inner_result) => inner_result,
+        Err(e) => {{
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {{
+                s.to_string()
+            }} else if let Some(s) = e.downcast_ref::<String>() {{
+                s.clone()
+            }} else {{
+                "Unknown panic".to_string()
+            }};
+            eprintln!("InternalError: {{}}", msg);
+            std::process::exit(1);
+        }}
     }}
 }}"#
                         )
@@ -849,8 +853,10 @@ use pyo3::types::PyList;
 
                 // Use std::panic::catch_unwind to catch panics (like division by zero)
                 // and fall back to except_body
+                // Use std::panic::catch_unwind to catch panics and Result::Err
+                // Closure returns Result<(), Box<dyn Error>> to allow ? operator
                 result.push_str(&format!(
-                    "{indent}match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{\n"
+                    "{indent}let __try_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<(), Box<dyn std::error::Error>> {{\n"
                 ));
                 self.indent += 1;
 
@@ -863,15 +869,13 @@ use pyo3::types::PyList;
                         .collect(),
                 );
 
-                // V1.5.2: Set in_try_body flag - closure returns (), so ? is not allowed
+                // V1.5.2: Set in_try_body flag - closure allows ? now
                 let old_in_try_body = self.in_try_body;
                 self.in_try_body = true;
 
-                // Emit try body - convert VarDecl to assignments if hoisting
+                // Emit try body
                 for (i, node) in try_body.iter().enumerate() {
                     let is_last = i == try_body.len() - 1;
-
-                    // Handle VarDecl specially if hoisting
                     if need_hoisting {
                         if let IrNode::VarDecl {
                             name,
@@ -879,7 +883,6 @@ use pyo3::types::PyList;
                             ..
                         } = node
                         {
-                            // Convert to assignment: var = Some(value);
                             let inner_indent = "    ".repeat(self.indent);
                             let snake_name = to_snake_case(name);
                             result.push_str(&format!(
@@ -893,15 +896,16 @@ use pyo3::types::PyList;
                     }
 
                     if is_last {
-                        // For the last statement, if it's a return, emit just the expression
                         match node {
                             IrNode::Return(Some(expr)) => {
                                 let inner_indent = "    ".repeat(self.indent);
                                 result.push_str(&format!(
-                                    "{}{}\n",
+                                    "{}{} // Return inside try not fully supported with ? operator yet, treating as expr\n",
                                     inner_indent,
                                     self.emit_expr(expr)
                                 ));
+                                // Note: Return inside closure returns from closure, not function.
+                                // We rely on Tsuchinoko's no-return-in-try assumption or hoisting.
                             }
                             _ => {
                                 result.push_str(&self.emit_node(node));
@@ -915,105 +919,108 @@ use pyo3::types::PyList;
                 }
 
                 self.indent -= 1;
-
-                // V1.5.2: Restore in_try_body flag after try body
                 self.in_try_body = old_in_try_body;
+                
+                // End closure with Ok(())
+                result.push_str(&format!("{indent}    Ok(())\n"));
+                result.push_str(&format!("{indent}}}));\n"));
 
-                result.push_str(&format!("{indent}}})) {{\n"));
-
-                // V1.5.2: Ok case - execute else block if present, otherwise return the value
+                // Handle result: match on outer (panic) and inner (exception)
+                // If OK -> Else block
+                // If Err -> Except block
+                result.push_str(&format!("{indent}match __try_result {{\n"));
+                result.push_str(&format!("{indent}    Ok(Ok(_)) => {{\n")); // Success
+                
+                // Else block logic
                 if let Some(else_nodes) = else_body {
-                    // Set hoisted vars for unwrap() in else body
+                    self.indent += 2;
                     let old_try_hoisted = std::mem::replace(
                         &mut self.try_hoisted_vars,
-                        hoisted_vars
-                            .iter()
-                            .map(|(name, _)| to_snake_case(name))
-                            .collect(),
+                        hoisted_vars.iter().map(|(n,_)| to_snake_case(n)).collect()
                     );
-
-                    result.push_str(&format!("{indent}    Ok(_) => {{\n"));
-                    self.indent += 2;
                     for node in else_nodes {
-                        match node {
-                            IrNode::Return(Some(expr)) => {
-                                let inner_indent = "    ".repeat(self.indent);
-                                result.push_str(&format!(
-                                    "{}{}\n",
-                                    inner_indent,
-                                    self.emit_expr(expr)
-                                ));
-                            }
-                            _ => {
-                                result.push_str(&self.emit_node(node));
-                                result.push('\n');
-                            }
-                        }
+                         result.push_str(&self.emit_node(node));
+                         result.push('\n');
                     }
-                    self.indent -= 2;
-                    result.push_str(&format!("{indent}    }}\n"));
-
-                    // Restore old try_hoisted_vars
                     self.try_hoisted_vars = old_try_hoisted;
-                } else {
-                    result.push_str(&format!("{indent}    Ok(__val) => __val,\n"));
+                    self.indent -= 2;
                 }
-
-                // V1.5.2: Err case - if except_var is defined, bind panic info to it
+                result.push_str(&format!("{indent}    }}\n")); 
+                
+                // Error handling logic (Exception OR Panic) 
+                // We combine both cases to run except_block
+                result.push_str(&format!("{indent}    Ok(Err(__exc)) => {{\n")); // Python Exception
                 if let Some(var_name) = except_var {
-                    result.push_str(&format!("{indent}    Err(__exc) => {{\n"));
-                    // V1.5.2: Convert panic info appropriately based on may_raise
-                    if self.current_func_may_raise {
-                        // may_raise function: use TsuchinokoError for raise from compatibility
-                        result.push_str(&format!(
-                            "{indent}        let {} = TsuchinokoError::new(\"Exception\", &format!(\"{{:?}}\", __exc), None);\n",
-                            to_snake_case(var_name)
-                        ));
-                    } else {
-                        // non-may_raise function: use String to avoid TsuchinokoError dependency
-                        result.push_str(&format!(
-                            "{indent}        let {}: String = if let Some(s) = __exc.downcast_ref::<&str>() {{ s.to_string() }} else if let Some(s) = __exc.downcast_ref::<String>() {{ s.clone() }} else {{ \"Unknown panic\".to_string() }};\n",
-                            to_snake_case(var_name)
-                        ));
-                    }
-                } else {
-                    result.push_str(&format!("{indent}    Err(_) => {{\n"));
+                     self.indent += 2;
+                     // Bind exception
+                     if self.current_func_may_raise {
+                         result.push_str(&format!(
+                             "{}let {} = TsuchinokoError::new(\"Exception\", &format!(\"{{:?}}\", __exc), None);\n",
+                             "    ".repeat(self.indent), to_snake_case(var_name)
+                         ));
+                     } else {
+                         // Fallback string binding
+                         result.push_str(&format!(
+                            "{}let {} = format!(\"{{:?}}\", __exc);\n",
+                             "    ".repeat(self.indent), to_snake_case(var_name)
+                         ));
+                     }
+                     self.indent -= 2;
                 }
-
-                // Set hoisted vars for unwrap() in except body
-                let old_try_hoisted_except = std::mem::replace(
-                    &mut self.try_hoisted_vars,
-                    hoisted_vars
-                        .iter()
-                        .map(|(name, _)| to_snake_case(name))
-                        .collect(),
-                );
-
-                self.indent += 2;
-                for node in except_body {
-                    // Emit return as proper return statement in except body
-                    match node {
-                        IrNode::Return(Some(expr)) => {
-                            let inner_indent = "    ".repeat(self.indent);
-                            result.push_str(&format!(
-                                "{}return {};\n",
-                                inner_indent,
-                                self.emit_expr(expr)
-                            ));
-                        }
-                        _ => {
-                            result.push_str(&self.emit_node(node));
-                            result.push('\n');
-                        }
-                    }
+                // Emit Except Body
+                if !except_body.is_empty() {
+                     self.indent += 2;
+                     let old_try_hoisted_except = std::mem::replace(
+                        &mut self.try_hoisted_vars,
+                        hoisted_vars.iter().map(|(n,_)| to_snake_case(n)).collect()
+                    );
+                     for node in except_body {
+                         result.push_str(&self.emit_node(node));
+                         result.push('\n');
+                     }
+                     self.try_hoisted_vars = old_try_hoisted_except;
+                     self.indent -= 2;
                 }
-                self.indent -= 2;
-
-                // Restore old try_hoisted_vars
-                self.try_hoisted_vars = old_try_hoisted_except;
-
                 result.push_str(&format!("{indent}    }}\n"));
-                result.push_str(&format!("{indent}}}\n"));
+
+                // Panic case
+                result.push_str(&format!("{indent}    Err(__panic) => {{\n"));
+                if let Some(var_name) = except_var {
+                     self.indent += 2;
+                     let indent_str = "    ".repeat(self.indent);
+                     // Bind panic
+                     result.push_str(&format!(
+                         "{}let {}: String = if let Some(s) = __panic.downcast_ref::<&str>() {{ s.to_string() }} else if let Some(s) = __panic.downcast_ref::<String>() {{ s.clone() }} else {{ \"Unknown panic\".to_string() }};\n",
+                         indent_str, to_snake_case(var_name)
+                     ));
+                     // If TsuchinokoError is needed
+                     if self.current_func_may_raise {
+                         result.push_str(&format!(
+                             "{}let {} = TsuchinokoError::new(\"RuntimeError\", {}, None);\n",
+                             indent_str, to_snake_case(var_name), to_snake_case(var_name)
+                         ));
+                     }
+                     self.indent -= 2;
+                }
+                 // Emit Except Body (Duplicate) - Ideally functionize this, but copy-paste is safer for now to ensure context
+                if !except_body.is_empty() {
+                     self.indent += 2;
+                     let old_try_hoisted_except = std::mem::replace(
+                        &mut self.try_hoisted_vars,
+                        hoisted_vars.iter().map(|(n,_)| to_snake_case(n)).collect()
+                    );
+                     for node in except_body {
+                         result.push_str(&self.emit_node(node));
+                         result.push('\n');
+                     }
+                     self.try_hoisted_vars = old_try_hoisted_except;
+                     self.indent -= 2;
+                }
+                result.push_str(&format!("{indent}    }}\n"));
+                
+                result.push_str(&format!("{indent}}}\n")); // End match
+
+
 
                 // V1.5.0: Emit finally block after the match
                 if let Some(finally_nodes) = finally_body {
@@ -1190,8 +1197,42 @@ use pyo3::types::PyList;
                         .push((module.clone(), effective_alias));
                 }
 
-                // Don't emit anything here - imports are handled in main wrapper
-                String::new()
+                // V1.7.0: Emit Bridge import code to bind module handle to variable
+                self.needs_resident = true;
+                self.current_func_may_raise = true;
+                self.uses_tsuchinoko_error = true;
+
+                if let Some(ref item_list) = items {
+                     // from module import a, b
+                     // let _mod = __import__(module);
+                     // let a = _mod.attr(a);
+                     // Simplified: just warn for now or implement full logic?
+                     // For now, minimal support: use call_json("__import__") for base module
+                     let mut code = String::new();
+                     let base_mod_var = format!("_module_{}", to_snake_case(&module));
+                     code.push_str(&format!(
+                        "let {} = py_bridge.call_json::<tsuchinoko::bridge::protocol::TnkValue>(\"__import__\", &[serde_json::json!(\"{}\")]).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?;\n",
+                        base_mod_var, module
+                     ));
+
+                     for item in item_list {
+                         code.push_str(&format!(
+                            "let {} = py_bridge.get_attribute(&{}, \"{}\").map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?;\n",
+                            to_snake_case(item), base_mod_var, item
+                         ));
+                     }
+                     code
+                } else {
+                    // import module as alias
+                    let import_name = module.clone();
+                    let var_name = alias.clone().unwrap_or(module.clone());
+                    
+                    format!(
+                        "let {} = py_bridge.call_json::<tsuchinoko::bridge::protocol::TnkValue>(\"__import__\", &[serde_json::json!(\"{}\")]).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?;\n",
+                        var_name, import_name
+                    )
+                }
+
             }
             // V1.6.0: Scoped block (from with statement)
             IrNode::Block { stmts } => {
@@ -2427,6 +2468,7 @@ use pyo3::types::PyList;
                 target,
                 method,
                 args,
+                keywords,
             } => {
                 self.needs_resident = true;
                 // V1.5.2: Use ? for error propagation
@@ -2434,27 +2476,43 @@ use pyo3::types::PyList;
                 self.uses_tsuchinoko_error = true;
 
                 let target_str = self.emit_expr(target);
-                let args_str: Vec<_> = args
+                let args_str: String = args
                     .iter()
-                    .map(|a| {
-                        if matches!(a, IrExpr::NoneLit) {
-                            "tsuchinoko::bridge::protocol::TnkValue::Value { value: None }".to_string()
-                        } else {
-                            format!(
-                                "tsuchinoko::bridge::protocol::TnkValue::from({})",
-                                self.emit_expr_no_outer_parens(a)
-                            )
-                        }
-                    })
-                    .collect();
+                    .map(|a| self.emit_expr(a)) // V1.7.0 Option B: Args are pre-wrapped in Ref/TnkValueFrom
+                    .collect::<Vec<_>>()
+                    .join(", ");
 
-                format!(
-                    "py_bridge.call_method(&{}, \"{}\", &[{}]).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
-                    target_str,
-                    method,
-                    args_str.join(", ")
-                )
+                if keywords.is_empty() {
+                    format!(
+                        "{}py_bridge.call_method(&{}, {:?}, &[{}], None).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?", 
+                        if self.current_func_may_raise { "" } else { "let _ = " }, 
+                        target_str,
+                        method,
+                        args_str
+                    )
+                } else {
+                    let mut kw_setup_code = String::new();
+                    let mut kw_inserts = String::new();
+                    
+                    for (i, (k, v)) in keywords.iter().enumerate() {
+                        let val_expr = self.emit_expr(v);
+                        kw_setup_code.push_str(&format!("let kw_val_{} = {}; ", i, val_expr));
+                        kw_inserts.push_str(&format!("kw.insert({:?}.to_string(), kw_val_{}); ", k, i));
+                    }
+                    
+                    format!(
+                        "{} {{ let mut kw = std::collections::HashMap::new(); {}{} py_bridge.call_method(&{}, {:?}, &[{}], Some(&kw)) }}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
+                        if self.current_func_may_raise { "" } else { "let _ = " },
+                        kw_setup_code,
+                        kw_inserts,
+                        target_str,
+                        method,
+                        args_str
+                    )
+                }
             }
+            IrExpr::Ref(inner) => format!("&{}", self.emit_expr(inner)),
+            IrExpr::TnkValueFrom(inner) => format!("tsuchinoko::bridge::protocol::TnkValue::from({})", self.emit_expr(inner)),
             IrExpr::BridgeAttributeAccess { target, attribute } => {
                 self.needs_resident = true;
                 self.current_func_may_raise = true;

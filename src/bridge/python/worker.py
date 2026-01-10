@@ -11,6 +11,15 @@ import uuid
 import traceback
 import importlib
 
+# --- Diagnostics (V1.7.0 Robustness) ---
+try:
+    print(f"[Worker] Initializing... Executable: {sys.executable}", file=sys.stderr)
+    print(f"[Worker] Version: {sys.version.split()[0]}", file=sys.stderr)
+    print(f"[Worker] Path: {sys.path}", file=sys.stderr)
+except Exception as e:
+    print(f"[Worker] Diagnostic failed: {e}", file=sys.stderr)
+# ---------------------------------------
+
 # --- Global State ---
 # _SESSIONS[session_id] = { "objects": {id: obj}, "modules": {name: module} }
 _SESSIONS = {}
@@ -139,16 +148,16 @@ def resolve_callable(target_str, session_id):
 
 def handle_call_function(cmd):
     """NEW: Call a global function or static method by string path. 
-    e.g. target="numpy.array", args=[...]
+    e.g. target="numpy.array", args=[...], kwargs={...}
     """
     session_id = cmd["session_id"]
     target_str = cmd["target"]
     args = [decode_value(a, session_id) for a in cmd["args"]]
-    # V1.7.1 might support kwargs
+    kwargs = {k: decode_value(v, session_id) for k, v in (cmd.get("kwargs") or {}).items()}
     
     try:
         func = resolve_callable(target_str, session_id)
-        result = func(*args)
+        result = func(*args, **kwargs)
         return make_response(cmd.get("req_id"), value=encode_value(result, session_id))
     except ImportError:
         return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": "ImportError", "message": f"Module implementation not found: {target_str}"})
@@ -162,6 +171,7 @@ def handle_call_method(cmd):
     target_id = cmd["target"]
     method_name = cmd["method"]
     args = [decode_value(a, session_id) for a in cmd["args"]]
+    kwargs = {k: decode_value(v, session_id) for k, v in (cmd.get("kwargs") or {}).items()}
     
     session = get_session(session_id)
     if target_id not in session["objects"]:
@@ -173,7 +183,7 @@ def handle_call_method(cmd):
     
     func = getattr(obj, method_name)
     try:
-        result = func(*args)
+        result = func(*args, **kwargs)
         return make_response(cmd.get("req_id"), value=encode_value(result, session_id))
     except Exception as e:
         return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e), "traceback": traceback.format_exc()})
