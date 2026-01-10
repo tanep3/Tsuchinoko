@@ -31,7 +31,8 @@ pub enum TnkValue {
 #[serde(untagged)]
 pub enum JsonPrimitive {
     Bool(bool),
-    Number(f64), 
+    Int(i64),
+    Float(f64),
     String(String),
 }
 
@@ -47,7 +48,15 @@ pub struct DictItem {
 impl From<i64> for TnkValue {
     fn from(n: i64) -> Self {
         TnkValue::Value {
-            value: Some(JsonPrimitive::Number(n as f64)),
+            value: Some(JsonPrimitive::Int(n)),
+        }
+    }
+}
+
+impl From<i32> for TnkValue {
+    fn from(n: i32) -> Self {
+        TnkValue::Value {
+            value: Some(JsonPrimitive::Int(n as i64)),
         }
     }
 }
@@ -55,7 +64,15 @@ impl From<i64> for TnkValue {
 impl From<f64> for TnkValue {
     fn from(n: f64) -> Self {
         TnkValue::Value {
-            value: Some(JsonPrimitive::Number(n)),
+            value: Some(JsonPrimitive::Float(n)),
+        }
+    }
+}
+
+impl From<f32> for TnkValue {
+    fn from(n: f32) -> Self {
+        TnkValue::Value {
+            value: Some(JsonPrimitive::Float(n as f64)),
         }
     }
 }
@@ -96,7 +113,7 @@ impl From<Value> for TnkValue {
                     TnkValue::from(f)
                 } else {
                     TnkValue::Value {
-                        value: Some(JsonPrimitive::Number(0.0)),
+                        value: Some(JsonPrimitive::Float(0.0)),
                     } // fallback
                 }
             }
@@ -123,20 +140,22 @@ impl From<Value> for TnkValue {
 // --- Helper Methods ---
 
 impl TnkValue {
+    pub fn is_none(&self) -> bool {
+        matches!(self, TnkValue::Value { value: None })
+    }
+
     pub fn as_i64(&self) -> Option<i64> {
         match self {
-            TnkValue::Value {
-                value: Some(JsonPrimitive::Number(n)),
-            } => Some(*n as i64),
+            TnkValue::Value { value: Some(JsonPrimitive::Int(n)) } => Some(*n),
+            TnkValue::Value { value: Some(JsonPrimitive::Float(f)) } => Some(*f as i64),
             _ => None,
         }
     }
-
+    
     pub fn as_f64(&self) -> Option<f64> {
         match self {
-            TnkValue::Value {
-                value: Some(JsonPrimitive::Number(n)),
-            } => Some(*n),
+            TnkValue::Value { value: Some(JsonPrimitive::Float(f)) } => Some(*f),
+            TnkValue::Value { value: Some(JsonPrimitive::Int(n)) } => Some(*n as f64),
             _ => None,
         }
     }
@@ -156,6 +175,69 @@ impl TnkValue {
                 value: Some(JsonPrimitive::String(s)),
             } => Some(s.as_str()),
             _ => None,
+        }
+    }
+}
+
+impl From<TnkValue> for serde_json::Value {
+    fn from(val: TnkValue) -> Self {
+        serde_json::to_value(&val).unwrap_or(serde_json::Value::Null)
+    }
+}
+
+// From<Value> for TnkValue is already implemented above (line 87).
+
+impl std::fmt::Display for JsonPrimitive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JsonPrimitive::Bool(b) => write!(f, "{}", b),
+            JsonPrimitive::Int(n) => write!(f, "{}", n),
+            JsonPrimitive::Float(n) => write!(f, "{}", n),
+            JsonPrimitive::String(s) => write!(f, "{:?}", s), // Use debug for string to include quotes
+        }
+    }
+}
+
+impl std::fmt::Display for TnkValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TnkValue::Value { value: Some(primitive) } => write!(f, "{}", primitive),
+            TnkValue::Value { value: None } => write!(f, "null"),
+            TnkValue::Handle { id, repr, .. } => write!(f, "<Handle:{}> ({})", id, repr),
+            TnkValue::List { items } => {
+                write!(f, "[")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", item)?;
+                }
+                write!(f, "]")
+            }
+            TnkValue::Tuple { items } => {
+                write!(f, "(")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", item)?;
+                }
+                // Add trailing comma for single-element tuples to distinguish from parenthesized expressions
+                if items.len() == 1 {
+                    write!(f, ",")?;
+                }
+                write!(f, ")")
+            }
+            TnkValue::Dict { items } => {
+                write!(f, "{{")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", item.key, item.value)?;
+                }
+                write!(f, "}}")
+            }
         }
     }
 }
@@ -246,6 +328,45 @@ pub struct BridgeErrorDetail {
     pub op: Option<Value>,
 }
 
+// Comparison helpers for generated code
+impl PartialEq<f64> for TnkValue {
+    fn eq(&self, other: &f64) -> bool {
+        match self {
+            TnkValue::Value { value: Some(JsonPrimitive::Float(n)) } => (n - other).abs() < f64::EPSILON,
+            TnkValue::Value { value: Some(JsonPrimitive::Int(n)) } => (*n as f64 - other).abs() < f64::EPSILON,
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<i64> for TnkValue {
+    fn eq(&self, other: &i64) -> bool {
+        match self {
+            TnkValue::Value { value: Some(JsonPrimitive::Int(n)) } => *n == *other,
+            TnkValue::Value { value: Some(JsonPrimitive::Float(n)) } => (*n as i64) == *other, // Rough comparison
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<bool> for TnkValue {
+    fn eq(&self, other: &bool) -> bool {
+        match self {
+            TnkValue::Value { value: Some(JsonPrimitive::Bool(b)) } => b == other,
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<&str> for TnkValue {
+    fn eq(&self, other: &&str) -> bool {
+        match self {
+            TnkValue::Value { value: Some(JsonPrimitive::String(s)) } => s == *other,
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_tnk_value_serialization() {
-        let v = TnkValue::Value { value: Some(JsonPrimitive::Number(42.0)) };
+        let v = TnkValue::Value { value: Some(JsonPrimitive::Float(42.0)) };
         let json = serde_json::to_string(&v).unwrap();
         assert_eq!(json, r#"{"kind":"value","value":42.0}"#);
 

@@ -1128,9 +1128,9 @@ use pyo3::types::PyList;
                     // Outside try block: generate Err(TsuchinokoError::...)
                     match cause {
                         Some(cause_expr) => {
-                            // With cause: Err(TsuchinokoError::with_line("Type", "msg", line, Some(cause)))
+                            // With cause: Err(Box::new(TsuchinokoError::with_line("Type", "msg", line, Some(cause))))
                             format!(
-                                "{indent}return Err(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, Some({})));",
+                                "{indent}return Err(Box::new(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, Some({}))));",
                                 exc_type,
                                 msg_str,
                                 line,
@@ -1138,9 +1138,9 @@ use pyo3::types::PyList;
                             )
                         }
                         None => {
-                            // Without cause: Err(TsuchinokoError::with_line("Type", "msg", line, None))
+                            // Without cause: Err(Box::new(TsuchinokoError::with_line("Type", "msg", line, None)))
                             format!(
-                                "{indent}return Err(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, None));",
+                                "{indent}return Err(Box::new(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, None)));",
                                 exc_type,
                                 msg_str,
                                 line
@@ -1318,7 +1318,7 @@ use pyo3::types::PyList;
                         self.current_func_may_raise = true;
                         self.uses_tsuchinoko_error = true;
                         return format!(
-                            "py_bridge.call_json::<serde_json::Value>(\"numpy.matmul\", &[serde_json::json!({}), serde_json::json!({})]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?",
+                            "py_bridge.call_json::<tsuchinoko::bridge::protocol::TnkValue>(\"numpy.matmul\", &[serde_json::json!({}), serde_json::json!({})]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?",
                             self.emit_expr(left),
                             self.emit_expr(right)
                         );
@@ -1468,7 +1468,7 @@ use pyo3::types::PyList;
                                 })
                                 .collect();
                             return format!(
-                                "py_bridge.call_json::<serde_json::Value>(\"{}.{}\", &[{}]).unwrap().as_f64().unwrap()",
+                                "py_bridge.call_json::<tsuchinoko::bridge::protocol::TnkValue>(\"{}.{}\", &[{}]).unwrap().as_f64().unwrap()",
                                 module,
                                 name,
                                 args_str.join(", ")
@@ -2331,7 +2331,7 @@ use pyo3::types::PyList;
                 self.current_func_may_raise = true;
                 self.uses_tsuchinoko_error = true;
                 format!(
-                    "{{\n{}    py_bridge.call_json_method::<serde_json::Value>({}.clone(), {:?}, &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
+                    "{{\n{}    py_bridge.call_json_method::<tsuchinoko::bridge::protocol::TnkValue>({}.clone(), {:?}, &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
                     arg_evals.join("\n    ") + "\n",
                     self.emit_expr_internal(target),
                     method,
@@ -2585,7 +2585,7 @@ use pyo3::types::PyList;
                         self.current_func_may_raise = true;
                         self.uses_tsuchinoko_error = true;
                         format!(
-                            "{{\n{}    py_bridge.call_json::<serde_json::Value>(\"{}\", &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
+                            "{{\n{}    py_bridge.call_json::<tsuchinoko::bridge::protocol::TnkValue>(\"{}\", &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
                             arg_evals.join("\n    ") + "\n",
                             target,
                             args_json.join(", ")
