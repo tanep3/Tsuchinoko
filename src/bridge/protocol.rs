@@ -14,7 +14,12 @@ pub enum TnkValue {
         #[serde(rename = "type")]
         type_: String,
         repr: String,
+        #[serde(rename = "str")]
+        str_: String,
         session_id: String,
+    },
+    Module {
+        module: String,
     },
     List {
         items: Vec<TnkValue>,
@@ -101,38 +106,17 @@ impl From<&str> for TnkValue {
     }
 }
 
-impl From<Value> for TnkValue {
-    fn from(v: Value) -> Self {
-        match v {
-            Value::Null => TnkValue::Value { value: None },
-            Value::Bool(b) => TnkValue::from(b),
-            Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    TnkValue::from(i)
-                } else if let Some(f) = n.as_f64() {
-                    TnkValue::from(f)
-                } else {
-                    TnkValue::Value {
-                        value: Some(JsonPrimitive::Float(0.0)),
-                    } // fallback
-                }
-            }
-            Value::String(s) => TnkValue::from(s),
-            Value::Array(arr) => {
-                let items = arr.into_iter().map(TnkValue::from).collect();
-                TnkValue::List { items }
-            }
-            Value::Object(obj) => {
-                let items = obj
-                    .into_iter()
-                    .map(|(k, v)| DictItem {
-                        key: TnkValue::from(k),
-                        value: TnkValue::from(v),
-                    })
-                    .collect();
-                TnkValue::Dict { items }
-            }
-        }
+// Greedy From<Value> removed to prevent misinterpretation of Tagged Union objects.
+// Use bridge::type_inference::from_value(v) for intelligent interpretation.
+
+
+impl From<std::collections::HashMap<String, TnkValue>> for TnkValue {
+    fn from(map: std::collections::HashMap<String, TnkValue>) -> Self {
+        let items = map.into_iter().map(|(k, v)| DictItem {
+            key: TnkValue::from(k),
+            value: v,
+        }).collect();
+        TnkValue::Dict { items }
     }
 }
 
@@ -193,7 +177,7 @@ impl std::fmt::Display for JsonPrimitive {
             JsonPrimitive::Bool(b) => write!(f, "{}", b),
             JsonPrimitive::Int(n) => write!(f, "{}", n),
             JsonPrimitive::Float(n) => write!(f, "{}", n),
-            JsonPrimitive::String(s) => write!(f, "{:?}", s), // Use debug for string to include quotes
+            JsonPrimitive::String(s) => write!(f, "{}", s), // Use Display for strings to avoid quotes
         }
     }
 }
@@ -226,12 +210,22 @@ impl<T: Into<TnkValue>> From<Vec<T>> for TnkValue {
     }
 }
 
+// Support Slice conversion (clones elements)
+impl<T: Clone + Into<TnkValue>> From<&[T]> for TnkValue {
+    fn from(slice: &[T]) -> Self {
+        TnkValue::List {
+            items: slice.iter().map(|i| i.clone().into()).collect(),
+        }
+    }
+}
+
 impl std::fmt::Display for TnkValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TnkValue::Value { value: Some(primitive) } => write!(f, "{}", primitive),
             TnkValue::Value { value: None } => write!(f, "null"),
-            TnkValue::Handle { id, repr, .. } => write!(f, "<Handle:{}> ({})", id, repr),
+            TnkValue::Handle { str_, .. } => write!(f, "{}", str_),
+            TnkValue::Module { module } => write!(f, "<Module:{}>", module),
             TnkValue::List { items } => {
                 write!(f, "[")?;
                 for (i, item) in items.iter().enumerate() {
@@ -286,7 +280,7 @@ pub enum Command<'a> {
     CallMethod {
         session_id: String,
         req_id: Option<String>,
-        target: String,
+        target: serde_json::Value,
         method: String,
         args: Vec<&'a TnkValue>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -295,19 +289,19 @@ pub enum Command<'a> {
     GetAttribute {
         session_id: String,
         req_id: Option<String>,
-        target: String,
+        target: serde_json::Value,
         name: String,
     },
     GetItem {
         session_id: String,
         req_id: Option<String>,
-        target: String,
+        target: serde_json::Value,
         key: TnkValue, // Key is usually small (Int/String), keep owned for simplicity or Change to &'a TnkValue? Let's keep owned for Key for now to avoid complexity in simple getters? User wants ZERO Copy. Key should be ref.
     },
     Slice {
         session_id: String,
         req_id: Option<String>,
-        target: String,
+        target: serde_json::Value,
         start: TnkValue, // Slice args are small primitives usually.
         stop: TnkValue,
         step: TnkValue,
@@ -315,7 +309,7 @@ pub enum Command<'a> {
     Iter {
         session_id: String,
         req_id: Option<String>,
-        target: String,
+        target: serde_json::Value,
     },
     IterNextBatch {
         session_id: String,
@@ -326,7 +320,7 @@ pub enum Command<'a> {
     Delete {
         session_id: String,
         req_id: Option<String>,
-        target: String,
+        target: serde_json::Value,
     },
 }
 
@@ -442,6 +436,7 @@ mod tests {
             id: "h1".to_string(),
             type_: "str".to_string(),
             repr: "'foo'".to_string(),
+            str_: "foo".to_string(),
             session_id: "s1".to_string(),
         };
         let h_json = serde_json::to_string(&h).unwrap();
@@ -457,6 +452,7 @@ mod tests {
             target: "h1".into(),
             method: "foo".into(),
             args: vec![],
+            kwargs: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains(r#""cmd":"call_method""#));

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+
 use std::io::{self, BufRead, Write};
 
 // --- Data Types (Tagged Union) ---
@@ -16,6 +16,8 @@ pub enum TnkValue {
         #[serde(rename = "type")]
         type_: String,
         repr: String,
+        #[serde(rename = "str")]
+        str_: String,
         session_id: String,
     },
     List {
@@ -33,7 +35,8 @@ pub enum TnkValue {
 #[serde(untagged)]
 pub enum JsonPrimitive {
     Bool(bool),
-    Number(f64), // Using f64 to cover both int and float for prototype simplicity
+    Int(i64),
+    Float(f64),
     String(String),
 }
 

@@ -30,6 +30,10 @@ struct Cli {
     #[arg(short, long)]
     debug: bool,
 
+    /// Dump Intermediate Representation (IR) and exit
+    #[arg(long)]
+    dump_ir: bool,
+
     /// Check only (don't generate output)
     #[arg(short, long)]
     check: bool,
@@ -55,6 +59,16 @@ fn main() -> Result<()> {
         println!("[DEBUG] Source length: {} bytes", source.len());
     }
 
+    // V1.7.0: IR Dump mode
+    if cli.dump_ir {
+        let ir = tsuchinoko::analyze_to_ir(&source)?;
+        println!("=== Intermediate Representation (IR) ===");
+        for (i, node) in ir.iter().enumerate() {
+            println!("[{:03}] {:?}", i, node);
+        }
+        return Ok(());
+    }
+
     // Transpile Python to Rust
     let rust_code = transpile(&source)?;
 
@@ -72,12 +86,12 @@ fn main() -> Result<()> {
     // V1.4.0: Check if external libraries are used (PythonBridge indicates external imports)
     let uses_external_libs = rust_code.contains("PythonBridge");
 
-    // V1.6.0: Check if **kwargs is used (HashMap<String, serde_json::Value>)
-    let uses_kwargs = rust_code.contains("HashMap<String, serde_json::Value>");
+    // V1.6.0: Check if **kwargs is used (HashMap<String, TnkValue>)
+    let uses_kwargs = rust_code.contains("HashMap<String, TnkValue>");
 
     // V1.4.0: Enforce --project when external libraries are used
     if uses_external_libs && cli.project.is_none() {
-        eprintln!("Error: This code uses external Python libraries.");
+        eprintln!("Error: This code uses external Python libraries via PythonBridge.");
         eprintln!("       Please use --project option to generate a complete project:");
         eprintln!();
         eprintln!(
@@ -86,8 +100,8 @@ fn main() -> Result<()> {
         );
         eprintln!();
         eprintln!("       The --project option generates a Cargo project with:");
-        eprintln!("         - bridge.rs: Python worker communication module");
-        eprintln!("         - Cargo.toml: Dependencies (serde, serde_json)");
+        eprintln!("         - bridge/ mod.rs: Python worker communication module");
+        eprintln!("         - Cargo.toml: Dependencies (serde, serde_json, uuid, thiserror)");
         eprintln!();
         eprintln!("       After generation, run:");
         eprintln!("         source venv/bin/activate");
@@ -106,6 +120,7 @@ fn main() -> Result<()> {
         );
         eprintln!();
         eprintln!("       The --project option generates a Cargo project with:");
+        eprintln!("         - bridge/ mod.rs: Python protocol module (TnkValue)");
         eprintln!("         - Cargo.toml: Dependencies (serde, serde_json)");
         eprintln!();
         eprintln!("       After generation, run:");
@@ -203,11 +218,12 @@ edition = "2021"
         fs::create_dir_all(format!("{name}/src/bridge/strategies"))?;
         
         // Copy Bridge Files
-        fs::write(format!("{name}/src/bridge/mod.rs"), include_str!("bridge/mod.rs"))?;
+        fs::write(format!("{name}/src/bridge/mod.rs"), include_str!("bridge/runtime_mod.rs"))?;
         fs::write(format!("{name}/src/bridge/protocol.rs"), include_str!("bridge/protocol.rs"))?;
         fs::write(format!("{name}/src/bridge/bridge_error.rs"), include_str!("bridge/bridge_error.rs"))?;
         fs::write(format!("{name}/src/bridge/tsuchinoko_error.rs"), include_str!("bridge/tsuchinoko_error.rs"))?;
-        fs::write(format!("{name}/src/bridge/module_table.rs"), include_str!("bridge/module_table.rs"))?;
+        // fs::write(format!("{name}/src/bridge/module_table.rs"), include_str!("bridge/module_table.rs"))?; // Compiler-only
+        // fs::write(format!("{name}/src/bridge/builtin_table.rs"), include_str!("bridge/builtin_table.rs"))?; // Compiler-only
         fs::write(format!("{name}/src/bridge/type_inference.rs"), include_str!("bridge/type_inference.rs"))?;
         
         // Copy Strategies

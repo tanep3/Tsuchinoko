@@ -12,43 +12,37 @@ use crate::parser::parse;
 // --- convert_binop テスト ---
 #[test]
 fn test_convert_binop_add() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Add);
+    let op = convert_binop(&crate::parser::BinOp::Add);
     assert_eq!(op, IrBinOp::Add);
 }
 
 #[test]
 fn test_convert_binop_sub() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Sub);
+    let op = convert_binop(&crate::parser::BinOp::Sub);
     assert_eq!(op, IrBinOp::Sub);
 }
 
 #[test]
 fn test_convert_binop_mul() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Mul);
+    let op = convert_binop(&crate::parser::BinOp::Mul);
     assert_eq!(op, IrBinOp::Mul);
 }
 
 #[test]
 fn test_convert_binop_div() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Div);
+    let op = convert_binop(&crate::parser::BinOp::Div);
     assert_eq!(op, IrBinOp::Div);
 }
 
 #[test]
 fn test_convert_binop_eq() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Eq);
+    let op = convert_binop(&crate::parser::BinOp::Eq);
     assert_eq!(op, IrBinOp::Eq);
 }
 
 #[test]
 fn test_convert_binop_lt() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Lt);
+    let op = convert_binop(&crate::parser::BinOp::Lt);
     assert_eq!(op, IrBinOp::Lt);
 }
 
@@ -116,22 +110,19 @@ fn test_type_from_hint_list() {
 // --- convert_binop 追加テスト ---
 #[test]
 fn test_convert_binop_mod() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Mod);
+    let op = convert_binop(&crate::parser::BinOp::Mod);
     assert_eq!(op, IrBinOp::Mod);
 }
 
 #[test]
 fn test_convert_binop_lteq() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::LtEq);
+    let op = convert_binop(&crate::parser::BinOp::LtEq);
     assert_eq!(op, IrBinOp::LtEq);
 }
 
 #[test]
 fn test_convert_binop_noteq() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::NotEq);
+    let op = convert_binop(&crate::parser::BinOp::NotEq);
     assert_eq!(op, IrBinOp::NotEq);
 }
 
@@ -752,43 +743,37 @@ fn test_scope_push_pop() {
 // --- operators テスト ---
 #[test]
 fn test_convert_binop_pow() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Pow);
+    let op = convert_binop(&crate::parser::BinOp::Pow);
     assert_eq!(op, IrBinOp::Pow);
 }
 
 #[test]
 fn test_convert_binop_bitand() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::BitAnd);
+    let op = convert_binop(&crate::parser::BinOp::BitAnd);
     assert_eq!(op, IrBinOp::BitAnd);
 }
 
 #[test]
 fn test_convert_binop_bitor() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::BitOr);
+    let op = convert_binop(&crate::parser::BinOp::BitOr);
     assert_eq!(op, IrBinOp::BitOr);
 }
 
 #[test]
 fn test_convert_binop_bitxor() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::BitXor);
+    let op = convert_binop(&crate::parser::BinOp::BitXor);
     assert_eq!(op, IrBinOp::BitXor);
 }
 
 #[test]
 fn test_convert_binop_shl() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Shl);
+    let op = convert_binop(&crate::parser::BinOp::Shl);
     assert_eq!(op, IrBinOp::Shl);
 }
 
 #[test]
 fn test_convert_binop_shr() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Shr);
+    let op = convert_binop(&crate::parser::BinOp::Shr);
     assert_eq!(op, IrBinOp::Shr);
 }
 
@@ -1588,15 +1573,13 @@ fn test_type_from_python_hint_tuple() {
 // --- Operators網羅 ---
 #[test]
 fn test_convert_binop_is() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Is);
+    let op = convert_binop(&crate::parser::BinOp::Is);
     assert_eq!(op, IrBinOp::Is);
 }
 
 #[test]
 fn test_convert_binop_isnot() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::IsNot);
+    let op = convert_binop(&crate::parser::BinOp::IsNot);
     assert_eq!(op, IrBinOp::IsNot);
 }
 
@@ -2777,29 +2760,25 @@ fn test_scope_shadowing() {
 // --- operators coverage ---
 #[test]
 fn test_convert_binop_and() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::And);
+    let op = convert_binop(&crate::parser::BinOp::And);
     assert_eq!(op, IrBinOp::And);
 }
 
 #[test]
 fn test_convert_binop_or() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Or);
+    let op = convert_binop(&crate::parser::BinOp::Or);
     assert_eq!(op, IrBinOp::Or);
 }
 
 #[test]
 fn test_convert_binop_eq_v2() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Eq);
+    let op = convert_binop(&crate::parser::BinOp::Eq);
     assert_eq!(op, IrBinOp::Eq);
 }
 
 #[test]
 fn test_convert_binop_lt_v2() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Lt);
+    let op = convert_binop(&crate::parser::BinOp::Lt);
     assert_eq!(op, IrBinOp::Lt);
 }
 
@@ -3390,36 +3369,31 @@ fn test_scope_overwrite() {
 // --- more operator tests ---
 #[test]
 fn test_convert_binop_matmul() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::MatMul);
+    let op = convert_binop(&crate::parser::BinOp::MatMul);
     assert_eq!(op, IrBinOp::MatMul);
 }
 
 #[test]
 fn test_convert_binop_add_v2() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Add);
+    let op = convert_binop(&crate::parser::BinOp::Add);
     assert_eq!(op, IrBinOp::Add);
 }
 
 #[test]
 fn test_convert_binop_sub_v2() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Sub);
+    let op = convert_binop(&crate::parser::BinOp::Sub);
     assert_eq!(op, IrBinOp::Sub);
 }
 
 #[test]
 fn test_convert_binop_mul_v2() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Mul);
+    let op = convert_binop(&crate::parser::BinOp::Mul);
     assert_eq!(op, IrBinOp::Mul);
 }
 
 #[test]
 fn test_convert_binop_div_v2() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Div);
+    let op = convert_binop(&crate::parser::BinOp::Div);
     assert_eq!(op, IrBinOp::Div);
 }
 
@@ -4264,14 +4238,12 @@ fn test_type_compatible_tuple_same() {
 // --- operators convert ---
 #[test]
 fn test_convert_binop_mod_v2() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Mod);
+    let op = convert_binop(&crate::parser::BinOp::Mod);
     assert_eq!(op, IrBinOp::Mod);
 }
 
 #[test]
 fn test_convert_binop_pow_v2() {
-    let analyzer = SemanticAnalyzer::new();
-    let op = analyzer.convert_binop(&crate::parser::BinOp::Pow);
+    let op = convert_binop(&crate::parser::BinOp::Pow);
     assert_eq!(op, IrBinOp::Pow);
 }

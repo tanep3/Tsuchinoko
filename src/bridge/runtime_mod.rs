@@ -3,13 +3,13 @@
 //! Rust バイナリから Python ワーカープロセスを起動し、
 //! stdin/stdout で NDJSON 通信を行う。
 
-pub mod module_table;
+// pub mod module_table; // Compiler-only
 pub mod strategies;
 pub mod tsuchinoko_error;
 pub mod bridge_error;
 pub mod protocol;
 pub mod type_inference;
-pub mod builtin_table;
+// pub mod builtin_table; // Compiler-only
 
 
 use std::io::{BufRead, BufReader, Write};

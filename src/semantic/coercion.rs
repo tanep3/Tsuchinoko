@@ -4,10 +4,11 @@
 //! - 引数の型強制 (Auto-Ref, Auto-Deref, Auto-Box, Fallback Clone)
 //! - 型変換判定
 
-use crate::ir::{IrExpr, IrUnaryOp};
+use crate::ir::{IrExpr, IrExprKind, IrUnaryOp};
 use crate::parser::Expr;
 
 use super::Type;
+use super::SemanticAnalyzer;
 
 /// 型変換結果を表す構造体
 #[derive(Debug, Clone)]
@@ -108,15 +109,15 @@ pub fn needs_reference_wrap(needs_ref: bool, actual_ty: &Type) -> bool {
 ///
 /// # Returns
 /// デリファレンス適用後のIR式と型
-pub fn apply_auto_deref(mut ir_arg: IrExpr, actual_ty: &Type) -> (IrExpr, Type) {
+pub fn apply_auto_deref(analyzer: &mut SemanticAnalyzer, mut ir_arg: IrExpr, actual_ty: &Type) -> (IrExpr, Type) {
     let mut current_ty = actual_ty.clone();
     while let Type::Ref(inner) = &current_ty {
         let inner_ty = inner.as_ref();
         if inner_ty.is_copy() {
-            ir_arg = IrExpr::UnaryOp {
+            ir_arg = analyzer.create_expr(IrExprKind::UnaryOp {
                 op: IrUnaryOp::Deref,
                 operand: Box::new(ir_arg),
-            };
+            }, inner_ty.clone());
             current_ty = inner_ty.clone();
         } else {
             break;
@@ -140,14 +141,14 @@ pub fn needs_clone_or_to_string(
     actual_ty: &Type,
 ) -> Option<&'static str> {
     // Copy型のメソッド呼び出しはスキップ
-    let is_copy_method = matches!(ir_arg, IrExpr::MethodCall { method, .. } if method == "len");
+    let is_copy_method = matches!(ir_arg.kind, IrExprKind::MethodCall { ref method, .. } if method == "len");
 
     if !resolved_actual.is_copy()
         && !matches!(actual_ty, Type::Ref(_))
         && !matches!(resolved_actual, Type::Func { .. })
         && !is_copy_method
     {
-        let method = if matches!(ir_arg, IrExpr::StringLit(_) | IrExpr::FString { .. }) {
+        let method = if matches!(ir_arg.kind, IrExprKind::StringLit(_) | IrExprKind::FString { .. }) {
             "to_string"
         } else {
             "clone"

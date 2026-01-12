@@ -16,11 +16,55 @@ pub enum ImportMode {
     Resident,
 }
 
+/// Native 実装のバインディング形式
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NativeBinding {
+    /// Rust のメソッド呼び出し (obj.method(args))
+    Method(&'static str),
+    /// Rust の定数 (std::f64::consts::PI)
+    Constant(&'static str),
+}
+
+/// target 文字列からバインディング情報を取得
+pub fn get_native_binding(target: &str) -> Option<NativeBinding> {
+    match target {
+        "math.sqrt" => Some(NativeBinding::Method("sqrt")),
+        "math.sin" => Some(NativeBinding::Method("sin")),
+        "math.cos" => Some(NativeBinding::Method("cos")),
+        "math.tan" => Some(NativeBinding::Method("tan")),
+        "math.asin" => Some(NativeBinding::Method("asin")),
+        "math.acos" => Some(NativeBinding::Method("acos")),
+        "math.atan" => Some(NativeBinding::Method("atan")),
+        "math.floor" => Some(NativeBinding::Method("floor")),
+        "math.ceil" => Some(NativeBinding::Method("ceil")),
+        "math.abs" => Some(NativeBinding::Method("abs")),
+        "math.pow" => Some(NativeBinding::Method("powf")),
+        "math.log" => Some(NativeBinding::Method("ln")),
+        "math.log10" => Some(NativeBinding::Method("log10")),
+        "math.log2" => Some(NativeBinding::Method("log2")),
+        "math.exp" => Some(NativeBinding::Method("exp")),
+        "math.round" => Some(NativeBinding::Method("round")),
+        "math.pi" => Some(NativeBinding::Constant("std::f64::consts::PI")),
+        "math.e" => Some(NativeBinding::Constant("std::f64::consts::E")),
+        "math.tau" => Some(NativeBinding::Constant("std::f64::consts::TAU")),
+        "math.inf" => Some(NativeBinding::Constant("f64::INFINITY")),
+        "math.nan" => Some(NativeBinding::Constant("f64::NAN")),
+        _ => None,
+    }
+}
+
 /// target 文字列から方式を決定
 pub fn get_import_mode(target: &str) -> ImportMode {
     // Native 実装済み target
     if is_native_target(target) {
         return ImportMode::Native;
+    }
+
+    // モジュール単位での判定
+    if let Some(module) = target.split('.').next() {
+        if is_native_module(module) {
+            return ImportMode::Native;
+        }
     }
 
     // PyO3 で動作確認済み target（現在は空）
@@ -32,23 +76,14 @@ pub fn get_import_mode(target: &str) -> ImportMode {
     ImportMode::Resident
 }
 
-/// Native 実装済みかどうか
-fn is_native_target(target: &str) -> bool {
-    matches!(
-        target,
-        // math モジュール（Rust の f64 メソッドで実装）
-        "math.sqrt"
-            | "math.sin"
-            | "math.cos"
-            | "math.tan"
-            | "math.floor"
-            | "math.ceil"
-            | "math.abs"
-            | "math.pow"
-            | "math.log"
-            | "math.log10"
-            | "math.exp"
-    )
+/// モジュール単位で Native (Rust 内製) かどうかを判定
+pub fn is_native_module(module: &str) -> bool {
+    matches!(module, "math" | "typing")
+}
+
+/// Native 実装済みかどうか (関数/属性レベル)
+pub fn is_native_target(target: &str) -> bool {
+    get_native_binding(target).is_some()
 }
 
 /// PyO3 で動作確認済みかどうか
@@ -60,53 +95,17 @@ fn is_pyo3_target(_target: &str) -> bool {
 
 /// Native 実装の Rust コードを生成
 pub fn generate_native_code(target: &str, args: &[String]) -> Option<String> {
-    match target {
-        "math.sqrt" => {
-            let arg = args.first()?;
-            Some(format!("({arg} as f64).sqrt()"))
+    match get_native_binding(target)? {
+        NativeBinding::Method(name) => {
+            let target_obj = args.first()?;
+            if args.len() == 1 {
+                Some(format!("({target_obj} as f64).{name}()"))
+            } else {
+                let other_args: Vec<String> = args.iter().skip(1).map(|a| format!("{a} as f64")).collect();
+                Some(format!("({target_obj} as f64).{name}({})", other_args.join(", ")))
+            }
         }
-        "math.sin" => {
-            let arg = args.first()?;
-            Some(format!("({arg} as f64).sin()"))
-        }
-        "math.cos" => {
-            let arg = args.first()?;
-            Some(format!("({arg} as f64).cos()"))
-        }
-        "math.tan" => {
-            let arg = args.first()?;
-            Some(format!("({arg} as f64).tan()"))
-        }
-        "math.floor" => {
-            let arg = args.first()?;
-            Some(format!("({arg} as f64).floor()"))
-        }
-        "math.ceil" => {
-            let arg = args.first()?;
-            Some(format!("({arg} as f64).ceil()"))
-        }
-        "math.abs" => {
-            let arg = args.first()?;
-            Some(format!("({arg} as f64).abs()"))
-        }
-        "math.pow" => {
-            let base = args.first()?;
-            let exp = args.get(1)?;
-            Some(format!("({base} as f64).powf({exp} as f64)"))
-        }
-        "math.log" => {
-            let arg = args.first()?;
-            Some(format!("({arg} as f64).ln()"))
-        }
-        "math.log10" => {
-            let arg = args.first()?;
-            Some(format!("({arg} as f64).log10()"))
-        }
-        "math.exp" => {
-            let arg = args.first()?;
-            Some(format!("({arg} as f64).exp()"))
-        }
-        _ => None,
+        NativeBinding::Constant(code) => Some(code.to_string()),
     }
 }
 

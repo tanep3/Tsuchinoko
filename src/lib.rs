@@ -17,13 +17,20 @@ pub mod semantic;
 use anyhow::Result;
 use std::path::Path;
 
-/// Transpile Python source code to Rust source code
-pub fn transpile(source: &str) -> Result<String> {
+/// Analyze Python source code and return the Intermediate Representation (IR)
+pub fn analyze_to_ir(source: &str) -> Result<Vec<ir::IrNode>> {
     // 1. Parse Python source to AST
     let program = parser::parse(source)?;
 
     // 2. Semantic analysis: AST -> IR
     let ir = semantic::analyze(&program)?;
+
+    Ok(ir)
+}
+
+/// Transpile Python source code to Rust source code
+pub fn transpile(source: &str) -> Result<String> {
+    let ir = analyze_to_ir(source)?;
 
     // 3. Emit Rust code
     let rust_code = emitter::emit(&ir);

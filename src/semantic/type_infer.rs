@@ -84,6 +84,9 @@ pub trait TypeInference {
             Expr::Ident(name) => {
                 if let Some(info) = self.scope().lookup(name) {
                     info.ty.clone()
+                } else if self.external_imports().iter().any(|(_, alias)| alias == name) {
+                    // V1.4.0 / V1.7.0: from-import された外部ライブラリの関数等は Type::Any とする
+                    Type::Any
                 } else {
                     Type::Unknown
                 }
@@ -116,7 +119,15 @@ pub trait TypeInference {
             }
 
             Expr::Attribute { value, attr } => self.infer_attribute_type(value, attr),
-
+            Expr::Lambda { params, body } => {
+                let ret_ty = self.infer_type(body);
+                Type::Func {
+                    params: vec![Type::Unknown; params.len()],
+                    ret: Box::new(ret_ty),
+                    is_boxed: true,
+                    may_raise: false,
+                }
+            }
             _ => Type::Unknown,
         }
     }
@@ -165,6 +176,14 @@ pub trait TypeInference {
         if let Expr::Ident(name) = func {
             match name.as_str() {
                 "tuple" | "list" => return Type::List(Box::new(Type::Unknown)),
+                "sorted" => return Type::List(Box::new(Type::Unknown)),
+                "reversed" => return Type::List(Box::new(Type::Unknown)),
+                "enumerate" => return Type::List(Box::new(Type::Tuple(vec![Type::Int, Type::Unknown]))),
+                "zip" => return Type::List(Box::new(Type::Tuple(vec![Type::Unknown; args.len()]))),
+                "map" => return Type::List(Box::new(Type::Unknown)),
+                "filter" => return Type::List(Box::new(Type::Unknown)),
+                "sum" => return Type::Int,
+                "all" | "any" => return Type::Bool,
                 "dict" if !args.is_empty() => {
                     let arg_ty = self.infer_type(&args[0]);
                     if let Type::Dict(k, v) = arg_ty {
@@ -211,6 +230,9 @@ pub trait TypeInference {
                 Type::Ref(v.clone()),
             ]))),
             (Type::String, "join") => Type::String,
+            (Type::List(inner), "pop") => *inner.clone(),
+            (Type::List(_), "count" | "index") => Type::Int,
+            (Type::Dict(_, v), "get" | "pop") => *v.clone(),
             _ => {
                 // PyO3モジュール呼び出しをチェック
                 if let Expr::Ident(module_alias) = target {

@@ -6,17 +6,18 @@
 use super::exprs::IrExpr;
 use super::ops::IrAugAssignOp;
 use crate::semantic::Type;
+use serde::{Deserialize, Serialize};
 
 /// ホイストが必要な変数（ブロック境界を越えて使用される）
 /// Python の関数スコープを Rust のブロックスコープに変換するために使用
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HoistedVar {
     pub name: String,
     pub ty: Type,
 }
 
 /// IR ノード型 (ステートメント)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrNode {
     // --- 変数 ---
     /// 変数宣言
@@ -66,6 +67,7 @@ pub enum IrNode {
         body: Vec<IrNode>,
         hoisted_vars: Vec<HoistedVar>, // 関数スコープにホイストが必要な変数
         may_raise: bool,               // 例外を発生しうる関数か（Result化が必要）
+        needs_bridge: bool,            // PythonBridge を引数にとる必要があるか
     },
     /// メソッド宣言 (implブロック内)
     MethodDecl {
@@ -76,6 +78,7 @@ pub enum IrNode {
         takes_self: bool,     // インスタンスメソッド
         takes_mut_self: bool, // selfを変更する場合
         may_raise: bool,      // V1.5.2: 例外を発生しうるメソッドか
+        needs_bridge: bool,   // PythonBridge を引数にとる必要があるか
     },
 
     // --- 制御構造 ---
@@ -148,12 +151,10 @@ pub enum IrNode {
     Expr(IrExpr),
     /// シーケンス (複数トップレベル項目)
     Sequence(Vec<IrNode>),
-    /// PyO3 import (numpy, pandas等)
-    /// V1.4.0: items フィールドを追加し、from import の個別関数名を保持
-    PyO3Import {
+    /// Import handled via Bridge
+    BridgeImport {
         module: String,
         alias: Option<String>,
-        /// For "from module import a, b, c" - contains ["a", "b", "c"]
         items: Option<Vec<String>>,
     },
     /// V1.6.0: スコープブロック (with 文から生成)
@@ -168,7 +169,7 @@ pub enum IrNode {
 }
 
 /// V1.6.0: match 式のアーム
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MatchArm {
     /// パターン: DynamicValue::Int(n) の "Int" 部分
     pub variant: String,
@@ -181,6 +182,7 @@ pub struct MatchArm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::{ExprId, IrExpr, IrExprKind};
 
     #[test]
     fn test_ir_var_decl() {
@@ -188,7 +190,7 @@ mod tests {
             name: "x".to_string(),
             ty: Type::Int,
             mutable: false,
-            init: Some(Box::new(IrExpr::IntLit(42))),
+            init: Some(Box::new(IrExpr { id: ExprId(0), kind: IrExprKind::IntLit(42) })),
         };
         if let IrNode::VarDecl { name, .. } = node {
             assert_eq!(name, "x");

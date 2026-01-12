@@ -1,12 +1,13 @@
 //! IR Operator Definitions
-//!
-//! 中間表現での演算子を定義する。
-//! - 二項演算子 (IrBinOp)
-//! - 単項演算子 (IrUnaryOp)
-//! - 累算代入演算子 (IrAugAssignOp)
+use serde::{Deserialize, Serialize};
+//
+// 中間表現での演算子を定義する。
+// - 二項演算子 (IrBinOp)
+// - 単項演算子 (IrUnaryOp)
+// - 累算代入演算子 (IrAugAssignOp)
 
 /// IR 二項演算子
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrBinOp {
     // 算術演算子
     Add,
@@ -49,7 +50,7 @@ pub enum IrBinOp {
 }
 
 /// IR 単項演算子
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrUnaryOp {
     /// 符号反転
     Neg,
@@ -62,7 +63,7 @@ pub enum IrUnaryOp {
 }
 
 /// IR 累算代入演算子
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrAugAssignOp {
     Add,      // +=
     Sub,      // -=

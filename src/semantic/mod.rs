@@ -22,6 +22,7 @@ mod analyze_statements;
 mod analyze_types;
 pub mod builtins;
 pub mod coercion;
+pub mod lowering;  // V1.7.0
 pub mod operators;
 mod scope;
 pub mod type_infer;
@@ -33,7 +34,7 @@ pub use type_infer::TypeInference;
 pub use types::*;
 
 use crate::error::TsuchinokoError;
-use crate::ir::{HoistedVar, IrAugAssignOp, IrBinOp, IrExpr, IrNode, IrUnaryOp};
+use crate::ir::{HoistedVar, IrAugAssignOp, IrBinOp, IrExpr, IrExprKind, IrNode, IrUnaryOp};
 use crate::parser::{
     AugAssignOp, BinOp as AstBinOp, Expr, Program, Stmt, TypeHint, UnaryOp as AstUnaryOp,
 };
@@ -74,8 +75,16 @@ pub struct SemanticAnalyzer {
     current_class_base: Option<String>,
     /// V1.6.0 FT-005: Types checked by isinstance (for DynamicValue enum generation)
     isinstance_types: Vec<Type>,
-    /// V1.7.0: Counter for temporary variables (hoisting arguments)
-    temp_counter: usize,
+    /// V1.7.0: Aliases that refer to Modules or Items (alias -> full_target)
+    module_global_aliases: std::collections::HashMap<String, String>,
+    /// V1.7.0: Current function needs PythonBridge argument
+    current_func_needs_bridge: bool,
+    /// V1.7.0: Functions that need PythonBridge (for callee_needs_bridge detection)
+    needs_bridge_funcs: std::collections::HashSet<String>,
+    /// V1.7.0: Expression ID counter
+    expr_id_counter: u32,
+    /// V1.7.0: Type Table (ExprId -> Type)
+    type_table: std::collections::HashMap<crate::ir::ExprId, Type>,
 }
 
 impl Default for SemanticAnalyzer {
@@ -101,8 +110,32 @@ impl SemanticAnalyzer {
             struct_bases: std::collections::HashMap::new(),
             current_class_base: None,
             isinstance_types: Vec::new(),
-            temp_counter: 0,
+            // temp_counter: 0, // Removed as unused
+            module_global_aliases: std::collections::HashMap::new(),
+            current_func_needs_bridge: false,
+            needs_bridge_funcs: std::collections::HashSet::new(),
+            expr_id_counter: 0,
+            type_table: std::collections::HashMap::new(),
         }
+    }
+    
+    /// V1.7.0: Generate next ExprId
+    fn next_expr_id(&mut self) -> crate::ir::ExprId {
+        let id = crate::ir::ExprId(self.expr_id_counter);
+        self.expr_id_counter += 1;
+        id
+    }
+    
+    /// V1.7.0: Set type for an expression
+    fn set_type(&mut self, id: crate::ir::ExprId, ty: Type) {
+        self.type_table.insert(id, ty);
+    }
+    
+    /// V1.7.0: Create a new IrExpr with ID and record its type
+    fn create_expr(&mut self, kind: crate::ir::IrExprKind, ty: Type) -> crate::ir::IrExpr {
+        let id = self.next_expr_id();
+        self.set_type(id, ty.clone());
+        crate::ir::IrExpr { id, kind }
     }
 
     /// V1.5.2 (2-Pass): Quick check if a function body may raise exceptions
@@ -282,6 +315,11 @@ impl SemanticAnalyzer {
                             return true;
                         }
                     }
+                    // V1.4.0 Phase G: Check if this is an external import call (e.g. numpy.mean)
+                    // Bridge calls are always considered may_raise in Tsuchinoko
+                    if self.module_global_aliases.contains_key(name) {
+                        return true;
+                    }
                 }
                 // Check args recursively
                 args.iter().any(|a| self.expr_calls_may_raise_func(a))
@@ -299,8 +337,6 @@ impl SemanticAnalyzer {
     /// This must be done BEFORE forward_declare_functions so that may_raise
     /// can correctly detect external library calls in function bodies.
     fn preprocess_imports(&mut self, stmts: &[Stmt]) {
-        const NATIVE_MODULES: &[&str] = &["math", "typing"];
-
         for stmt in stmts {
             if let Stmt::Import {
                 module,
@@ -308,15 +344,21 @@ impl SemanticAnalyzer {
                 items,
             } = stmt
             {
-                if !NATIVE_MODULES.contains(&module.as_str()) {
-                    if let Some(ref item_list) = items {
-                        // "from module import a, b, c" - register each item as (module, item)
-                        for item in item_list {
+                if let Some(ref item_list) = items {
+                    // "from module import a, b, c"
+                    for item in item_list {
+                        self.module_global_aliases
+                            .insert(item.clone(), format!("{module}.{item}"));
+                        if !crate::bridge::module_table::is_native_module(module) {
                             self.external_imports.push((module.clone(), item.clone()));
                         }
-                    } else {
-                        // "import module" or "import module as alias"
-                        let effective_name = alias.as_ref().unwrap_or(module);
+                    }
+                } else {
+                    // "import module" or "import module as alias"
+                    let effective_name = alias.as_ref().unwrap_or(module);
+                    self.module_global_aliases
+                        .insert(effective_name.clone(), module.clone());
+                    if !crate::bridge::module_table::is_native_module(module) {
                         self.external_imports
                             .push((module.clone(), effective_name.clone()));
                     }
@@ -730,6 +772,7 @@ impl SemanticAnalyzer {
                     body,
                     hoisted_vars,
                     may_raise,
+                    needs_bridge,
                 } = other_decls.remove(pos)
                 {
                     other_decls.push(IrNode::FuncDecl {
@@ -739,6 +782,7 @@ impl SemanticAnalyzer {
                         body,
                         hoisted_vars,
                         may_raise,
+                        needs_bridge,
                     });
                 }
             }
@@ -750,6 +794,7 @@ impl SemanticAnalyzer {
                 body: main_body,
                 hoisted_vars: vec![],
                 may_raise: false,
+                needs_bridge: self.current_func_needs_bridge,
             });
         }
         // V1.6.0 FT-005: If isinstance was used, generate DynamicValue enum at the top
@@ -769,7 +814,16 @@ impl SemanticAnalyzer {
             other_decls.insert(0, enum_def);
         }
 
-        Ok(other_decls)
+        // Step 4: V1.7.0 Lowering Pass
+        let module_aliases = self.module_global_aliases.clone();
+        let lowering = crate::semantic::lowering::LoweringPass::new(
+            module_aliases,
+            self.type_table.clone(),
+            self.expr_id_counter,
+        );
+        let lowered_nodes = lowering.apply(other_decls);
+
+        Ok(lowered_nodes)
     }
 
     /// Collect all variables that need to be mutable (targets of AugAssign or reassignment)
@@ -1258,12 +1312,35 @@ impl SemanticAnalyzer {
                 }
 
                 let ir_value = self.analyze_expr(value)?;
+                if type_hint.is_some() && !matches!(ty, Type::Any | Type::Unknown) {
+                    self.set_type(ir_value.id, ty.clone());
+                }
 
                 // If type hint is concrete (String, Int, etc.) but expression is Type::Any,
                 // wrap with JsonConversion for proper type conversion
                 let expr_ty = self.infer_type(value);
+                let is_bridge_value = match &ir_value.kind {
+                    IrExprKind::BridgeCall { .. }
+                    | IrExprKind::BridgeMethodCall { .. }
+                    | IrExprKind::BridgeGet { .. }
+                    | IrExprKind::BridgeAttributeAccess { .. }
+                    | IrExprKind::BridgeItemAccess { .. }
+                    | IrExprKind::BridgeSlice { .. } => true,
+                    IrExprKind::Call { func, .. } => matches!(
+                        func.kind,
+                        IrExprKind::BridgeGet { .. }
+                            | IrExprKind::BridgeAttributeAccess { .. }
+                            | IrExprKind::BridgeItemAccess { .. }
+                            | IrExprKind::BridgeSlice { .. }
+                    ),
+                    _ => false,
+                };
+                let mut skip_optional_wrap = false;
                 let ir_value =
-                    if matches!(expr_ty, Type::Any) && !matches!(ty, Type::Any | Type::Unknown) {
+                    if matches!(expr_ty, Type::Any)
+                        && !matches!(ty, Type::Any | Type::Unknown)
+                        && !is_bridge_value
+                    {
                         let conversion = match &ty {
                             Type::Float => Some("f64"),
                             Type::Int => Some("i64"),
@@ -1272,10 +1349,10 @@ impl SemanticAnalyzer {
                             _ => None,
                         };
                         if let Some(conv) = conversion {
-                            IrExpr::JsonConversion {
+                            self.create_expr(IrExprKind::JsonConversion {
                                 target: Box::new(ir_value),
                                 convert_to: conv.to_string(),
-                            }
+                            }, ty.clone())
                         } else {
                             ir_value
                         }
@@ -1283,18 +1360,77 @@ impl SemanticAnalyzer {
                         ir_value
                     };
 
-                // V1.3.0: If type hint is List with known element type, update IrExpr::List's elem_type
+                // If expression is a Bridge* result and target type is concrete, convert from TnkValue.
+                let ir_value = if !matches!(ty, Type::Any | Type::Unknown)
+                    && matches!(
+                        ir_value.kind,
+                        IrExprKind::BridgeCall { .. }
+                            | IrExprKind::BridgeMethodCall { .. }
+                            | IrExprKind::BridgeGet { .. }
+                            | IrExprKind::BridgeAttributeAccess { .. }
+                            | IrExprKind::BridgeItemAccess { .. }
+                            | IrExprKind::BridgeSlice { .. }
+                            | IrExprKind::Call { .. }
+                    )
+                {
+                    let is_call_bridge = matches!(
+                        ir_value.kind,
+                        IrExprKind::Call { ref func, .. }
+                            if matches!(
+                                func.kind,
+                                IrExprKind::BridgeGet { .. }
+                                    | IrExprKind::BridgeAttributeAccess { .. }
+                                    | IrExprKind::BridgeItemAccess { .. }
+                                    | IrExprKind::BridgeSlice { .. }
+                            )
+                    );
+                    if matches!(ir_value.kind, IrExprKind::Call { .. }) && !is_call_bridge {
+                        ir_value
+                    } else {
+                    if matches!(ty, Type::Optional(_)) {
+                        skip_optional_wrap = true;
+                    }
+                    self.create_expr(IrExprKind::FromTnkValue {
+                        value: Box::new(ir_value),
+                        to_type: ty.clone(),
+                    }, ty.clone())
+                    }
+                } else {
+                    ir_value
+                };
+
+                // V1.5.0: If type hint is List with known element type, update IrExpr::List's elem_type
                 // This ensures emitter can correctly add .to_string() for String elements in tuples
+                // V1.7.0: Also wrap with TnkValue::from if target is Any/Optional<TnkValue> and value is not
+                // This is properly implementing structured type conversion rather than ad-hoc fixes.
+                
+                let is_target_any_or_unknown = matches!(ty, Type::Any | Type::Unknown) 
+                    || matches!(ty, Type::Optional(ref inner) if matches!(**inner, Type::Any | Type::Unknown));
+
+                // If the value is explicitly a structured literal (Dict/List), we MUST wrap it
+                // even if type inference says "Unknown" or "Any" (which might be imprecise).
+                let is_value_structured_literal = matches!(ir_value.kind, IrExprKind::Dict {..} | IrExprKind::List {..} | IrExprKind::Tuple {..});
+
+                let should_wrap = is_target_any_or_unknown
+                    && (is_value_structured_literal || (!matches!(expr_ty, Type::Any) && !matches!(ir_value.kind, IrExprKind::TnkValueFrom(_) | IrExprKind::BridgeGet { .. })));
+                
+                let ir_value = if should_wrap {
+                    self.create_expr(IrExprKind::TnkValueFrom(Box::new(ir_value)), Type::Any)
+                } else {
+                    ir_value
+                };
+
+                // V1.3.0: If type hint is List with known element type, update IrExpr::List's elem_type
                 let ir_value = if let Type::List(elem_ty) = &ty {
-                    if let IrExpr::List {
+                    if let IrExprKind::List {
                         elem_type: _,
                         elements,
-                    } = ir_value
+                    } = ir_value.kind
                     {
-                        IrExpr::List {
+                        self.create_expr(IrExprKind::List {
                             elem_type: *elem_ty.clone(),
                             elements,
-                        }
+                        }, ty.clone())
                     } else {
                         ir_value
                     }
@@ -1304,25 +1440,29 @@ impl SemanticAnalyzer {
 
                 // V1.5.0: Wrap non-None values in Some() when assigning to Optional type
                 let ir_value = if matches!(ty, Type::Optional(_))
+                    && !skip_optional_wrap
                     && !matches!(value, Expr::NoneLiteral)
                     && !matches!(expr_ty, Type::Optional(_))
                 {
                     // If value is StringLit, add .to_string()
-                    let ir_value = if matches!(ir_value, IrExpr::StringLit(_)) {
-                        IrExpr::MethodCall {
+                    let ir_value = if matches!(ir_value.kind, IrExprKind::StringLit(_)) {
+                        self.create_expr(IrExprKind::MethodCall {
                             target_type: Type::Unknown,
                             target: Box::new(ir_value),
                             method: "to_string".to_string(),
                             args: vec![],
-                        }
+                            callee_needs_bridge: false,
+                        }, Type::String)
                     } else {
                         ir_value
                     };
-                    IrExpr::Call {
-                        func: Box::new(IrExpr::Var("Some".to_string())),
+                    let some_func = self.create_expr(IrExprKind::Var("Some".to_string()), Type::Unknown);
+                    self.create_expr(IrExprKind::Call {
+                        func: Box::new(some_func),
                         args: vec![ir_value],
                         callee_may_raise: false,
-                    }
+                        callee_needs_bridge: false,
+                    }, ty.clone())
                 } else {
                     ir_value
                 };
@@ -1378,18 +1518,25 @@ impl SemanticAnalyzer {
                         for (i, target) in targets.iter().enumerate() {
                             let is_mutable = reassigned_vars.contains(target);
                             self.scope.define(target, Type::Any, is_mutable);
-                            let index_access = IrExpr::MethodCall {
+
+                            let temp_var_expr = self.create_expr(IrExprKind::Var(temp_var.clone()), Type::Any);
+                            let i_expr = self.create_expr(IrExprKind::IntLit(i as i64), Type::Int);
+                            let cast_expr = self.create_expr(IrExprKind::Cast {
+                                target: Box::new(i_expr),
+                                ty: "usize".to_string(),
+                            }, Type::Unknown);
+                            let index_expr = self.create_expr(IrExprKind::Index {
+                                target: Box::new(temp_var_expr),
+                                index: Box::new(cast_expr),
+                            }, Type::Any);
+
+                            let index_access = self.create_expr(IrExprKind::MethodCall {
                                 target_type: Type::Any,
-                                target: Box::new(IrExpr::Index {
-                                    target: Box::new(IrExpr::Var(temp_var.clone())),
-                                    index: Box::new(IrExpr::Cast {
-                                        target: Box::new(IrExpr::IntLit(i as i64)),
-                                        ty: "usize".to_string(),
-                                    }),
-                                }),
+                                target: Box::new(index_expr),
                                 method: "clone".to_string(),
                                 args: vec![],
-                            };
+                                callee_needs_bridge: false,
+                            }, Type::Any);
                             nodes.push(IrNode::VarDecl {
                                 name: target.clone(),
                                 ty: Type::Any,
@@ -1424,16 +1571,20 @@ impl SemanticAnalyzer {
 
                     // If value is a List, convert to tuple of indexed accesses
                     let final_value = if is_list {
-                        let indices: Vec<IrExpr> = (0..targets.len())
-                            .map(|i| IrExpr::Index {
+                        let mut indices = Vec::new();
+                        for i in 0..targets.len() {
+                            let i_expr = self.create_expr(IrExprKind::IntLit(i as i64), Type::Int);
+                            let cast_expr = self.create_expr(IrExprKind::Cast {
+                                target: Box::new(i_expr),
+                                ty: "usize".to_string(),
+                            }, Type::Unknown);
+                            let index_expr = self.create_expr(IrExprKind::Index {
                                 target: Box::new(ir_value.clone()),
-                                index: Box::new(IrExpr::Cast {
-                                    target: Box::new(IrExpr::IntLit(i as i64)),
-                                    ty: "usize".to_string(),
-                                }),
-                            })
-                            .collect();
-                        IrExpr::Tuple(indices)
+                                index: Box::new(cast_expr),
+                            }, Type::Any);
+                            indices.push(index_expr);
+                        }
+                        self.create_expr(IrExprKind::Tuple(indices), Type::Any)
                     } else {
                         ir_value
                     };
@@ -1554,37 +1705,8 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn convert_binop(&self, op: &AstBinOp) -> IrBinOp {
-        match op {
-            AstBinOp::Add => IrBinOp::Add,
-            AstBinOp::Sub => IrBinOp::Sub,
-            AstBinOp::Mul => IrBinOp::Mul,
-            AstBinOp::Div => IrBinOp::Div,
-            AstBinOp::FloorDiv => IrBinOp::FloorDiv,
-            AstBinOp::Mod => IrBinOp::Mod,
-            AstBinOp::Pow => IrBinOp::Pow,
-            AstBinOp::Eq => IrBinOp::Eq,
-            AstBinOp::NotEq => IrBinOp::NotEq,
-            AstBinOp::Lt => IrBinOp::Lt,
-            AstBinOp::Gt => IrBinOp::Gt,
-            AstBinOp::LtEq => IrBinOp::LtEq,
-            AstBinOp::GtEq => IrBinOp::GtEq,
-            AstBinOp::And => IrBinOp::And,
-            AstBinOp::Or => IrBinOp::Or,
-            AstBinOp::In => IrBinOp::Contains,
-            AstBinOp::NotIn => IrBinOp::NotContains, // V1.3.0
-            AstBinOp::Is => IrBinOp::Is,
-            AstBinOp::IsNot => IrBinOp::IsNot,
-            // Bitwise operators (V1.3.0)
-            AstBinOp::BitAnd => IrBinOp::BitAnd,
-            AstBinOp::BitOr => IrBinOp::BitOr,
-            AstBinOp::BitXor => IrBinOp::BitXor,
-            AstBinOp::Shl => IrBinOp::Shl,
-            AstBinOp::Shr => IrBinOp::Shr,
-            AstBinOp::MatMul => IrBinOp::MatMul, // V1.3.0
-        }
-    }
 }
+
 
 #[cfg(test)]
 mod tests;

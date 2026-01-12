@@ -1,8 +1,6 @@
 use serde_json::Value;
 use crate::bridge::protocol::{TnkValue, JsonPrimitive, DictItem};
 
-/// Infer TnkValue from generic serde_json::Value
-/// This function handles the strict type conversion required for Python bridge
 pub fn from_value(v: Value) -> TnkValue {
     match v {
         Value::Null => TnkValue::Value { value: None },
@@ -13,7 +11,6 @@ pub fn from_value(v: Value) -> TnkValue {
             } else if let Some(f) = n.as_f64() {
                 TnkValue::Value { value: Some(JsonPrimitive::Float(f)) }
             } else {
-                // Should not happen for valid JSON numbers
                 TnkValue::Value { value: Some(JsonPrimitive::Float(0.0)) }
             }
         },
@@ -22,10 +19,16 @@ pub fn from_value(v: Value) -> TnkValue {
             items: arr.into_iter().map(from_value).collect() 
         },
         Value::Object(map) => {
-            // Treat all objects as Dictionaries
-            // The handling of specific handles ({ "__handle__": ... }) should typically happen at a higher layer
-            // or we can strictly convert them here if we want automatic wrapping.
-            // For now, consistent Dict conversion.
+            // V1.7.0: 能動的解釈 (Active Interpretation)
+            // まず Tagged Union (TnkValue の定義) に合致するかを試行する
+            let json_obj = Value::Object(map.clone());
+            if let Ok(tnk) = serde_json::from_value::<TnkValue>(json_obj) {
+                // kind フィールドが存在し、正しい構造を持っていればそれを採用
+                // (タグ付き Enum なので serde_json::from_value が最適)
+                return tnk;
+            }
+
+            // 合致しない場合は一般的な Dictionary として解釈
             let items = map.into_iter().map(|(k, v)| DictItem {
                 key: TnkValue::Value { value: Some(JsonPrimitive::String(k)) },
                 value: from_value(v)

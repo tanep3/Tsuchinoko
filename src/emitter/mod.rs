@@ -1,6 +1,6 @@
 //! Emitter module - Rust code generation
 
-use crate::ir::{HoistedVar, IrAugAssignOp, IrBinOp, IrExpr, IrNode, IrUnaryOp};
+use crate::ir::{HoistedVar, IrAugAssignOp, IrBinOp, IrExpr, IrExprKind, IrNode, IrUnaryOp};
 use crate::semantic::Type;
 use std::collections::HashMap;
 
@@ -35,7 +35,7 @@ pub struct RustEmitter {
     /// Map of struct name -> field names (in order)
     struct_defs: HashMap<String, Vec<String>>,
     /// Whether PyO3 is needed for this file
-    uses_pyo3: bool,
+    // uses_pyo3: bool, // Removed as unused
     /// Whether resident Python process is needed
     needs_resident: bool,
     /// PyO3 imports: (module, alias) - e.g., ("numpy", "np")
@@ -56,6 +56,8 @@ pub struct RustEmitter {
     current_func_may_raise: bool,
     /// V1.5.2: Whether we are inside try body closure (? not allowed, use .unwrap())
     in_try_body: bool,
+    /// V1.7.0: Current function's return type (for Return in Try handling)
+    current_ret_type: Option<Type>,
     /// V1.6.0: Map of struct name -> base class name (for composition)
     struct_bases: HashMap<String, String>,
 }
@@ -87,7 +89,7 @@ impl RustEmitter {
         Self {
             indent: 0,
             struct_defs: HashMap::new(),
-            uses_pyo3: false,
+            // uses_pyo3: false, // Removed as unused
             needs_resident: false,
             external_imports: Vec::new(),
             resident_functions: std::collections::HashSet::new(),
@@ -98,6 +100,7 @@ impl RustEmitter {
             uses_tsuchinoko_error: false,
             current_func_may_raise: false,
             in_try_body: false,
+            current_ret_type: None,
             struct_bases: HashMap::new(),
         }
     }
@@ -109,23 +112,20 @@ impl RustEmitter {
         // Pass 1: Collect all PyO3Import nodes first (top-level only)
         if is_top_level {
             for node in nodes {
-                if let IrNode::PyO3Import {
+                if let IrNode::BridgeImport {
                     module,
                     alias,
-                    items,
+                    items: _,
                 } = node
                 {
-                    self.uses_pyo3 = true;
-                    if let Some(ref item_list) = items {
-                        // "from module import a, b, c"
-                        for item in item_list {
-                            self.external_imports.push((module.clone(), item.clone()));
-                        }
-                    } else {
-                        // "import module" or "import module as alias"
-                        let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
-                        self.external_imports
-                            .push((module.clone(), effective_alias));
+                    // Bridge imports are now handled dynamically
+                    if !self.external_imports.iter().any(|(m, _)| m == module) {
+                         // We don't emit anything in pre-pass for BridgeImport
+                         // Logic is handled in emit_node
+                         // But we might want to track them.
+                         // For now, just ensure the module is in external_imports for resident_wrapped
+                         let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
+                         self.external_imports.push((module.clone(), effective_alias));
                     }
                 }
             }
@@ -158,12 +158,9 @@ impl RustEmitter {
             if self.needs_resident {
                 // py_bridge ランタイムを挿入（常駐プロセス方式）
                 self.emit_resident_wrapped(&final_body)
-            } else if self.uses_pyo3 {
-                // Native で全て対応できたが import があった場合
-                // → PyO3 不要、シンプルな Rust コード
-                final_body
             } else {
-                final_body
+                // V1.7.0: Add standalone stubs for TnkValue if needed
+                self.prepend_standalone_stubs(&final_body)
             }
         } else {
             body
@@ -193,7 +190,8 @@ use pyo3::types::PyList;
     fn emit_resident_wrapped(&self, body: &str) -> String {
         format!(
             r#"use tsuchinoko::bridge::PythonBridge;
-
+use tsuchinoko::bridge::protocol::{{TnkValue, DictItem}};
+            
 {body}
 
 // Note: This code uses the PythonBridge for calling Python libraries.
@@ -201,6 +199,97 @@ use pyo3::types::PyList;
 // The Python worker process will be started automatically.
 "#
         )
+    }
+
+    /// V1.7.0: Add minimal TnkValue stub for standalone builds that might reference it
+    fn prepend_standalone_stubs(&self, body: &str) -> String {
+        // If the code references TnkValue but doesn't use the resident bridge,
+        // we provide a minimal stub to allow standalone rustc builds to pass.
+        if body.contains("TnkValue") && !body.contains("PythonBridge") {
+            format!(
+                r#"#[allow(dead_code)]
+#[derive(Clone, Debug)]
+enum TnkValue {{
+    Value {{ value: Option<String> }},
+    Dict {{ items: Vec<DictItem> }},
+    List {{ items: Vec<TnkValue> }},
+    Handle {{ id: String, session: String }},
+}}
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct DictItem {{ key: TnkValue, value: TnkValue }}
+impl From<i64> for TnkValue {{ fn from(i: i64) -> Self {{ TnkValue::Value {{ value: Some(i.to_string()) }} }} }}
+impl From<f64> for TnkValue {{ fn from(f: f64) -> Self {{ TnkValue::Value {{ value: Some(f.to_string()) }} }} }}
+impl From<bool> for TnkValue {{ fn from(b: bool) -> Self {{ TnkValue::Value {{ value: Some(b.to_string()) }} }} }}
+impl From<String> for TnkValue {{ fn from(s: String) -> Self {{ TnkValue::Value {{ value: Some(s) }} }} }}
+impl From<&str> for TnkValue {{ fn from(s: &str) -> Self {{ TnkValue::Value {{ value: Some(s.to_string()) }} }} }}
+impl<T: Into<TnkValue>> From<Vec<T>> for TnkValue {{ fn from(v: Vec<T>) -> Self {{ TnkValue::List {{ items: v.into_iter().map(|e| e.into()).collect() }} }} }}
+impl<K: Into<TnkValue>, V: Into<TnkValue>> From<std::collections::HashMap<K, V>> for TnkValue {{
+    fn from(m: std::collections::HashMap<K, V>) -> Self {{
+        TnkValue::Dict {{ items: m.into_iter().map(|(k, v)| DictItem {{ key: k.into(), value: v.into() }}).collect() }}
+    }}
+}}
+impl TnkValue {{
+    pub fn is_none(&self) -> bool {{ matches!(self, TnkValue::Value {{ value: None }}) }}
+    pub fn as_i64(&self) -> Option<i64> {{ if let TnkValue::Value {{ value: Some(s) }} = self {{ s.parse().ok() }} else {{ None }} }}
+    pub fn as_f64(&self) -> Option<f64> {{ if let TnkValue::Value {{ value: Some(s) }} = self {{ s.parse().ok() }} else {{ None }} }}
+    pub fn as_bool(&self) -> Option<bool> {{ if let TnkValue::Value {{ value: Some(s) }} = self {{ s.parse().ok() }} else {{ None }} }}
+    pub fn as_str(&self) -> Option<&str> {{ if let TnkValue::Value {{ value: Some(s) }} = self {{ Some(s.as_str()) }} else {{ None }} }}
+}}
+impl std::fmt::Display for TnkValue {{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{
+        match self {{
+            TnkValue::Value {{ value: Some(s) }} => write!(f, "{{}}", s),
+            TnkValue::Value {{ value: None }} => write!(f, "None"),
+            TnkValue::Dict {{ items }} => {{
+                write!(f, "{{{{")?;
+                for (i, item) in items.iter().enumerate() {{
+                    if i > 0 {{ write!(f, ", ")?; }}
+                    write!(f, "{{}}: {{}}", item.key, item.value)?;
+                }}
+                write!(f, "}}}}")
+            }}
+            TnkValue::List {{ items }} => {{
+                write!(f, "[")?;
+                for (i, item) in items.iter().enumerate() {{
+                    if i > 0 {{ write!(f, ", ")?; }}
+                    write!(f, "{{}}", item)?;
+                }}
+                write!(f, "]")
+            }}
+            TnkValue::Handle {{ id, .. }} => write!(f, "<Handle:{{}}>", id),
+        }}
+    }}
+}}
+
+{body}"#
+            )
+        } else {
+            body.to_string()
+        }
+    }
+
+    /// V1.7.0: helper to emit expression as TnkValue, handling recursive Dicts (Moved to inherent impl)
+    fn emit_as_tnk_value(&mut self, expr: &IrExpr) -> String {
+        match &expr.kind {
+             IrExprKind::Dict { entries, .. } => {
+                let items_str = entries.iter().map(|(k, v)| {
+                    format!(
+                        "DictItem {{ key: {}, value: {} }}",
+                        self.emit_as_tnk_value(k),
+                        self.emit_as_tnk_value(v)
+                    )
+                }).collect::<Vec<_>>().join(", ");
+                format!("TnkValue::Dict {{ items: vec![{}] }}", items_str)
+            }
+             IrExprKind::List { elements, .. } => {
+                 let elems_str = elements.iter().map(|e| self.emit_as_tnk_value(e)).collect::<Vec<_>>().join(", ");
+                 format!("TnkValue::List {{ items: vec![{}] }}", elems_str)
+             }
+            IrExprKind::Ref(inner) => self.emit_as_tnk_value(inner),
+            IrExprKind::Var(_) | IrExprKind::BridgeGet { .. } => format!("TnkValue::from({}.clone())", self.emit_expr(expr)),
+            _ => format!("TnkValue::from({})", self.emit_expr(expr)),
+        }
     }
 
     /// Generate PyO3-wrapped main function
@@ -309,14 +398,14 @@ use pyo3::types::PyList;
                         Some(expr) => {
                             // If assigning a string literal to a String variable, add .to_string()
                             let expr_str = if matches!(ty, Type::String)
-                                && matches!(expr.as_ref(), IrExpr::StringLit(_))
+                                && matches!(expr.kind, IrExprKind::StringLit(_))
                             {
-                                if let IrExpr::StringLit(s) = expr.as_ref() {
+                                if let IrExprKind::StringLit(s) = &expr.kind {
                                     format!("\"{s}\".to_string()")
                                 } else {
                                     self.emit_expr_no_outer_parens(expr)
                                 }
-                            } else if matches!(expr.as_ref(), IrExpr::Tuple(_)) {
+                            } else if matches!(expr.kind, IrExprKind::Tuple(_)) {
                                 // Keep parentheses for tuple literals
                                 self.emit_expr(expr)
                             } else {
@@ -449,6 +538,7 @@ use pyo3::types::PyList;
                 body,
                 hoisted_vars,
                 may_raise,
+                needs_bridge,
             } => {
                 // Check if this is the auto-generated top-level function -> "fn main"
                 if name == "__top_level__" {
@@ -544,12 +634,17 @@ use pyo3::types::PyList;
                     let old_may_raise = self.current_func_may_raise;
                     self.current_func_may_raise = *may_raise;
 
+                    // V1.7.0: Set return type for TryBlock return value type inference
+                    let old_ret_type = self.current_ret_type.clone();
+                    self.current_ret_type = Some(ret.clone());
+
                     let body_str = self.emit_nodes(body);
                     self.indent -= 1;
 
-                    // Restore previous hoisted vars and may_raise
+                    // Restore previous hoisted vars, may_raise and ret_type
                     self.current_hoisted_vars = old_hoisted;
                     self.current_func_may_raise = old_may_raise;
+                    self.current_ret_type = old_ret_type;
 
                     let func_needs_resident = self.needs_resident;
 
@@ -584,6 +679,7 @@ use pyo3::types::PyList;
                         // Phase F: Set may_raise for proper Ok() wrapping in Return statements
                         let backup_may_raise = self.current_func_may_raise;
                         self.current_func_may_raise = *may_raise || func_needs_resident;
+                        self.current_ret_type = Some(ret.clone()); // Store ret type for inner Try blocks
 
                         // Reset needs_resident just in case, though we know it will become true
                         self.needs_resident = false;
@@ -617,7 +713,7 @@ use pyo3::types::PyList;
                         effective_ret.to_rust_string()
                     };
 
-                    if func_needs_resident {
+                    if *needs_bridge || func_needs_resident {
                         params_str.insert(
                             0,
                             "py_bridge: &mut tsuchinoko::bridge::PythonBridge".to_string(),
@@ -769,6 +865,22 @@ use pyo3::types::PyList;
                 )
             }
             IrNode::Return(expr) => {
+                // V1.5.2: Inside try body, we can't use 'return val' directly because we are in a closure.
+                // We use __ret_val if it was hoisted, or rely on Tsuchinoko's TryBlock handling.
+                if self.in_try_body {
+                    match expr {
+                        Some(e) => {
+                            // If we have a return value, we MUST store it somewhere.
+                            // The specialized TryBlock IR would have already detected this?
+                            // For now, let's assume __ret_val is available if needed.
+                            return format!("{}__ret_val = Some({}); return Ok(());", indent, self.emit_expr(e));
+                        }
+                        None => {
+                             return format!("{}return Ok(());", indent);
+                        }
+                    }
+                }
+
                 // V1.5.2: Wrap in Ok() if current function may raise
                 if self.current_func_may_raise {
                     match expr {
@@ -787,7 +899,7 @@ use pyo3::types::PyList;
             }
             IrNode::Expr(expr) => {
                 // Convert standalone string literals (docstrings) to comments
-                if let IrExpr::StringLit(s) = expr {
+                if let IrExprKind::StringLit(s) = &expr.kind {
                     // Multi-line docstrings become multi-line comments
                     let comment_lines: Vec<String> =
                         s.lines().map(|line| format!("{indent}// {line}")).collect();
@@ -841,6 +953,26 @@ use pyo3::types::PyList;
 
                 let need_hoisting = !hoisted_vars.is_empty();
 
+                // V1.5.2: If try body (or except/else) has Return, we need __ret_val.
+                // We recursively check for IrNode::Return in bodies.
+                fn has_return(nodes: &[IrNode]) -> bool {
+                    nodes.iter().any(|n| match n {
+                        IrNode::Return(_) => true,
+                        IrNode::If { then_block, else_block, .. } => has_return(then_block) || else_block.as_ref().map(|b| has_return(b)).unwrap_or(false),
+                        IrNode::TryBlock { try_body, except_body, else_body, finally_body, .. } => 
+                            has_return(try_body) || has_return(except_body) || 
+                            else_body.as_ref().map(|b| has_return(b)).unwrap_or(false) ||
+                            finally_body.as_ref().map(|b| has_return(b)).unwrap_or(false),
+                        _ => false,
+                    })
+                }
+                
+                let try_has_return = has_return(try_body) || has_return(except_body) || else_body.as_ref().map(|b| has_return(&b)).unwrap_or(false);
+                if try_has_return {
+                    let ret_ty_str = self.current_ret_type.as_ref().map(|t: &crate::semantic::Type| t.to_rust_string()).unwrap_or_else(|| "TnkValue".to_string());
+                    result.push_str(&format!("{indent}let mut __ret_val: Option<{}> = None;\n", ret_ty_str));
+                }
+
                 // Emit hoisted variable declarations as Option<T>
                 for (name, ty) in &hoisted_vars {
                     let snake_name = to_snake_case(name);
@@ -853,15 +985,13 @@ use pyo3::types::PyList;
 
                 // Use std::panic::catch_unwind to catch panics (like division by zero)
                 // and fall back to except_body
-                // Use std::panic::catch_unwind to catch panics and Result::Err
-                // Closure returns Result<(), Box<dyn Error>> to allow ? operator
                 result.push_str(&format!(
                     "{indent}let __try_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<(), Box<dyn std::error::Error>> {{\n"
                 ));
                 self.indent += 1;
 
                 // Set hoisted vars for unwrap() in try body (for return statements)
-                let _old_try_hoisted_try = std::mem::replace(
+                let old_try_hoisted_vars = std::mem::replace(
                     &mut self.try_hoisted_vars,
                     hoisted_vars
                         .iter()
@@ -874,8 +1004,7 @@ use pyo3::types::PyList;
                 self.in_try_body = true;
 
                 // Emit try body
-                for (i, node) in try_body.iter().enumerate() {
-                    let is_last = i == try_body.len() - 1;
+                for node in try_body {
                     if need_hoisting {
                         if let IrNode::VarDecl {
                             name,
@@ -895,31 +1024,13 @@ use pyo3::types::PyList;
                         }
                     }
 
-                    if is_last {
-                        match node {
-                            IrNode::Return(Some(expr)) => {
-                                let inner_indent = "    ".repeat(self.indent);
-                                result.push_str(&format!(
-                                    "{}{} // Return inside try not fully supported with ? operator yet, treating as expr\n",
-                                    inner_indent,
-                                    self.emit_expr(expr)
-                                ));
-                                // Note: Return inside closure returns from closure, not function.
-                                // We rely on Tsuchinoko's no-return-in-try assumption or hoisting.
-                            }
-                            _ => {
-                                result.push_str(&self.emit_node(node));
-                                result.push('\n');
-                            }
-                        }
-                    } else {
-                        result.push_str(&self.emit_node(node));
-                        result.push('\n');
-                    }
+                    result.push_str(&self.emit_node(node));
+                    result.push('\n');
                 }
-
+                
                 self.indent -= 1;
                 self.in_try_body = old_in_try_body;
+                self.try_hoisted_vars = old_try_hoisted_vars;
                 
                 // End closure with Ok(())
                 result.push_str(&format!("{indent}    Ok(())\n"));
@@ -930,6 +1041,16 @@ use pyo3::types::PyList;
                 // If Err -> Except block
                 result.push_str(&format!("{indent}match __try_result {{\n"));
                 result.push_str(&format!("{indent}    Ok(Ok(_)) => {{\n")); // Success
+
+                // Handle return if occurred inside try
+                if try_has_return {
+                    let inner_indent = "    ".repeat(self.indent + 1);
+                    if self.current_func_may_raise {
+                         result.push_str(&format!("{}if let Some(val) = __ret_val {{ return Ok(val); }}\n", inner_indent));
+                    } else {
+                         result.push_str(&format!("{}if let Some(val) = __ret_val {{ return val; }}\n", inner_indent));
+                    }
+                }
                 
                 // Else block logic
                 if let Some(else_nodes) = else_body {
@@ -1018,7 +1139,7 @@ use pyo3::types::PyList;
                 }
                 result.push_str(&format!("{indent}    }}\n"));
                 
-                result.push_str(&format!("{indent}}}\n")); // End match
+                result.push_str(&format!("{indent}}};\n")); // End match
 
 
 
@@ -1037,6 +1158,17 @@ use pyo3::types::PyList;
                     let snake_name = to_snake_case(name);
                     if !self.try_hoisted_vars.contains(&snake_name) {
                         self.try_hoisted_vars.push(snake_name);
+                    }
+                }
+
+                // V1.7.0: Add a fallback return if we fell through the TryBlock and the function expects a value
+                if let Some(ret_ty) = &self.current_ret_type {
+                    if *ret_ty != Type::Unit {
+                        if self.current_func_may_raise {
+                            result.push_str(&format!("{}return Ok({});\n", indent, ret_ty.to_default_value()));
+                        } else {
+                            result.push_str(&format!("{}return {};\n", indent, ret_ty.to_default_value()));
+                        }
                     }
                 }
 
@@ -1064,6 +1196,7 @@ use pyo3::types::PyList;
                 takes_self,
                 takes_mut_self,
                 may_raise,
+                needs_bridge,
             } => {
                 let inner_indent = "    ".repeat(self.indent);
                 let self_param = if !*takes_self {
@@ -1089,18 +1222,31 @@ use pyo3::types::PyList;
                     format!(" -> {}", ret.to_rust_string())
                 };
 
+                // V1.7.0: Use needs_bridge to decide if py_bridge argument is needed
+                let params_str = if *needs_bridge {
+                    let mut p = params_str;
+                    p.insert(0, "py_bridge: &mut tsuchinoko::bridge::PythonBridge".to_string());
+                    p.join(", ")
+                } else {
+                    params_str.join(", ")
+                };
+
                 let mut result = format!(
                     "{}fn {}({}{}){} {{\n",
                     inner_indent,
                     to_snake_case(name),
                     self_param,
-                    params_str.join(", "),
+                    params_str,
                     ret_str
                 );
 
                 // V1.5.2: Track may_raise for return statement wrapping
                 let old_may_raise = self.current_func_may_raise;
                 self.current_func_may_raise = *may_raise;
+
+                // V1.7.0: Set return type for TryBlock return value type inference
+                let old_ret_type = self.current_ret_type.clone();
+                self.current_ret_type = Some(ret.clone());
 
                 self.indent += 1;
                 for node in body {
@@ -1115,6 +1261,7 @@ use pyo3::types::PyList;
                 }
 
                 self.current_func_may_raise = old_may_raise;
+                self.current_ret_type = old_ret_type;
                 self.indent -= 1;
                 result.push_str(&format!("{inner_indent}}}"));
                 result
@@ -1135,9 +1282,9 @@ use pyo3::types::PyList;
                     // Outside try block: generate Err(TsuchinokoError::...)
                     match cause {
                         Some(cause_expr) => {
-                            // With cause: Err(Box::new(TsuchinokoError::with_line("Type", "msg", line, Some(cause))))
+                            // With cause: Err(TsuchinokoError::with_line("Type", "msg", line, Some(cause)).into())
                             format!(
-                                "{indent}return Err(Box::new(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, Some({}))));",
+                                "{indent}return Err(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, Some({})).into());",
                                 exc_type,
                                 msg_str,
                                 line,
@@ -1145,9 +1292,9 @@ use pyo3::types::PyList;
                             )
                         }
                         None => {
-                            // Without cause: Err(Box::new(TsuchinokoError::with_line("Type", "msg", line, None)))
+                            // Without cause: Err(TsuchinokoError::with_line("Type", "msg", line, None).into())
                             format!(
-                                "{indent}return Err(Box::new(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, None)));",
+                                "{indent}return Err(TsuchinokoError::with_line(\"{}\", &format!(\"{{}}\", {}), {}, None).into());",
                                 exc_type,
                                 msg_str,
                                 line
@@ -1178,25 +1325,11 @@ use pyo3::types::PyList;
                     .collect::<Vec<_>>()
                     .join("\n")
             }
-            IrNode::PyO3Import {
+            IrNode::BridgeImport {
                 module,
                 alias,
                 items,
             } => {
-                // Mark that PyO3 is needed and track the import
-                self.uses_pyo3 = true;
-                if let Some(ref item_list) = items {
-                    // "from module import a, b, c"
-                    for item in item_list {
-                        self.external_imports.push((module.clone(), item.clone()));
-                    }
-                } else {
-                    // "import module" or "import module as alias"
-                    let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
-                    self.external_imports
-                        .push((module.clone(), effective_alias));
-                }
-
                 // V1.7.0: Emit Bridge import code to bind module handle to variable
                 self.needs_resident = true;
                 self.current_func_may_raise = true;
@@ -1204,21 +1337,11 @@ use pyo3::types::PyList;
 
                 if let Some(ref item_list) = items {
                      // from module import a, b
-                     // let _mod = __import__(module);
-                     // let a = _mod.attr(a);
-                     // Simplified: just warn for now or implement full logic?
-                     // For now, minimal support: use call_json("__import__") for base module
                      let mut code = String::new();
-                     let base_mod_var = format!("_module_{}", to_snake_case(&module));
-                     code.push_str(&format!(
-                        "let {} = py_bridge.call_json::<tsuchinoko::bridge::protocol::TnkValue>(\"__import__\", &[serde_json::json!(\"{}\")]).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?;\n",
-                        base_mod_var, module
-                     ));
-
                      for item in item_list {
                          code.push_str(&format!(
-                            "let {} = py_bridge.get_attribute(&{}, \"{}\").map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?;\n",
-                            to_snake_case(item), base_mod_var, item
+                            "py_bridge.import(\"{}.{}\", \"{}\");\n",
+                            module, item, item
                          ));
                      }
                      code
@@ -1227,9 +1350,10 @@ use pyo3::types::PyList;
                     let import_name = module.clone();
                     let var_name = alias.clone().unwrap_or(module.clone());
                     
+                    // V1.7.0: Register in ModuleTable
                     format!(
-                        "let {} = py_bridge.call_json::<tsuchinoko::bridge::protocol::TnkValue>(\"__import__\", &[serde_json::json!(\"{}\")]).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?;\n",
-                        var_name, import_name
+                        "py_bridge.import(\"{}\", \"{}\");\n",
+                        import_name, var_name
                     )
                 }
 
@@ -1276,13 +1400,104 @@ use pyo3::types::PyList;
     }
 
     fn emit_expr_internal(&mut self, expr: &IrExpr) -> String {
-        match expr {
-            IrExpr::IntLit(n) => format!("{n}i64"),
-            IrExpr::FloatLit(f) => format!("{f:.1}"),
-            IrExpr::StringLit(s) => format!("\"{s}\""),
-            IrExpr::BoolLit(b) => b.to_string(),
-            IrExpr::NoneLit => "None".to_string(),
-            IrExpr::Var(name) => {
+        match &expr.kind {
+            IrExprKind::BuiltinCall { id, args } => {
+                let func_name = id.to_rust_name();
+                let args_str = args
+                    .iter()
+                    .map(|arg| self.emit_expr_internal(arg))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}({})", func_name, args_str)
+            }
+            IrExprKind::FromTnkValue { value, to_type } => {
+                let value_str = self.emit_expr_internal(value);
+                let base = if value_str.ends_with('?') {
+                    format!("({})", value_str)
+                } else {
+                    value_str
+                };
+                let use_fallible = self.current_func_may_raise;
+                if use_fallible {
+                    self.uses_tsuchinoko_error = true;
+                }
+                match to_type {
+                    Type::Int => {
+                        if use_fallible {
+                            format!("{}.as_i64().ok_or_else(|| TsuchinokoError::internal(\"TnkValue to i64 failed\"))?", base)
+                        } else {
+                            format!("{}.as_i64().unwrap()", base)
+                        }
+                    }
+                    Type::Float => {
+                        if use_fallible {
+                            format!("{}.as_f64().ok_or_else(|| TsuchinokoError::internal(\"TnkValue to f64 failed\"))?", base)
+                        } else {
+                            format!("{}.as_f64().unwrap()", base)
+                        }
+                    }
+                    Type::Bool => {
+                        if use_fallible {
+                            format!("{}.as_bool().ok_or_else(|| TsuchinokoError::internal(\"TnkValue to bool failed\"))?", base)
+                        } else {
+                            format!("{}.as_bool().unwrap()", base)
+                        }
+                    }
+                    Type::String => {
+                        if use_fallible {
+                            format!("{}.as_str().ok_or_else(|| TsuchinokoError::internal(\"TnkValue to String failed\"))?.to_string()", base)
+                        } else {
+                            format!("{}.as_str().unwrap().to_string()", base)
+                        }
+                    }
+                    Type::Optional(inner) => {
+                        let inner_str = match inner.as_ref() {
+                            Type::Int => {
+                                if use_fallible {
+                                    "__v.as_i64().ok_or_else(|| TsuchinokoError::internal(\"TnkValue to i64 failed\"))?".to_string()
+                                } else {
+                                    "__v.as_i64().unwrap()".to_string()
+                                }
+                            }
+                            Type::Float => {
+                                if use_fallible {
+                                    "__v.as_f64().ok_or_else(|| TsuchinokoError::internal(\"TnkValue to f64 failed\"))?".to_string()
+                                } else {
+                                    "__v.as_f64().unwrap()".to_string()
+                                }
+                            }
+                            Type::Bool => {
+                                if use_fallible {
+                                    "__v.as_bool().ok_or_else(|| TsuchinokoError::internal(\"TnkValue to bool failed\"))?".to_string()
+                                } else {
+                                    "__v.as_bool().unwrap()".to_string()
+                                }
+                            }
+                            Type::String => {
+                                if use_fallible {
+                                    "__v.as_str().ok_or_else(|| TsuchinokoError::internal(\"TnkValue to String failed\"))?.to_string()".to_string()
+                                } else {
+                                    "__v.as_str().unwrap().to_string()".to_string()
+                                }
+                            }
+                            Type::Any | Type::Unknown => "__v".to_string(),
+                            _ => "__v".to_string(),
+                        };
+                        format!(
+                            "({{ let __v = {}; if __v.is_none() {{ None }} else {{ Some({}) }} }})",
+                            base, inner_str
+                        )
+                    }
+                    Type::Any | Type::Unknown => base,
+                    _ => base,
+                }
+            }
+            IrExprKind::IntLit(n) => format!("{n}i64"),
+            IrExprKind::FloatLit(f) => format!("{f:.1}"),
+            IrExprKind::StringLit(s) => format!("\"{s}\""),
+            IrExprKind::BoolLit(b) => b.to_string(),
+            IrExprKind::NoneLit => "None".to_string(),
+            IrExprKind::Var(name) => {
                 // Don't snake_case qualified paths like std::collections::HashMap
                 let var_name = if name.contains("::") {
                     name.clone()
@@ -1321,7 +1536,7 @@ use pyo3::types::PyList;
                     var_name
                 }
             }
-            IrExpr::BinOp { left, op, right } => {
+            IrExprKind::BinOp { left, op, right } => {
                 if let IrBinOp::Pow = op {
                     return format!(
                         "({} as i64).pow(({}) as u32)",
@@ -1359,7 +1574,7 @@ use pyo3::types::PyList;
                         self.current_func_may_raise = true;
                         self.uses_tsuchinoko_error = true;
                         return format!(
-                            "py_bridge.call_json::<tsuchinoko::bridge::protocol::TnkValue>(\"numpy.matmul\", &[serde_json::json!({}), serde_json::json!({})]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?",
+                            "py_bridge.call_json::<TnkValue>(\"numpy.matmul\", &[serde_json::json!({}), serde_json::json!({})]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?",
                             self.emit_expr(left),
                             self.emit_expr(right)
                         );
@@ -1409,7 +1624,7 @@ use pyo3::types::PyList;
                     self.emit_expr(right)
                 )
             }
-            IrExpr::UnaryOp { op, operand } => {
+            IrExprKind::UnaryOp { op, operand } => {
                 let op_str = match op {
                     IrUnaryOp::Neg => "-",
                     IrUnaryOp::Not => "!",
@@ -1418,12 +1633,13 @@ use pyo3::types::PyList;
                 };
                 format!("({}{})", op_str, self.emit_expr(operand))
             }
-            IrExpr::Call {
+            IrExprKind::Call {
                 func,
                 args,
                 callee_may_raise,
+                callee_needs_bridge,
             } => {
-                let is_print = if let IrExpr::Var(name) = func.as_ref() {
+                let is_print = if let IrExprKind::Var(name) = &func.kind {
                     name == "print"
                 } else {
                     false
@@ -1436,23 +1652,24 @@ use pyo3::types::PyList;
                         .iter()
                         .map(|a| {
                             // Unwrap unnecessary MethodCall wrappers
-                            let unwrapped = match a {
-                                IrExpr::MethodCall {
+                            let unwrapped = match &a.kind {
+                                IrExprKind::MethodCall {
                                     target,
                                     method,
                                     args: mc_args,
                                     target_type: _,
+                                    callee_needs_bridge: _,
                                 } if mc_args.is_empty()
                                     && (method == "clone" || method == "to_string") =>
                                 {
                                     target.as_ref()
                                 }
-                                other => other,
+                                _ => a,
                             };
 
                             // For string literals, emit directly
-                            match unwrapped {
-                                IrExpr::StringLit(s) => format!("\"{s}\""),
+                            match &unwrapped.kind {
+                                IrExprKind::StringLit(s) => format!("\"{s}\""),
                                 _ => {
                                     // Just pass by ref for println
                                     let expr_str = self.emit_expr(unwrapped);
@@ -1480,7 +1697,7 @@ use pyo3::types::PyList;
                     }
                 } else {
                     // Check if variable (possible struct constructor or function name)
-                    let func_name_opt = if let IrExpr::Var(name) = func.as_ref() {
+                    let func_name_opt = if let IrExprKind::Var(name) = &func.kind {
                         Some(name.clone())
                     } else {
                         None
@@ -1490,31 +1707,9 @@ use pyo3::types::PyList;
                         // V1.4.0: Check if this is a from-imported function
                         // external_imports contains (module, item) tuples
                         // If name matches any item, convert to py_bridge.call_json("module.item", ...)
-                        let from_import_module = self
-                            .external_imports
-                            .iter()
-                            .find(|(_, item)| item == &name)
-                            .map(|(module, _)| module.clone());
-
-                        if let Some(module) = from_import_module {
-                            // This is a from-imported function - use py_bridge
-                            self.needs_resident = true;
-                            let args_str: Vec<_> = args
-                                .iter()
-                                .map(|a| {
-                                    format!(
-                                        "serde_json::json!({})",
-                                        self.emit_expr_no_outer_parens(a)
-                                    )
-                                })
-                                .collect();
-                            return format!(
-                                "py_bridge.call_json::<tsuchinoko::bridge::protocol::TnkValue>(\"{}.{}\", &[{}]).unwrap().as_f64().unwrap()",
-                                module,
-                                name,
-                                args_str.join(", ")
-                            );
-                        }
+                        // V1.4.0: Check if this is a resident (bridge) function
+                        // Handled by IrExpr::BridgeCall now. 
+                        // If it fell through here, it's a regular Rust call.
 
                         // V1.3.1: int/float/str are now handled by semantic analyzer
                         // and converted to IrExpr::Cast or IrExpr::MethodCall
@@ -1539,16 +1734,10 @@ use pyo3::types::PyList;
                             } else {
                                 to_snake_case(&name)
                             };
-                            // resident_functions に登録された関数なら py_bridge を追加
-                            if self.resident_functions.contains(&func_name) {
+                            // V1.7.0: Use callee_needs_bridge flag
+                            if *callee_needs_bridge || self.resident_functions.contains(&func_name) {
                                 self.needs_resident = true;
                                 if self.indent > 0 && name != "main" && name != "__top_level__" {
-                                    // Make sure we check if we are actually INSIDE a function that has py_bridge argument.
-                                    // self.indent > 0 implies inside a block/function.
-                                    // A more robust way is to track "current_function_has_bridge".
-                                    // For now, assuming indent > 0 and not main means we are inside a resident function (because of propagation).
-                                    // BUT, we need to be carefully distinguishes between "inside main" and "inside other resident func".
-                                    // We'll rely on a new field `is_inside_resident_func`.
                                     if self.is_inside_resident_func {
                                         args_str.insert(0, "py_bridge".to_string());
                                     } else {
@@ -1584,18 +1773,19 @@ use pyo3::types::PyList;
                             .iter()
                             .map(|a| self.emit_expr_no_outer_parens(a))
                             .collect();
+
                         // If func is a FieldAccess, we need (target.field)(args) syntax in Rust
                         // to call a function stored in a field
-                        let needs_parens = matches!(func.as_ref(), IrExpr::FieldAccess { .. });
+                        let needs_parens = matches!(&func.kind, IrExprKind::FieldAccess { .. });
                         if needs_parens {
                             format!("({})({})", func_str, args_str.join(", "))
                         } else {
-                            format!("{}({})", func_str, args_str.join(", "))
+                            format!("/* IrExprKind::Call */ {}({})", func_str, args_str.join(", "))
                         }
                     }
                 }
             }
-            IrExpr::List {
+            IrExprKind::List {
                 elem_type,
                 elements,
             } => {
@@ -1642,7 +1832,7 @@ use pyo3::types::PyList;
                     .collect();
                 format!("vec![{}]", elems.join(", "))
             }
-            IrExpr::Dict {
+            IrExprKind::Dict {
                 key_type,
                 value_type,
                 entries,
@@ -1691,7 +1881,7 @@ use pyo3::types::PyList;
                 }
             }
             // V1.5.0: Set literal
-            IrExpr::Set {
+            IrExprKind::Set {
                 elem_type,
                 elements,
             } => {
@@ -1715,23 +1905,36 @@ use pyo3::types::PyList;
                     format!("std::collections::HashSet::from([{}])", elems.join(", "))
                 }
             }
-            IrExpr::FString { parts, values } => {
-                // Generate format string: "{:?}{:?}{:?}" from parts
-                // Use {:?} (Debug) instead of {} (Display) to support Vec and other types
-                let format_str: String = parts
-                    .iter()
-                    .enumerate()
-                    .map(|(i, part)| {
-                        if i < parts.len() - 1 {
-                            format!("{part}{{:?}}")
+            IrExprKind::FString { parts, values } => {
+                let mut format_str = String::new();
+                for (i, part) in parts.iter().enumerate() {
+                    format_str.push_str(part);
+                    if i < values.len() {
+                        let (_, ty) = &values[i];
+                        if is_display_compatible(ty) {
+                            format_str.push_str("{}");
                         } else {
-                            part.clone()
+                            format_str.push_str("{:?}");
+                        }
+                    }
+                }
+
+                let value_strs: Vec<_> = values
+                    .iter()
+                    .map(|(v, ty)| {
+                        let s = self.emit_expr_internal(v);
+                        if is_any_type(ty) {
+                            // Use display_value helper if available
+                            if self.needs_resident {
+                                format!("bridge::display_value(&{})", s.trim_start_matches('&'))
+                            } else {
+                                s
+                            }
+                        } else {
+                            s
                         }
                     })
                     .collect();
-
-                let value_strs: Vec<_> =
-                    values.iter().map(|v| self.emit_expr_internal(v)).collect();
 
                 if values.is_empty() {
                     format!("\"{}\"", parts.join(""))
@@ -1739,7 +1942,7 @@ use pyo3::types::PyList;
                     format!("format!(\"{}\", {})", format_str, value_strs.join(", "))
                 }
             }
-            IrExpr::IfExp { test, body, orelse } => {
+            IrExprKind::IfExp { test, body, orelse } => {
                 format!(
                     "if {} {{ {} }} else {{ {} }}",
                     self.emit_expr_internal(test),
@@ -1747,7 +1950,7 @@ use pyo3::types::PyList;
                     self.emit_expr_internal(orelse)
                 )
             }
-            IrExpr::ListComp {
+            IrExprKind::ListComp {
                 elt,
                 target,
                 iter,
@@ -1775,15 +1978,15 @@ use pyo3::types::PyList;
 
                 let iter_str = self.emit_expr_internal(iter);
 
-                let iter_chain = match iter.as_ref() {
+                let iter_chain = match &iter.kind {
                     // Range needs parentheses for method chaining: (1..10).filter(...)
-                    IrExpr::Range { .. } => format!("({iter_str})"),
+                    IrExprKind::Range { .. } => format!("({iter_str})"),
                     // MethodCall to items() returns a Vec - use .into_iter() for ownership
-                    IrExpr::MethodCall { method, .. } if method == "items" => {
+                    IrExprKind::MethodCall { method, .. } if method == "items" => {
                         format!("{iter_str}.into_iter()")
                     }
                     // Already an iterator (MethodCall with iter/filter/map), use directly
-                    IrExpr::MethodCall { method, .. }
+                    IrExprKind::MethodCall { method, .. }
                         if method.contains("iter")
                             || method.contains("filter")
                             || method.contains("map") =>
@@ -1806,7 +2009,7 @@ use pyo3::types::PyList;
                 }
             }
             // V1.3.0: Dict comprehension {k: v for target in iter if condition}
-            IrExpr::DictComp {
+            IrExprKind::DictComp {
                 key,
                 value,
                 target,
@@ -1827,12 +2030,12 @@ use pyo3::types::PyList;
 
                 let iter_str = self.emit_expr_internal(iter);
 
-                let iter_chain = match iter.as_ref() {
-                    IrExpr::Range { .. } => format!("({iter_str})"),
-                    IrExpr::MethodCall { method, .. } if method == "items" => {
+                let iter_chain = match &iter.kind {
+                    IrExprKind::Range { .. } => format!("({iter_str})"),
+                    IrExprKind::MethodCall { method, .. } if method == "items" => {
                         format!("{iter_str}.into_iter()")
                     }
-                    IrExpr::MethodCall { method, .. }
+                    IrExprKind::MethodCall { method, .. }
                         if method.contains("iter")
                             || method.contains("filter")
                             || method.contains("map") =>
@@ -1856,7 +2059,7 @@ use pyo3::types::PyList;
                 }
             }
             // V1.6.0: Set comprehension {x for target in iter if condition}
-            IrExpr::SetComp {
+            IrExprKind::SetComp {
                 elt,
                 target,
                 iter,
@@ -1881,9 +2084,9 @@ use pyo3::types::PyList;
 
                 let iter_str = self.emit_expr_internal(iter);
 
-                let iter_chain = match iter.as_ref() {
-                    IrExpr::Range { .. } => format!("({iter_str})"),
-                    IrExpr::MethodCall { method, .. }
+                let iter_chain = match &iter.kind {
+                    IrExprKind::Range { .. } => format!("({iter_str})"),
+                    IrExprKind::MethodCall { method, .. }
                         if method.contains("iter")
                             || method.contains("filter")
                             || method.contains("map") =>
@@ -1905,7 +2108,7 @@ use pyo3::types::PyList;
                     )
                 }
             }
-            IrExpr::Closure {
+            IrExprKind::Closure {
                 params,
                 body,
                 ret_type,
@@ -1957,48 +2160,76 @@ use pyo3::types::PyList;
                     body_str
                 )
             }
-            IrExpr::BoxNew(arg) => {
+            IrExprKind::BoxNew(arg) => {
                 // Use Arc::new for Callable fields (which are Arc<dyn Fn>)
                 format!("std::sync::Arc::new({})", self.emit_expr(arg))
             }
-            IrExpr::Cast { target, ty } => {
+            IrExprKind::Cast { target, ty } => {
                 format!("({} as {})", self.emit_expr(target), ty)
             }
-            IrExpr::RawCode(code) => code.clone(),
-            IrExpr::JsonConversion { target, convert_to } => {
+            IrExprKind::RawCode(code) => code.clone(),
+            IrExprKind::JsonConversion { target, convert_to } => {
                 let target_code = self.emit_expr_internal(target);
+                // V1.7.0: If target_code ends with '?', it's a Result. 
+                // We should wrap it in a parenthesized expression before calling as_xxx().
+                let base = if target_code.ends_with('?') {
+                    format!("({})", target_code)
+                } else {
+                    target_code
+                };
+
                 match convert_to.as_str() {
-                    "f64" => format!("{target_code}.as_f64().unwrap()"),
-                    "i64" => format!("{target_code}.as_i64().unwrap()"),
-                    "String" => format!("{target_code}.as_str().unwrap().to_string()"),
-                    "bool" => format!("{target_code}.as_bool().unwrap()"),
-                    _ => target_code,
+                    "f64" => {
+                         // TnkValue (serde_json::Value) as_f64 returns Option<f64>
+                         format!("{}.as_f64().unwrap()", base)
+                    },
+                    "i64" => format!("{}.as_i64().unwrap()", base),
+                    "String" => format!("{}.as_str().unwrap().to_string()", base),
+                    "bool" => format!("{}.as_bool().unwrap()", base),
+                    "Vec<f64>" | "Vec<i64>" | "Vec<String>" => {
+                        // For vectors, we need more complex conversion if using TnkValue directly
+                        // But usually BridgeCall returns TnkValue. 
+                        // Let's use a generic from_value if convert_to is complex.
+                        self.uses_tsuchinoko_error = true;
+                        format!(
+                            "serde_json::from_value::<{}>({}).map_err(|e| TsuchinokoError::internal(e.to_string()))?",
+                            convert_to, base
+                        )
+                    }
+                    _ => {
+                        // V1.7.0: fallback to generic serde_json deserialization
+                        self.uses_tsuchinoko_error = true;
+                        format!(
+                            "serde_json::from_value::<{}>({}).map_err(|e| TsuchinokoError::internal(e.to_string()))?",
+                            convert_to, base
+                        )
+                    }
                 }
             }
-            IrExpr::Tuple(elements) => {
+            IrExprKind::Tuple(elements) => {
                 let elems: Vec<_> = elements.iter().map(|e| self.emit_expr(e)).collect();
                 format!("({})", elems.join(", "))
             }
-            IrExpr::Index { target, index } => {
+            IrExprKind::Index { target, index } => {
                 // Handle negative index: arr[-1] -> arr[arr.len()-1]
                 // Helper function to extract negative index value
                 fn extract_negative_index(expr: &IrExpr) -> Option<i64> {
-                    match expr {
+                    match &expr.kind {
                         // Case 1: UnaryOp { Neg, IntLit(n) }
-                        IrExpr::UnaryOp {
+                        IrExprKind::UnaryOp {
                             op: IrUnaryOp::Neg,
                             operand,
                         } => {
-                            if let IrExpr::IntLit(n) = operand.as_ref() {
+                            if let IrExprKind::IntLit(n) = &operand.kind {
                                 return Some(*n);
                             }
                         }
                         // Case 2: IntLit with negative value
-                        IrExpr::IntLit(n) if *n < 0 => {
+                        IrExprKind::IntLit(n) if *n < 0 => {
                             return Some(n.abs());
                         }
                         // Case 3: Cast { target: ..., ty } - unwrap and recurse
-                        IrExpr::Cast { target, .. } => {
+                        IrExprKind::Cast { target, .. } => {
                             return extract_negative_index(target);
                         }
                         _ => {}
@@ -2012,7 +2243,7 @@ use pyo3::types::PyList;
                 }
                 format!("{}[{}]", self.emit_expr(target), self.emit_expr(index))
             }
-            IrExpr::Slice {
+            IrExprKind::Slice {
                 target,
                 start,
                 end,
@@ -2027,10 +2258,10 @@ use pyo3::types::PyList;
                     let step_val = self.emit_expr(step_expr);
 
                     // Check if step is -1 (reverse) - could be IntLit(-1) or UnaryOp(Neg, IntLit(1))
-                    let is_reverse = matches!(step_expr.as_ref(), IrExpr::IntLit(-1))
-                        || matches!(step_expr.as_ref(),
-                            IrExpr::UnaryOp { op: IrUnaryOp::Neg, operand }
-                            if matches!(operand.as_ref(), IrExpr::IntLit(1)));
+                    let is_reverse = matches!(&step_expr.kind, IrExprKind::IntLit(-1))
+                        || matches!(&step_expr.kind,
+                            IrExprKind::UnaryOp { op: IrUnaryOp::Neg, operand }
+                            if matches!(&operand.kind, IrExprKind::IntLit(1)));
 
                     if is_reverse {
                         // [::-1] -> .iter().rev().cloned().collect()
@@ -2056,7 +2287,7 @@ use pyo3::types::PyList;
                     return match (start, end) {
                         (None, None) => format!("{target_str}.iter().step_by({step_val} as usize).cloned().collect::<Vec<_>>()"),
                         (Some(s), None) => format!("({{ let v = &{target_str}; let s = ({}).max(0) as usize; v[s..].iter().step_by({step_val} as usize).cloned().collect::<Vec<_>>() }})", self.emit_expr(s)),
-                        (None, Some(e)) => format!("({{ let v = &{target_str}; let e = ({}).min(v.len() as i64).max(0) as usize; v[..e].iter().step_by({step_val} as usize).cloned().collect::<Vec<_>>() }})", self.emit_expr(e)),
+                        (None, Some(e)) => format!("({{ let v = &{target_str}; let e = ({}).min(v.len() as i64).max(0) as usize; v[e..].iter().step_by({step_val} as usize).cloned().collect::<Vec<_>>() }})", self.emit_expr(e)),
                         (Some(s), Some(e)) => format!("({{ let v = &{target_str}; let s = ({}).max(0) as usize; let e = ({}).min(v.len() as i64).max(0) as usize; v[s.min(e)..e].iter().step_by({step_val} as usize).cloned().collect::<Vec<_>>() }})", self.emit_expr(s), self.emit_expr(e)),
                     };
                 }
@@ -2066,12 +2297,12 @@ use pyo3::types::PyList;
                     (None, Some(e)) => {
                         // [:n] -> [..(n as usize).min(len)].to_vec()
                         // Handle negative indices: [:-n] -> [..len().saturating_sub(n)].to_vec()
-                        if let IrExpr::UnaryOp {
+                        if let IrExprKind::UnaryOp {
                             op: IrUnaryOp::Neg,
                             operand,
-                        } = e.as_ref()
+                        } = &e.kind
                         {
-                            if let IrExpr::IntLit(n) = operand.as_ref() {
+                            if let IrExprKind::IntLit(n) = &operand.kind {
                                 return format!(
                                     "({target_str}[..{target_str}.len().saturating_sub({n})].to_vec())"
                                 );
@@ -2088,12 +2319,12 @@ use pyo3::types::PyList;
                     (Some(s), None) => {
                         // [n:] -> [min(n, len)..].to_vec()
                         // Handle negative indices: [-n:] -> [len().saturating_sub(n)..].to_vec()
-                        if let IrExpr::UnaryOp {
+                        if let IrExprKind::UnaryOp {
                             op: IrUnaryOp::Neg,
                             operand,
-                        } = s.as_ref()
+                        } = &s.kind
                         {
-                            if let IrExpr::IntLit(n) = operand.as_ref() {
+                            if let IrExprKind::IntLit(n) = &operand.kind {
                                 return format!(
                                     "({target_str}[{target_str}.len().saturating_sub({n})..].to_vec())"
                                 );
@@ -2119,18 +2350,28 @@ use pyo3::types::PyList;
                     }
                 }
             }
-            IrExpr::Range { start, end } => {
+            IrExprKind::Range { start, end } => {
                 format!("{}..{}", self.emit_expr(start), self.emit_expr(end))
             }
-            IrExpr::MethodCall {
+            IrExprKind::MethodCall {
                 target,
                 method,
                 args,
                 target_type,
+                callee_needs_bridge,
             } => {
+                let mut args_str: Vec<_> = args.iter().map(|a| self.emit_expr(a)).collect();
+                if *callee_needs_bridge {
+                    if self.is_inside_resident_func {
+                        args_str.insert(0, "py_bridge".to_string());
+                    } else {
+                        args_str.insert(0, "&mut py_bridge".to_string());
+                    }
+                }
+
                 if args.is_empty() {
                     if method == "len" {
-                        format!("{}.{}() as i64", self.emit_expr_internal(target), method)
+                        format!("({}.{}() as i64)", self.emit_expr_internal(target), method)
                     } else if method == "copy" {
                         // Python list.copy() -> Rust .to_vec()
                         format!("{}.to_vec()", self.emit_expr_internal(target))
@@ -2349,7 +2590,7 @@ use pyo3::types::PyList;
                     }
                 }
             }
-            IrExpr::PyO3MethodCall {
+            IrExprKind::PyO3MethodCall {
                 target,
                 method,
                 args,
@@ -2372,14 +2613,14 @@ use pyo3::types::PyList;
                 self.current_func_may_raise = true;
                 self.uses_tsuchinoko_error = true;
                 format!(
-                    "{{\n{}    py_bridge.call_json_method::<tsuchinoko::bridge::protocol::TnkValue>({}.clone(), {:?}, &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
+                    "{{\n{}    py_bridge.call_json_method::<TnkValue>({}.clone(), {:?}, &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
                     arg_evals.join("\n    ") + "\n",
                     self.emit_expr_internal(target),
                     method,
                     args_json.join(", ")
                 )
             }
-            IrExpr::FieldAccess { target, field } => {
+            IrExprKind::FieldAccess { target, field } => {
                 // Strip dunder prefix for Rust struct field (Python private -> Rust private convention)
                 let rust_field = field.trim_start_matches("__");
                 format!(
@@ -2388,13 +2629,13 @@ use pyo3::types::PyList;
                     to_snake_case(rust_field)
                 )
             }
-            IrExpr::Reference { target } => {
+            IrExprKind::Reference { target } => {
                 format!("&{}", self.emit_expr_internal(target))
             }
-            IrExpr::MutReference { target } => {
+            IrExprKind::MutReference { target } => {
                 format!("&mut {}", self.emit_expr_internal(target))
             }
-            IrExpr::Print { args } => {
+            IrExprKind::Print { args } => {
                 // Generate println! with type-aware formatting
                 // Type::Any uses {} (Display), others use {:?} (Debug)
                 if args.is_empty() {
@@ -2403,9 +2644,7 @@ use pyo3::types::PyList;
                     let format_specs: Vec<&str> = args
                         .iter()
                         .map(|(_, ty)| {
-                            // Use {} for Type::Any (serde_json::Value) and Type::String
-                            // to avoid escape characters and quotes
-                            if matches!(ty, Type::Any | Type::String) {
+                            if is_display_compatible(ty) {
                                 "{}"
                             } else {
                                 "{:?}"
@@ -2419,15 +2658,19 @@ use pyo3::types::PyList;
                         .map(|(expr, ty)| {
                             let expr_str = self.emit_expr_internal(expr);
                             // For string literals, emit directly
-                            if let IrExpr::StringLit(s) = expr {
+                            if let IrExprKind::StringLit(s) = &expr.kind {
                                 format!("\"{s}\"")
-                            } else if matches!(ty, Type::Any) {
+                            } else if is_any_type(ty) {
                                 // For Type::Any (serde_json::Value), use display_value helper
                                 // to handle Value::String without quotes
-                                format!(
-                                    "bridge::display_value(&{})",
-                                    expr_str.trim_start_matches('&')
-                                )
+                                if self.needs_resident {
+                                    format!(
+                                        "bridge::display_value(&{})",
+                                        expr_str.trim_start_matches('&')
+                                    )
+                                } else {
+                                    expr_str
+                                }
                             } else if expr_str.starts_with('&') {
                                 expr_str
                             } else {
@@ -2440,7 +2683,7 @@ use pyo3::types::PyList;
                 }
             }
             // V1.3.1: StructConstruct - semantic now provides field information
-            IrExpr::StructConstruct { name, fields } => {
+            IrExprKind::StructConstruct { name, fields } => {
                 let field_inits: Vec<String> = fields
                     .iter()
                     .map(|(field_name, value)| {
@@ -2454,17 +2697,17 @@ use pyo3::types::PyList;
                 format!("{} {{ {} }}", name, field_inits.join(", "))
             }
             // V1.6.0: DynamicWrap - wrap value in enum variant
-            IrExpr::DynamicWrap {
+            IrExprKind::DynamicWrap {
                 enum_name,
                 variant,
                 value,
             } => {
                 format!("{}::{}({})", enum_name, variant, self.emit_expr(value))
             }
-            IrExpr::Unwrap(inner) => {
+            IrExprKind::Unwrap(inner) => {
                 format!("{}.unwrap()", self.emit_expr_internal(inner))
             }
-            IrExpr::BridgeMethodCall {
+            IrExprKind::BridgeMethodCall {
                 target,
                 method,
                 args,
@@ -2482,13 +2725,23 @@ use pyo3::types::PyList;
                     .collect::<Vec<_>>()
                     .join(", ");
 
+                // Check if target is BridgeGet (supports fluent syntax)
+                let use_method_syntax = match &target.kind {
+                    IrExprKind::BridgeGet { .. } => true,
+                    IrExprKind::Ref(inner) => matches!(&inner.kind, IrExprKind::BridgeGet { .. }),
+                    _ => false,
+                };
+
                 if keywords.is_empty() {
+                    let call_code = if use_method_syntax {
+                        format!("{}.call_method({:?}, &[{}], None)", target_str, method, args_str)
+                    } else {
+                        format!("py_bridge.call_method(&{}, {:?}, &[{}], None)", target_str, method, args_str)
+                    };
                     format!(
-                        "{}py_bridge.call_method(&{}, {:?}, &[{}], None).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?", 
+                        "{} {}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?", 
                         if self.current_func_may_raise { "" } else { "let _ = " }, 
-                        target_str,
-                        method,
-                        args_str
+                        call_code
                     )
                 } else {
                     let mut kw_setup_code = String::new();
@@ -2500,39 +2753,96 @@ use pyo3::types::PyList;
                         kw_inserts.push_str(&format!("kw.insert({:?}.to_string(), kw_val_{}); ", k, i));
                     }
                     
+                    let call_code = if use_method_syntax {
+                        format!("{}.call_method({:?}, &[{}], Some(&kw))", target_str, method, args_str)
+                    } else {
+                        format!("py_bridge.call_method(&{}, {:?}, &[{}], Some(&kw))", target_str, method, args_str)
+                    };
+                    
                     format!(
-                        "{} {{ let mut kw = std::collections::HashMap::new(); {}{} py_bridge.call_method(&{}, {:?}, &[{}], Some(&kw)) }}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
+                        "{} {{ let mut kw = std::collections::HashMap::new(); {}{} {} }}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
                         if self.current_func_may_raise { "" } else { "let _ = " },
                         kw_setup_code,
                         kw_inserts,
-                        target_str,
-                        method,
-                        args_str
+                        call_code
                     )
                 }
             }
-            IrExpr::Ref(inner) => format!("&{}", self.emit_expr(inner)),
-            IrExpr::TnkValueFrom(inner) => format!("tsuchinoko::bridge::protocol::TnkValue::from({})", self.emit_expr(inner)),
-            IrExpr::BridgeAttributeAccess { target, attribute } => {
+            IrExprKind::BridgeCall {
+                target,
+                args,
+                keywords,
+            } => {
                 self.needs_resident = true;
                 self.current_func_may_raise = true;
                 self.uses_tsuchinoko_error = true;
+
                 let target_str = self.emit_expr(target);
-                format!(
-                    "py_bridge.get_attribute(&{}, \"{}\").map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
-                    target_str, attribute
-                )
+                let args_str: String = args
+                    .iter()
+                    .map(|a| self.emit_expr(a))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                if keywords.is_empty() {
+                    let call_code = format!("{}.call(&[{}], None)", target_str, args_str);
+                    format!(
+                        "{} {}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?", 
+                        if self.current_func_may_raise { "" } else { "let _ = " }, 
+                        call_code
+                    )
+                } else {
+                    let mut kw_setup_code = String::new();
+                    let mut kw_inserts = String::new();
+                    for (i, (k, v)) in keywords.iter().enumerate() {
+                        let val_expr = self.emit_expr(v);
+                        kw_setup_code.push_str(&format!("let kw_val_{} = {}; ", i, val_expr));
+                        kw_inserts.push_str(&format!("kw.insert({:?}.to_string(), kw_val_{}); ", k, i));
+                    }
+                    format!(
+                        "({{ let mut kw = std::collections::HashMap::new(); {}{} {}.call(&[{}], Some(&kw)) }}).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?", 
+                        kw_setup_code, kw_inserts, target_str, args_str
+                    )
+                }
             }
-            IrExpr::BridgeItemAccess { target, index } => {
+            IrExprKind::Ref(inner) => format!("&{}", self.emit_expr(inner)),
+            IrExprKind::TnkValueFrom(inner) => {
+                self.emit_as_tnk_value(inner)
+            },
+            IrExprKind::BridgeAttributeAccess { target, attribute } => {
                 self.needs_resident = true;
-                self.current_func_may_raise = true;
                 self.uses_tsuchinoko_error = true;
                 let target_str = self.emit_expr(target);
-                let index_str = if matches!(index.as_ref(), IrExpr::NoneLit) {
-                    "tsuchinoko::bridge::protocol::TnkValue::Value { value: None }".to_string()
+                
+                // Check if target is BridgeGet (supports fluent syntax)
+                let use_method_syntax = match &target.kind {
+                    IrExprKind::BridgeGet { .. } => true,
+                    IrExprKind::Ref(inner) => matches!(&inner.kind, IrExprKind::BridgeGet { .. }),
+                    _ => false,
+                };
+                
+                if use_method_syntax {
+                     format!(
+                        "{}.get_attribute(\"{}\").map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
+                        target_str, attribute
+                    )
                 } else {
                     format!(
-                        "tsuchinoko::bridge::protocol::TnkValue::from({})",
+                        "py_bridge.get_attribute(&{}, \"{}\").map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
+                        target_str, attribute
+                    )
+                }
+            }
+            IrExprKind::BridgeItemAccess { target, index } => {
+                self.needs_resident = true;
+                self.current_func_may_raise = true;
+                self.uses_tsuchinoko_error = true;
+                let target_str = self.emit_expr(target);
+                let index_str = if matches!(&index.kind, IrExprKind::NoneLit) {
+                    "TnkValue::Value { value: None }".to_string()
+                } else {
+                    format!(
+                        "TnkValue::from({})",
                         self.emit_expr(index)
                     )
                 };
@@ -2542,7 +2852,7 @@ use pyo3::types::PyList;
                     target_str, index_str
                 )
             }
-            IrExpr::BridgeSlice {
+            IrExprKind::BridgeSlice {
                 target,
                 start,
                 stop,
@@ -2553,27 +2863,27 @@ use pyo3::types::PyList;
                 self.uses_tsuchinoko_error = true;
                 let target_str = self.emit_expr(target);
 
-                let start_str = if matches!(start.as_ref(), IrExpr::NoneLit) {
-                    "tsuchinoko::bridge::protocol::TnkValue::Value { value: None }".to_string()
+                let start_str = if matches!(&start.kind, IrExprKind::NoneLit) {
+                    "None".to_string()
                 } else {
                     format!(
-                        "tsuchinoko::bridge::protocol::TnkValue::from({})",
+                        "Some(TnkValue::from({}))",
                         self.emit_expr(start)
                     )
                 };
-                let stop_str = if matches!(stop.as_ref(), IrExpr::NoneLit) {
-                    "tsuchinoko::bridge::protocol::TnkValue::Value { value: None }".to_string()
+                let stop_str = if matches!(&stop.kind, IrExprKind::NoneLit) {
+                    "None".to_string()
                 } else {
                     format!(
-                        "tsuchinoko::bridge::protocol::TnkValue::from({})",
+                        "Some(TnkValue::from({}))",
                         self.emit_expr(stop)
                     )
                 };
-                let step_str = if matches!(step.as_ref(), IrExpr::NoneLit) {
-                    "tsuchinoko::bridge::protocol::TnkValue::Value { value: None }".to_string()
+                let step_str = if matches!(&step.kind, IrExprKind::NoneLit) {
+                    "None".to_string()
                 } else {
                     format!(
-                        "tsuchinoko::bridge::protocol::TnkValue::from({})",
+                        "Some(TnkValue::from({}))",
                         self.emit_expr(step)
                     )
                 };
@@ -2583,7 +2893,11 @@ use pyo3::types::PyList;
                     target_str, start_str, stop_str, step_str
                 )
             }
-            IrExpr::PyO3Call {
+            IrExprKind::BridgeGet { alias } => {
+                self.needs_resident = true;
+                format!("py_bridge.get(\"{}\")", alias)
+            }
+            IrExprKind::PyO3Call {
                 module,
                 method,
                 args,
@@ -2612,7 +2926,7 @@ use pyo3::types::PyList;
                     ));
                 }
 
-                let args_str: Vec<String> = (0..args.len()).map(|i| format!("_arg_{i}")).collect();
+                let args_str_list: Vec<String> = (0..args.len()).map(|i| format!("_arg_{i}")).collect();
 
                 // 方式選択テーブルを参照
                 use crate::bridge::module_table::{
@@ -2624,7 +2938,7 @@ use pyo3::types::PyList;
                         // Rust ネイティブ実装 - PyO3/Resident 不要
                         // Native の場合は、既に arg_evals があると困るかもしれないが、
                         // Expression block にすれば OK
-                        let native_code = generate_native_code(&target, &args_str)
+                        let native_code = generate_native_code(&target, &args_str_list)
                             .unwrap_or_else(|| format!("/* Native not implemented: {target} */"));
                         format!(
                             "{{\n{}    {}\n}}",
@@ -2643,7 +2957,7 @@ use pyo3::types::PyList;
                         self.current_func_may_raise = true;
                         self.uses_tsuchinoko_error = true;
                         format!(
-                            "{{\n{}    py_bridge.call_json::<tsuchinoko::bridge::protocol::TnkValue>(\"{}\", &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
+                            "{{\n{}    py_bridge.call_json::<TnkValue>(\"{}\", &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
                             arg_evals.join("\n    ") + "\n",
                             target,
                             args_json.join(", ")
@@ -2699,3 +3013,19 @@ impl CodeEmitter for RustEmitter {
 
 #[cfg(test)]
 mod tests;
+
+fn is_display_compatible(ty: &Type) -> bool {
+    match ty {
+        Type::Any | Type::String | Type::Int | Type::Float | Type::Bool => true,
+        Type::Ref(inner) => is_display_compatible(inner),
+        _ => false,
+    }
+}
+
+fn is_any_type(ty: &Type) -> bool {
+    match ty {
+        Type::Any => true,
+        Type::Ref(inner) => is_any_type(inner),
+        _ => false,
+    }
+}

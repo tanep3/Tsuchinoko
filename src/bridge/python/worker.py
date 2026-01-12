@@ -45,6 +45,12 @@ def encode_value(v, session_id):
         return {"kind": "value", "value": v}
     if isinstance(v, (int, float)):
         return {"kind": "value", "value": v}
+    # Scalar-like objects (e.g., numpy scalars) -> convert via item() generically
+    try:
+        if hasattr(v, "item") and callable(getattr(v, "item")):
+            return encode_value(v.item(), session_id)
+    except Exception:
+        pass
     if isinstance(v, str):
         return {"kind": "value", "value": v}
     if isinstance(v, (list, tuple)):
@@ -72,11 +78,19 @@ def encode_value(v, session_id):
     except:
         repr_str = f"<{type_name} object>"
 
+    try:
+        str_str = str(v)
+        if len(str_str) > 200:
+            str_str = str_str[:197] + "..."
+    except:
+        str_str = repr_str
+
     return {
         "kind": "handle",
         "id": obj_id,
         "type": type_name,
         "repr": repr_str,
+        "str": str_str,
         "session_id": session_id
     }
 
@@ -144,6 +158,24 @@ def resolve_callable(target_str, session_id):
         
     return current_obj
 
+def resolve_target(target, session_id):
+    """Resolve target (Handle ID or Module definition) to a Python object."""
+    if isinstance(target, dict) and target.get("kind") == "module":
+        # Target is a module: {"kind": "module", "module": "cv2"}
+        module_name = target["module"]
+        return resolve_callable(module_name, session_id)
+    
+    # Otherwise, assume target is a Handle ID (string)
+    if not isinstance(target, str):
+         raise ValueError(f"Invalid target format: {target}")
+         
+    session = get_session(session_id)
+    if target not in session["objects"]:
+        raise ValueError(f"StaleHandle: {target}")
+        
+    return session["objects"][target]
+
+
 # --- Command Handlers ---
 
 def handle_call_function(cmd):
@@ -155,29 +187,36 @@ def handle_call_function(cmd):
     args = [decode_value(a, session_id) for a in cmd["args"]]
     kwargs = {k: decode_value(v, session_id) for k, v in (cmd.get("kwargs") or {}).items()}
     
+    func = None
     try:
         func = resolve_callable(target_str, session_id)
+    except ImportError:
+         return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": "ImportError", "message": f"Module implementation not found: {target_str}"})
+    except AttributeError:
+         return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": "AttributeError", "message": f"Attribute not found: {target_str}"})
+    except Exception as e:
+         return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e), "traceback": traceback.format_exc()})
+
+    try:
         result = func(*args, **kwargs)
         return make_response(cmd.get("req_id"), value=encode_value(result, session_id))
-    except ImportError:
-        return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": "ImportError", "message": f"Module implementation not found: {target_str}"})
-    except AttributeError:
-        return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": "AttributeError", "message": f"Attribute not found: {target_str}"})
     except Exception as e:
         return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e), "traceback": traceback.format_exc()})
 
 def handle_call_method(cmd):
     session_id = cmd["session_id"]
-    target_id = cmd["target"]
+    target = cmd["target"]
     method_name = cmd["method"]
     args = [decode_value(a, session_id) for a in cmd["args"]]
     kwargs = {k: decode_value(v, session_id) for k, v in (cmd.get("kwargs") or {}).items()}
     
-    session = get_session(session_id)
-    if target_id not in session["objects"]:
-        return make_response(cmd.get("req_id"), error={"code": "StaleHandle", "message": f"Handle {target_id} not found"})
-    
-    obj = session["objects"][target_id]
+    try:
+        obj = resolve_target(target, session_id)
+    except ValueError as e:
+        if "StaleHandle" in str(e):
+             return make_response(cmd.get("req_id"), error={"code": "StaleHandle", "message": str(e)})
+        return make_response(cmd.get("req_id"), error={"code": "ProtocolError", "message": str(e)})
+
     if not hasattr(obj, method_name):
          return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": "AttributeError", "message": f"{type(obj)} has no attribute {method_name}"})
     
@@ -190,17 +229,19 @@ def handle_call_method(cmd):
 
 def handle_get_attribute(cmd):
     session_id = cmd["session_id"]
-    target_id = cmd["target"]
+    target = cmd["target"]
     attr_name = cmd["name"]
     
     if attr_name.startswith("_"):
         return make_response(cmd.get("req_id"), error={"code": "SecurityViolation", "message": "Access to private attributes is forbidden"})
 
-    session = get_session(session_id)
-    if target_id not in session["objects"]:
-        return make_response(cmd.get("req_id"), error={"code": "StaleHandle", "message": f"Handle {target_id} not found"})
+    try:
+        obj = resolve_target(target, session_id)
+    except ValueError as e:
+        if "StaleHandle" in str(e):
+             return make_response(cmd.get("req_id"), error={"code": "StaleHandle", "message": str(e)})
+        return make_response(cmd.get("req_id"), error={"code": "ProtocolError", "message": str(e)})
 
-    obj = session["objects"][target_id]
     try:
         result = getattr(obj, attr_name)
         return make_response(cmd.get("req_id"), value=encode_value(result, session_id))
@@ -209,14 +250,16 @@ def handle_get_attribute(cmd):
 
 def handle_get_item(cmd):
     session_id = cmd["session_id"]
-    target_id = cmd["target"]
+    target = cmd["target"]
     key = decode_value(cmd["key"], session_id)
     
-    session = get_session(session_id)
-    if target_id not in session["objects"]:
-        return make_response(cmd.get("req_id"), error={"code": "StaleHandle", "message": f"Handle {target_id} not found"})
-    
-    obj = session["objects"][target_id]
+    try:
+        obj = resolve_target(target, session_id)
+    except ValueError as e:
+        if "StaleHandle" in str(e):
+             return make_response(cmd.get("req_id"), error={"code": "StaleHandle", "message": str(e)})
+        return make_response(cmd.get("req_id"), error={"code": "ProtocolError", "message": str(e)})
+
     try:
         result = obj[key]
         return make_response(cmd.get("req_id"), value=encode_value(result, session_id))
@@ -283,6 +326,7 @@ def handle_iter(cmd):
             "id": it_id,
             "type": type(it).__name__,
             "repr": repr(it),
+            "str": str(it),
             "session_id": session_id
         })
     except Exception as e:

@@ -1,7 +1,8 @@
 //! Type definitions
+use serde::{Deserialize, Serialize};
 
 /// Rust types
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Type {
     Int,                        // i64
     Float,                      // f64
@@ -168,8 +169,8 @@ impl Type {
             }
             Type::Unit => "()".to_string(),
             Type::Struct(name) => name.clone(),
-            Type::Any => "tsuchinoko::bridge::protocol::TnkValue".to_string(),
-            Type::Unknown => "tsuchinoko::bridge::protocol::TnkValue".to_string(),
+            Type::Any => "TnkValue".to_string(),
+            Type::Unknown => "TnkValue".to_string(),
         }
     }
 
@@ -245,6 +246,38 @@ impl Type {
                 params.iter().any(|t| t.contains_unknown()) || ret.contains_unknown()
             }
             _ => false,
+        }
+    }
+
+    /// V1.7.0: Generate idiomatic Rust default value for this type
+    /// This is used for safe fallback returns in TryBlock or complex flow.
+    pub fn to_default_value(&self) -> String {
+        match self {
+            Type::Int => "0i64".to_string(),
+            Type::Float => "0.0".to_string(),
+            Type::String => "String::new()".to_string(),
+            Type::Bool => "false".to_string(),
+            Type::List(_) => "vec![]".to_string(),
+            Type::Set(_) => "std::collections::HashSet::new()".to_string(),
+            Type::Tuple(types) => {
+                let inner: Vec<_> = types.iter().map(|t| t.to_default_value()).collect();
+                format!("({})", inner.join(", "))
+            }
+            Type::Dict(_, _) => "std::collections::HashMap::new()".to_string(),
+            Type::Optional(_) => "None".to_string(),
+            Type::Any | Type::Unknown => "TnkValue::Value { value: None }".to_string(),
+            Type::Unit => "()".to_string(),
+            Type::Ref(inner) => {
+                // Return a mock static ref if needed, but usually we shouldn't fall back to refs.
+                // For simplicity, return default of inner (might require leak/static)
+                // Actually, Tsuchinoko functions usually return owned values or Result.
+                format!("&{}", inner.to_default_value())
+            }
+            Type::Struct(name) => {
+                // Assumes Default trait or minimal init
+                format!("{}::default()", name)
+            }
+            _ => "todo!(\"default value for this type\")".to_string(),
         }
     }
 }

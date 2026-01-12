@@ -57,12 +57,24 @@ impl SemanticAnalyzer {
             }
             Expr::Call { func, args, .. } => {
                 // Check for PyO3 module calls first: np.*, pd.*, etc.
-                if let Expr::Attribute { value, .. } = func.as_ref() {
-                    if let Expr::Ident(module_alias) = value.as_ref() {
+                if let Expr::Attribute { value, attr } = func.as_ref() {
+                    if let Expr::Ident(module_name) = value.as_ref() {
+                        // Resolve module alias (e.g., m -> math)
+                        let real_module = self
+                            .module_global_aliases
+                            .get(module_name)
+                            .map(|s| s.as_str())
+                            .unwrap_or(module_name);
+
+                        let full_target = format!("{real_module}.{attr}");
+                        if crate::bridge::module_table::is_native_target(&full_target) {
+                            return Type::Float;
+                        }
+
                         let is_pyo3_module = self
                             .external_imports
                             .iter()
-                            .any(|(_, alias)| alias == module_alias);
+                            .any(|(_, alias)| alias == module_name);
                         if is_pyo3_module {
                             return Type::Any;
                         }
@@ -79,6 +91,24 @@ impl SemanticAnalyzer {
                     if name == "tuple" || name == "list" {
                         return Type::List(Box::new(Type::Unknown));
                     }
+                    if name == "sorted" || name == "reversed" {
+                        return Type::List(Box::new(Type::Unknown));
+                    }
+                    if name == "enumerate" {
+                        return Type::List(Box::new(Type::Tuple(vec![Type::Int, Type::Unknown])));
+                    }
+                    if name == "zip" {
+                        return Type::List(Box::new(Type::Tuple(vec![Type::Unknown; args.len()])));
+                    }
+                    if name == "map" || name == "filter" {
+                        return Type::List(Box::new(Type::Unknown));
+                    }
+                    if name == "sum" {
+                        return Type::Int;
+                    }
+                    if name == "all" || name == "any" {
+                        return Type::Bool;
+                    }
                     // dict(x) returns the same Dict type as x
                     if name == "dict" && !args.is_empty() {
                         let arg_ty = self.infer_type(&args[0]);
@@ -92,6 +122,14 @@ impl SemanticAnalyzer {
                         if let Type::Func { params: _, ret, .. } = &info.ty {
                             return *ret.clone();
                         }
+                    }
+                    // V1.3.1: Check if this is a struct constructor call
+                    if self.struct_field_types.contains_key(name) {
+                        return Type::Struct(name.clone());
+                    }
+                    // Fallback for capitalized names (assumed to be structs even if defined elsewhere)
+                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                        return Type::Struct(name.clone());
                     }
                 } else if let Expr::Attribute { value, attr } = func.as_ref() {
                     let mut target_ty = self.infer_type(value);
@@ -228,12 +266,37 @@ impl SemanticAnalyzer {
                         }
                     }
                 }
+
+                // V1.4.0: Handle native module attributes (math.pi, etc.)
+                if let Expr::Ident(module_name) = value.as_ref() {
+                    let real_module = self
+                        .module_global_aliases
+                        .get(module_name)
+                        .map(|s| s.as_str())
+                        .unwrap_or(module_name);
+
+                    let full_target = format!("{real_module}.{attr}");
+                    if crate::bridge::module_table::is_native_target(&full_target) {
+                        return Type::Float;
+                    }
+                }
+
                 // If target is Type::Any, attribute access returns Type::Any
                 let target_ty = self.infer_type(value);
                 if matches!(target_ty, Type::Any) {
                     return Type::Any;
                 }
                 Type::Unknown
+            }
+            Expr::FString { .. } => Type::String,
+            Expr::Lambda { params, body } => {
+                let ret_ty = self.infer_type(body);
+                Type::Func {
+                    params: vec![Type::Unknown; params.len()],
+                    ret: Box::new(ret_ty),
+                    is_boxed: true,
+                    may_raise: false,
+                }
             }
             _ => Type::Unknown,
         }
