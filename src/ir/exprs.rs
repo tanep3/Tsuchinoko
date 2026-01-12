@@ -17,6 +17,12 @@ pub enum BuiltinId {
     Range,
     Enumerate,
     Zip,
+    Int,
+    Float,
+    Str,
+    List,
+    Tuple,
+    Dict,
     Abs,
     Min,
     Max,
@@ -30,6 +36,8 @@ pub enum BuiltinId {
     Print,      // V1.7.0
     IsInstance, // V1.7.0
     Open,       // V1.7.0
+    Sorted,     // V1.7.0
+    Set,        // V1.7.0
 }
 
 impl BuiltinId {
@@ -43,6 +51,12 @@ impl BuiltinId {
             BuiltinId::Range => "range",
             BuiltinId::Enumerate => "enumerate",
             BuiltinId::Zip => "zip",
+            BuiltinId::Int => "int",
+            BuiltinId::Float => "float",
+            BuiltinId::Str => "str",
+            BuiltinId::List => "list",
+            BuiltinId::Tuple => "tuple",
+            BuiltinId::Dict => "dict",
             BuiltinId::Abs => "abs",
             BuiltinId::Min => "min",
             BuiltinId::Max => "max",
@@ -56,6 +70,8 @@ impl BuiltinId {
             BuiltinId::Print => "print",
             BuiltinId::IsInstance => "isinstance",
             BuiltinId::Open => "open",
+            BuiltinId::Sorted => "sorted",
+            BuiltinId::Set => "set",
         }
     }
 }
@@ -116,6 +132,11 @@ pub enum IrExprKind {
         /// V1.7.0: 呼び出し先が PythonBridge を必要とするかどうか
         callee_needs_bridge: bool,
     },
+    /// 静的メソッド呼び出し (e.g., Type::method(...))
+    StaticCall {
+        path: String,
+        args: Vec<IrExpr>,
+    },
     /// メソッド呼び出し (e.g., arr.len())
     MethodCall {
         target: Box<IrExpr>,
@@ -172,6 +193,12 @@ pub enum IrExprKind {
     BuiltinCall {
         id: BuiltinId,
         args: Vec<IrExpr>,
+    },
+    /// V1.7.0: sorted の構造化表現
+    Sorted {
+        iter: Box<IrExpr>,
+        key: Option<Box<IrExpr>>,
+        reverse: bool,
     },
 
     // --- Conversions (V1.7.0 Option B) ---
@@ -282,6 +309,8 @@ pub enum IrExprKind {
     BoxNew(Box<IrExpr>),
     /// 明示的キャスト (expr as type)
     Cast { target: Box<IrExpr>, ty: String },
+    /// 定数参照 (native constantなど)
+    ConstRef { path: String },
     /// 生Rustコード (IRで表現できないパターン用)
     RawCode(String),
     /// JSON変換 (PyO3戻り値用)
@@ -305,6 +334,13 @@ pub enum IrExprKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_builtin_id_to_rust_name() {
+        assert_eq!(BuiltinId::Len.to_rust_name(), "len");
+        assert_eq!(BuiltinId::Dict.to_rust_name(), "dict");
+        assert_eq!(BuiltinId::IsInstance.to_rust_name(), "isinstance");
+    }
 
     #[test]
     fn test_ir_expr_int_lit() {

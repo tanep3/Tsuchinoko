@@ -1,8 +1,8 @@
 # Tsuchinoko システム設計書
 
 > **著者**: Tane Channel Technology  
-> **バージョン**: 1.6.0  
-> **最終更新**: 2026-01-10
+> **バージョン**: 1.7.0  
+> **最終更新**: 2026-01-12
 
 ---
 
@@ -37,6 +37,7 @@ flowchart TB
         AST[AST<br/>抽象構文木]
         SEM[Semantic Analyzer<br/>意味解析・型推論]
         IR[IR<br/>中間表現]
+        LOW[Lowering<br/>正規化・組み込み展開]
         EMIT[Emitter<br/>Rustコード生成]
     end
     
@@ -44,7 +45,7 @@ flowchart TB
         RS[Rust Source<br/>.rs]
     end
     
-    PY --> LEX --> PARSE --> AST --> SEM --> IR --> EMIT --> RS
+    PY --> LEX --> PARSE --> AST --> SEM --> IR --> LOW --> EMIT --> RS
 ```
 
 ### 2.2 処理パイプライン
@@ -56,7 +57,77 @@ flowchart TB
 | 3 | AST Builder | Parse Tree | AST | 抽象構文木構築 |
 | 4 | Semantic | AST | Typed AST | 型推論・スコープ解決 |
 | 5 | IR Generator | Typed AST | IR | 中間表現生成 |
-| 6 | Emitter | IR | Rust Code | コード出力 |
+| 6 | Lowering | IR | 正規化IR | 組み込み展開・型変換挿入 |
+| 7 | Emitter | 正規化IR | Rust Code | コード出力 |
+
+---
+
+### 2.3 宣言的組み込み管理とIR正規化（V1.7.0）
+
+V1.7.0 では、組み込み関数やブリッジ呼び出しを「宣言データ」と「正規化処理」に分離し、構造的に管理する。
+
+#### 設計原則
+
+- **Semantic は「事実の特定」に専念**  
+  例: `len`, `sorted`, `set` などを `BuiltinId` として確定し、型テーブルに記録する。
+- **BuiltinTable は宣言データの唯一の真実**  
+  関数名・種別（Bridge/Native/Intrinsic）・戻り値推論はここで定義する。
+- **Lowering が正規化を担当**  
+  `BuiltinCall` を `BridgeCall`/`MethodCall`/`Sorted` 等に展開し、型の不一致があれば `FromTnkValue` を挿入する。
+- **Emitter は構造化IRの機械的出力**  
+  RawCode 依存を最小化し、IRの構造を忠実に Rust 構文へ反映する。
+
+#### BuiltinTable（宣言データ）
+
+```rust
+pub enum BuiltinKind {
+    Bridge { target: &'static str },
+    NativeMethod { method: &'static str },
+    Intrinsic { op: IntrinsicOp },
+}
+
+pub struct BuiltinSpec {
+    pub id: BuiltinId,
+    pub name: &'static str,
+    pub kind: BuiltinKind,
+    pub ret_ty_resolver: fn(args: &[Type]) -> Type,
+}
+```
+
+#### 代表的な構造化IR
+
+- `BuiltinCall`: 組み込み呼び出しの確定（Semantic で生成）
+- `Sorted`: `sorted(...)` の構造化表現
+- `StaticCall`: `Type::method(...)` など静的呼び出しの構造化
+- `ConstRef`: `std::f64::consts::PI` 等の定数参照
+- `FromTnkValue`: ブリッジ戻り値の標準変換
+
+#### RawCode の扱い（方針と棚卸し）
+
+RawCode は原則排除し、構造化で表現できるものは IR で保持する。  
+現時点で例外的に RawCode を残すのは **文字列スライスの特殊処理**（`s[::n]`, `s[::-1]`）のみ。
+
+理由:
+Rust の `chars().step_by()` / `rev()` は構文変換での特殊ケースが多く、IR だけでの表現が煩雑なため。
+
+**残存（意図的）**
+- 文字列スライスの特殊処理  
+  - 例: `s[::n]`, `s[::-1]`  
+  - 生成: `s.chars().step_by(n)` / `s.chars().rev()`  
+  - 理由: Rust の文字列操作が特殊で、構造化IRのみで表現すると複雑化するため。
+
+**排除済み（構造化へ移行）**
+- `zip` / `enumerate` の map 本体
+- `dict -> HashMap` 変換の map 本体
+- `any` / `all` の predicate
+- `sorted`（`Sorted` IR）
+- `items` の owned 化（Closure + Tuple）
+- native constant / static call（`ConstRef` / `StaticCall`）
+
+#### Native バインディングの構造化
+
+`module_table` の native binding は `ConstRef` や `MethodCall` を通じて構造化出力する。  
+従来の `generate_native_code` は廃止し、`NativeBinding` を直接参照する。
 
 ---
 
@@ -81,7 +152,8 @@ tsuchinoko/
 │   │   ├── mod.rs
 │   │   ├── scope.rs         # スコープ管理
 │   │   ├── types.rs         # 型システム
-│   │   └── inference.rs     # 型推論
+│   │   ├── type_infer.rs    # 型推論
+│   │   └── lowering.rs      # IR正規化（V1.7.0）
 │   ├── ir/
 │   │   ├── mod.rs
 │   │   └── nodes.rs         # IR構造体
@@ -91,6 +163,7 @@ tsuchinoko/
 │   ├── bridge/              # V1.2.0: Import ブリッジ
 │   │   ├── mod.rs           # PythonBridge ランタイム
 │   │   ├── module_table.rs  # 方式選択テーブル
+│   │   ├── builtin_table.rs # 組み込み宣言テーブル（V1.7.0）
 │   │   ├── worker.rs        # 埋め込み Python ワーカー
 │   │   └── tsuchinoko_error.rs  # V1.5.2: エラー型定義
 │   └── error.rs             # エラー定義
@@ -146,6 +219,7 @@ import 文を含む Python コードを Rust で動作させるためのトリ�
 flowchart TB
     subgraph Bridge["bridge/ Module"]
         TABLE[module_table.rs]
+        BUILTIN[builtin_table.rs]
         WORKER[worker.rs]
         RUNTIME[mod.rs]
     end
@@ -156,6 +230,7 @@ flowchart TB
     end
     
     TABLE --> RUNTIME
+    BUILTIN --> RUNTIME
     WORKER --> RUNTIME
     RUNTIME --> RUST
     RUST <-->|NDJSON| PYTHON

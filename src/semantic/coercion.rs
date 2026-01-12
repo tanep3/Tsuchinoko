@@ -249,4 +249,73 @@ mod tests {
         assert!(!needs_reference_wrap(true, &Type::Ref(Box::new(Type::Int))));
         assert!(!needs_reference_wrap(false, &Type::Int));
     }
+
+    #[test]
+    fn test_needs_clone_or_to_string_for_string_literal() {
+        let ir = IrExpr { id: crate::ir::ExprId(0), kind: IrExprKind::StringLit("x".to_string()) };
+        let method = needs_clone_or_to_string(&ir, &Type::String, &Type::String);
+        assert_eq!(method, Some("to_string"));
+    }
+
+    #[test]
+    fn test_needs_clone_or_to_string_for_struct() {
+        let ir = IrExpr { id: crate::ir::ExprId(0), kind: IrExprKind::Var("v".to_string()) };
+        let method = needs_clone_or_to_string(&ir, &Type::Struct("S".to_string()), &Type::Struct("S".to_string()));
+        assert_eq!(method, Some("clone"));
+    }
+
+    #[test]
+    fn test_needs_clone_or_to_string_skips_copy_type() {
+        let ir = IrExpr { id: crate::ir::ExprId(0), kind: IrExprKind::Var("v".to_string()) };
+        let method = needs_clone_or_to_string(&ir, &Type::Int, &Type::Int);
+        assert_eq!(method, None);
+    }
+
+    #[test]
+    fn test_apply_auto_deref_on_copy_ref() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let ir = IrExpr { id: crate::ir::ExprId(0), kind: IrExprKind::Var("x".to_string()) };
+        let (out, ty) = apply_auto_deref(&mut analyzer, ir, &Type::Ref(Box::new(Type::Int)));
+        assert_eq!(ty, Type::Int);
+        assert!(matches!(out.kind, IrExprKind::UnaryOp { op: IrUnaryOp::Deref, .. }));
+    }
+
+    #[test]
+    fn test_apply_auto_deref_skips_non_copy() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let ir = IrExpr { id: crate::ir::ExprId(0), kind: IrExprKind::Var("s".to_string()) };
+        let (out, ty) = apply_auto_deref(&mut analyzer, ir, &Type::Ref(Box::new(Type::String)));
+        assert_eq!(ty, Type::Ref(Box::new(Type::String)));
+        assert!(matches!(out.kind, IrExprKind::Var(_)));
+    }
+
+    #[test]
+    fn test_needs_reference_wrap_false_when_no_ref_needed() {
+        assert!(!needs_reference_wrap(false, &Type::Ref(Box::new(Type::Int))));
+    }
+
+    #[test]
+    fn test_needs_box_wrap_false_when_expected_not_boxed() {
+        let expected = Type::Func {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Int),
+            is_boxed: false,
+            may_raise: false,
+        };
+        let actual = Type::Func {
+            params: vec![Type::Int],
+            ret: Box::new(Type::Int),
+            is_boxed: false,
+            may_raise: false,
+        };
+        assert!(!needs_box_wrap(&expected, &actual));
+    }
+
+    #[test]
+    fn test_needs_some_wrap_false_for_optional_actual() {
+        let expected = Type::Optional(Box::new(Type::Int));
+        let actual = Type::Optional(Box::new(Type::Int));
+        let expr = Expr::IntLiteral(1);
+        assert!(!needs_some_wrap(&expected, &actual, &expr));
+    }
 }

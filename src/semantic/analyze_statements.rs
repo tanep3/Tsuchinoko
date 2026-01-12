@@ -1129,35 +1129,30 @@ impl SemanticAnalyzer {
                             ir
                         };
 
-                        // If returning a Bridge* result into a concrete return type, convert from TnkValue.
-                        let mut skip_optional_wrap = false;
-                        let mut converted_from_tnk = false;
-                        let ir = if let Some(ret_ty) = &self.current_return_type {
-                            if !matches!(ret_ty, Type::Any | Type::Unknown)
-                                && matches!(
-                                    ir.kind,
-                                    IrExprKind::BridgeCall { .. }
-                                        | IrExprKind::BridgeMethodCall { .. }
-                                        | IrExprKind::BridgeGet { .. }
+                        // Bridge結果はLoweringでFromTnkValueを挿入するため、OptionalのSomeラップだけ抑止する。
+                        let is_bridge_result = matches!(
+                            ir.kind,
+                            IrExprKind::BridgeCall { .. }
+                                | IrExprKind::BridgeMethodCall { .. }
+                                | IrExprKind::BridgeGet { .. }
+                                | IrExprKind::BridgeAttributeAccess { .. }
+                                | IrExprKind::BridgeItemAccess { .. }
+                                | IrExprKind::BridgeSlice { .. }
+                        ) || matches!(
+                            ir.kind,
+                            IrExprKind::Call { ref func, .. }
+                                if matches!(
+                                    func.kind,
+                                    IrExprKind::BridgeGet { .. }
                                         | IrExprKind::BridgeAttributeAccess { .. }
                                         | IrExprKind::BridgeItemAccess { .. }
                                         | IrExprKind::BridgeSlice { .. }
                                 )
-                            {
-                                if matches!(ret_ty, Type::Optional(_)) {
-                                    skip_optional_wrap = true;
-                                }
-                                converted_from_tnk = true;
-                                self.create_expr(IrExprKind::FromTnkValue {
-                                    value: Box::new(ir),
-                                    to_type: ret_ty.clone(),
-                                }, ret_ty.clone())
-                            } else {
-                                ir
-                            }
-                        } else {
-                            ir
-                        };
+                        );
+                        let skip_optional_wrap = matches!(
+                            self.current_return_type,
+                            Some(Type::Optional(_))
+                        ) && is_bridge_result;
 
                         // Wrap in Some() if returning to Optional and value is not None
                         if is_optional_return && !skip_optional_wrap && !matches!(ir.kind, IrExprKind::NoneLit) {
@@ -1168,7 +1163,7 @@ impl SemanticAnalyzer {
                                 callee_may_raise: false,
                                 callee_needs_bridge: false,
                             }, self.current_return_type.clone().unwrap_or(Type::Unknown))))
-                        } else if matches!(ty, Type::Any) && !converted_from_tnk {
+                        } else if matches!(ty, Type::Any) && !is_bridge_result {
                             // Convert Type::Any (serde_json::Value) to expected return type
                             if let Some(ret_ty) = &self.current_return_type {
                                 let conversion = match ret_ty {
@@ -1640,6 +1635,42 @@ mod tests {
     use crate::parser::parse;
     use crate::semantic::analyze;
 
+    fn node_matches(node: &IrNode, pred: &dyn Fn(&IrNode) -> bool) -> bool {
+        if pred(node) {
+            return true;
+        }
+        match node {
+            IrNode::Sequence(nodes) => nodes.iter().any(|n| node_matches(n, pred)),
+            IrNode::Block { stmts } => stmts.iter().any(|n| node_matches(n, pred)),
+            IrNode::If { then_block, else_block, .. } => {
+                then_block.iter().any(|n| node_matches(n, pred))
+                    || else_block
+                        .as_ref()
+                        .map(|b| b.iter().any(|n| node_matches(n, pred)))
+                        .unwrap_or(false)
+            }
+            IrNode::For { body, .. } => body.iter().any(|n| node_matches(n, pred)),
+            IrNode::While { body, .. } => body.iter().any(|n| node_matches(n, pred)),
+            IrNode::TryBlock { try_body, except_body, else_body, finally_body, .. } => {
+                try_body.iter().any(|n| node_matches(n, pred))
+                    || except_body.iter().any(|n| node_matches(n, pred))
+                    || else_body
+                        .as_ref()
+                        .map(|b| b.iter().any(|n| node_matches(n, pred)))
+                        .unwrap_or(false)
+                    || finally_body
+                        .as_ref()
+                        .map(|b| b.iter().any(|n| node_matches(n, pred)))
+                        .unwrap_or(false)
+            }
+            IrNode::Match { arms, .. } => arms.iter().any(|arm| arm.body.iter().any(|n| node_matches(n, pred))),
+            IrNode::FuncDecl { body, .. } => body.iter().any(|n| node_matches(n, pred)),
+            IrNode::MethodDecl { body, .. } => body.iter().any(|n| node_matches(n, pred)),
+            IrNode::ImplBlock { methods, .. } => methods.iter().any(|m| node_matches(m, pred)),
+            _ => false,
+        }
+    }
+
     #[test]
     fn test_analyze_function_def() {
         let code = r#"
@@ -1819,6 +1850,154 @@ def foo() -> str:
         let program = parse(code).unwrap();
         let ir = analyze(&program).unwrap();
         assert!(matches!(&ir[0], IrNode::FuncDecl { .. }));
+    }
+
+    #[test]
+    fn test_analyze_return_optional_wraps_some() {
+        let code = r#"
+from typing import Optional
+
+def foo() -> Optional[int]:
+    return 1
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        if let IrNode::FuncDecl { body, .. } = &ir[0] {
+            if let IrNode::Return(Some(expr)) = &body[0] {
+                match &expr.kind {
+                    IrExprKind::Call { func, .. } => {
+                        assert!(matches!(&func.kind, IrExprKind::Var(name) if name == "Some"));
+                    }
+                    _ => panic!("Expected return Some(...)"),
+                }
+            } else {
+                panic!("Expected Return(Some(...))");
+            }
+        }
+    }
+
+    #[test]
+    fn test_analyze_return_optional_none_no_some() {
+        let code = r#"
+from typing import Optional
+
+def foo() -> Optional[int]:
+    return None
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        if let IrNode::FuncDecl { body, .. } = &ir[0] {
+            if let IrNode::Return(Some(expr)) = &body[0] {
+                assert!(matches!(expr.kind, IrExprKind::NoneLit));
+            } else {
+                panic!("Expected Return(Some(None))");
+            }
+        }
+    }
+
+    #[test]
+    fn test_analyze_try_except_creates_tryblock() {
+        let code = r#"
+try:
+    x = 1
+except Exception:
+    x = 2
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(ir.iter().any(|n| node_matches(n, &|node| matches!(node, IrNode::TryBlock { .. }))));
+    }
+
+    #[test]
+    fn test_analyze_raise_statement() {
+        let code = r#"
+raise ValueError("oops")
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(ir.iter().any(|n| node_matches(n, &|node| matches!(node, IrNode::Raise { .. }))));
+    }
+
+    #[test]
+    fn test_analyze_while_loop() {
+        let code = r#"
+while x < 10:
+    x = x + 1
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(ir.iter().any(|n| node_matches(n, &|node| matches!(node, IrNode::While { .. }))));
+    }
+
+    #[test]
+    fn test_analyze_aug_assign() {
+        let code = r#"
+x = 1
+x += 2
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(ir.iter().any(|n| node_matches(n, &|node| matches!(node, IrNode::AugAssign { .. }))));
+    }
+
+    #[test]
+    fn test_analyze_multi_assign_tuple() {
+        let code = r#"
+a, b = (1, 2)
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(ir.iter().any(|n| node_matches(n, &|node| matches!(node, IrNode::MultiAssign { .. } | IrNode::MultiVarDecl { .. }))));
+    }
+
+    #[test]
+    fn test_analyze_return_none_in_unannotated_func() {
+        let code = r#"
+def foo():
+    return None
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        if let IrNode::FuncDecl { body, .. } = &ir[0] {
+            assert!(matches!(&body[0], IrNode::Return(_)));
+        }
+    }
+
+    #[test]
+    fn test_analyze_if_else_statement() {
+        let code = r#"
+if x:
+    y = 1
+else:
+    y = 2
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(ir.iter().any(|n| node_matches(n, &|node| matches!(node, IrNode::If { else_block: Some(_), .. }))));
+    }
+
+    #[test]
+    fn test_analyze_with_statement_block() {
+        let code = r#"
+with open("file.txt") as f:
+    x = 1
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        assert!(ir.iter().any(|n| node_matches(n, &|node| matches!(node, IrNode::Block { .. }))));
+    }
+
+    #[test]
+    fn test_analyze_match_statement() {
+        let code = r#"
+match x:
+    case _:
+        y = 1
+"#;
+        let program = parse(code).unwrap();
+        let ir = analyze(&program).unwrap();
+        // Match が未対応の構成でも解析が落ちないことを確認する
+        assert!(!ir.is_empty());
     }
 
     // --- multiple targets in for ---

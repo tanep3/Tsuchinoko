@@ -482,4 +482,38 @@ mod tests {
             _ => panic!("Expected Ok"),
         }
     }
+
+    #[test]
+    fn test_tnk_value_as_i64_and_as_f64() {
+        let v_int = TnkValue::Value { value: Some(JsonPrimitive::Int(7)) };
+        let v_float = TnkValue::Value { value: Some(JsonPrimitive::Float(3.5)) };
+        assert_eq!(v_int.as_i64(), Some(7));
+        assert_eq!(v_float.as_i64(), Some(3));
+        assert_eq!(v_int.as_f64(), Some(7.0));
+        assert_eq!(v_float.as_f64(), Some(3.5));
+    }
+
+    #[test]
+    fn test_tnk_value_from_hashmap_and_json() {
+        let mut map = std::collections::HashMap::new();
+        map.insert("a".to_string(), TnkValue::from(1i64));
+        map.insert("b".to_string(), TnkValue::from("x"));
+        let value = TnkValue::from(map);
+        let json_value: serde_json::Value = value.into();
+        let obj = json_value.as_object().expect("dict json");
+        assert_eq!(obj.get("kind"), Some(&json!("dict")));
+        let items = obj
+            .get("items")
+            .and_then(|v| v.as_array())
+            .expect("items array");
+        assert_eq!(items.len(), 2);
+        let mut found = std::collections::HashMap::new();
+        for item in items {
+            let key = item.get("key").and_then(|k| k.get("value")).and_then(|v| v.as_str()).unwrap();
+            let val = item.get("value").unwrap().clone();
+            found.insert(key.to_string(), val);
+        }
+        assert_eq!(found.get("a"), Some(&json!({"kind":"value","value":1})));
+        assert_eq!(found.get("b"), Some(&json!({"kind":"value","value":"x"})));
+    }
 }

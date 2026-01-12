@@ -302,3 +302,201 @@ impl SemanticAnalyzer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::Expr;
+
+    #[test]
+    fn test_infer_type_index_any_returns_any() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define("v", Type::Any, false);
+        let expr = Expr::Index {
+            target: Box::new(Expr::Ident("v".to_string())),
+            index: Box::new(Expr::IntLiteral(0)),
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Any);
+    }
+
+    #[test]
+    fn test_infer_type_tuple_ref_uniform() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define(
+            "t",
+            Type::Ref(Box::new(Type::Tuple(vec![Type::Int, Type::Int]))),
+            false,
+        );
+        let expr = Expr::Index {
+            target: Box::new(Expr::Ident("t".to_string())),
+            index: Box::new(Expr::IntLiteral(1)),
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Int);
+    }
+
+    #[test]
+    fn test_infer_type_external_module_call_any() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.external_imports.push(("numpy".to_string(), "np".to_string()));
+        let expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("np".to_string())),
+                attr: "array".to_string(),
+            }),
+            args: vec![],
+            kwargs: vec![],
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Any);
+    }
+
+    #[test]
+    fn test_infer_type_native_module_call_float() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.module_global_aliases.insert("math".to_string(), "math".to_string());
+        let expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("math".to_string())),
+                attr: "sqrt".to_string(),
+            }),
+            args: vec![Expr::FloatLiteral(4.0)],
+            kwargs: vec![],
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Float);
+    }
+
+    #[test]
+    fn test_infer_type_dict_call_from_dict_arg() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define(
+            "d",
+            Type::Dict(Box::new(Type::Int), Box::new(Type::String)),
+            false,
+        );
+        let expr = Expr::Call {
+            func: Box::new(Expr::Ident("dict".to_string())),
+            args: vec![Expr::Ident("d".to_string())],
+            kwargs: vec![],
+        };
+        assert_eq!(
+            analyzer.infer_type(&expr),
+            Type::Dict(Box::new(Type::Int), Box::new(Type::String))
+        );
+    }
+
+    #[test]
+    fn test_infer_type_list_empty_is_list_unknown() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::List(vec![]);
+        assert_eq!(analyzer.infer_type(&expr), Type::List(Box::new(Type::Unknown)));
+    }
+
+    #[test]
+    fn test_infer_type_list_comp() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::ListComp {
+            elt: Box::new(Expr::IntLiteral(1)),
+            target: "x".to_string(),
+            iter: Box::new(Expr::List(vec![Expr::IntLiteral(1)])),
+            condition: None,
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::List(Box::new(Type::Int)));
+    }
+
+    #[test]
+    fn test_infer_type_set_comp() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::SetComp {
+            elt: Box::new(Expr::IntLiteral(1)),
+            target: "x".to_string(),
+            iter: Box::new(Expr::List(vec![Expr::IntLiteral(1)])),
+            condition: None,
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Set(Box::new(Type::Int)));
+    }
+
+    #[test]
+    fn test_infer_type_call_any_method_returns_any() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define("v", Type::Any, false);
+        let expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("v".to_string())),
+                attr: "foo".to_string(),
+            }),
+            args: vec![],
+            kwargs: vec![],
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Any);
+    }
+
+    #[test]
+    fn test_infer_type_call_sorted_returns_list() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::Call {
+            func: Box::new(Expr::Ident("sorted".to_string())),
+            args: vec![Expr::List(vec![Expr::IntLiteral(1)])],
+            kwargs: vec![],
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::List(Box::new(Type::Unknown)));
+    }
+
+    #[test]
+    fn test_infer_type_call_map_returns_list() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::Call {
+            func: Box::new(Expr::Ident("map".to_string())),
+            args: vec![
+                Expr::Lambda {
+                    params: vec!["x".to_string()],
+                    body: Box::new(Expr::Ident("x".to_string())),
+                },
+                Expr::List(vec![Expr::IntLiteral(1)]),
+            ],
+            kwargs: vec![],
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::List(Box::new(Type::Unknown)));
+    }
+
+    #[test]
+    fn test_infer_type_call_filter_returns_list() {
+        let analyzer = SemanticAnalyzer::new();
+        let expr = Expr::Call {
+            func: Box::new(Expr::Ident("filter".to_string())),
+            args: vec![
+                Expr::Lambda {
+                    params: vec!["x".to_string()],
+                    body: Box::new(Expr::BoolLiteral(true)),
+                },
+                Expr::List(vec![Expr::IntLiteral(1)]),
+            ],
+            kwargs: vec![],
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::List(Box::new(Type::Unknown)));
+    }
+
+    #[test]
+    fn test_infer_type_index_list_returns_elem() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define("xs", Type::List(Box::new(Type::Int)), false);
+        let expr = Expr::Index {
+            target: Box::new(Expr::Ident("xs".to_string())),
+            index: Box::new(Expr::IntLiteral(0)),
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Int);
+    }
+
+    #[test]
+    fn test_infer_type_index_tuple_mixed_unknown() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define(
+            "t",
+            Type::Ref(Box::new(Type::Tuple(vec![Type::Int, Type::String]))),
+            false,
+        );
+        let expr = Expr::Index {
+            target: Box::new(Expr::Ident("t".to_string())),
+            index: Box::new(Expr::IntLiteral(0)),
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Unknown);
+    }
+}

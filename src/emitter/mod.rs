@@ -1785,6 +1785,14 @@ impl std::fmt::Display for TnkValue {{
                     }
                 }
             }
+            IrExprKind::StaticCall { path, args } => {
+                let args_str = args
+                    .iter()
+                    .map(|a| self.emit_expr_no_outer_parens(a))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{path}({args_str})")
+            }
             IrExprKind::List {
                 elem_type,
                 elements,
@@ -2113,7 +2121,16 @@ impl std::fmt::Display for TnkValue {{
                 body,
                 ret_type,
             } => {
-                let params_str: Vec<String> = params.iter().map(|p| to_snake_case(p)).collect();
+                let params_str: Vec<String> = params
+                    .iter()
+                    .map(|p| {
+                        if p.contains('(') || p.contains(')') || p.contains(',') {
+                            p.clone()
+                        } else {
+                            to_snake_case(p)
+                        }
+                    })
+                    .collect();
 
                 // Increase indent for closure body is tricky because emit_expr_internal doesn't mutate state?
                 // But emit_node uses self.indent_level.
@@ -2167,6 +2184,7 @@ impl std::fmt::Display for TnkValue {{
             IrExprKind::Cast { target, ty } => {
                 format!("({} as {})", self.emit_expr(target), ty)
             }
+            IrExprKind::ConstRef { path } => path.clone(),
             IrExprKind::RawCode(code) => code.clone(),
             IrExprKind::JsonConversion { target, convert_to } => {
                 let target_code = self.emit_expr_internal(target);
@@ -2682,6 +2700,21 @@ impl std::fmt::Display for TnkValue {{
                     format!("println!(\"{}\", {})", format_string, arg_strs.join(", "))
                 }
             }
+            IrExprKind::Sorted { iter, key, reverse } => {
+                let iter_str = self.emit_expr_internal(iter);
+                let key_str = key.as_ref().map(|k| self.emit_expr_internal(k));
+                let sort_line = if let Some(key_expr) = key_str {
+                    format!("v.sort_by_key({key_expr});")
+                } else {
+                    "v.sort();".to_string()
+                };
+                let reverse_line = if *reverse { "v.reverse();".to_string() } else { String::new() };
+                if reverse_line.is_empty() {
+                    format!("{{ let mut v = {}.to_vec(); {} v }}", iter_str, sort_line)
+                } else {
+                    format!("{{ let mut v = {}.to_vec(); {} {} v }}", iter_str, sort_line, reverse_line)
+                }
+            }
             // V1.3.1: StructConstruct - semantic now provides field information
             IrExprKind::StructConstruct { name, fields } => {
                 let field_inits: Vec<String> = fields
@@ -2930,16 +2963,34 @@ impl std::fmt::Display for TnkValue {{
 
                 // 方式選択テーブルを参照
                 use crate::bridge::module_table::{
-                    generate_native_code, get_import_mode, ImportMode,
+                    get_import_mode, get_native_binding, ImportMode, NativeBinding,
                 };
 
                 match get_import_mode(&target) {
                     ImportMode::Native => {
-                        // Rust ネイティブ実装 - PyO3/Resident 不要
-                        // Native の場合は、既に arg_evals があると困るかもしれないが、
-                        // Expression block にすれば OK
-                        let native_code = generate_native_code(&target, &args_str_list)
-                            .unwrap_or_else(|| format!("/* Native not implemented: {target} */"));
+                        let native_code = match get_native_binding(&target) {
+                            Some(NativeBinding::Constant(code)) => code.to_string(),
+                            Some(NativeBinding::Method(method)) => {
+                                if args_str_list.is_empty() {
+                                    format!("/* Native method requires args: {target} */")
+                                } else if args_str_list.len() == 1 {
+                                    format!("({} as f64).{}()", args_str_list[0], method)
+                                } else {
+                                    let other_args: Vec<String> = args_str_list
+                                        .iter()
+                                        .skip(1)
+                                        .map(|a| format!("{a} as f64"))
+                                        .collect();
+                                    format!(
+                                        "({} as f64).{}({})",
+                                        args_str_list[0],
+                                        method,
+                                        other_args.join(", ")
+                                    )
+                                }
+                            }
+                            None => format!("/* Native not implemented: {target} */"),
+                        };
                         format!(
                             "{{\n{}    {}\n}}",
                             arg_evals.join("\n    ") + "\n",

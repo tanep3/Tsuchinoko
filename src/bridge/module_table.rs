@@ -93,22 +93,6 @@ fn is_pyo3_target(_target: &str) -> bool {
     false
 }
 
-/// Native 実装の Rust コードを生成
-pub fn generate_native_code(target: &str, args: &[String]) -> Option<String> {
-    match get_native_binding(target)? {
-        NativeBinding::Method(name) => {
-            let target_obj = args.first()?;
-            if args.len() == 1 {
-                Some(format!("({target_obj} as f64).{name}()"))
-            } else {
-                let other_args: Vec<String> = args.iter().skip(1).map(|a| format!("{a} as f64")).collect();
-                Some(format!("({target_obj} as f64).{name}({})", other_args.join(", ")))
-            }
-        }
-        NativeBinding::Constant(code) => Some(code.to_string()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,13 +112,7 @@ mod tests {
 
     #[test]
     fn test_native_code_generation() {
-        assert_eq!(
-            generate_native_code("math.sqrt", &["x".to_string()]),
-            Some("(x as f64).sqrt()".to_string())
-        );
-        assert_eq!(
-            generate_native_code("math.pow", &["x".to_string(), "2".to_string()]),
-            Some("(x as f64).powf(2 as f64)".to_string())
-        );
+        assert_eq!(get_native_binding("math.sqrt"), Some(NativeBinding::Method("sqrt")));
+        assert_eq!(get_native_binding("math.pow"), Some(NativeBinding::Method("powf")));
     }
 }

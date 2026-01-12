@@ -4,7 +4,7 @@
 //! IR正規化・最適化パス。
 
 use crate::ir::exprs::{IrExpr, IrExprKind, BuiltinId, ExprId};
-use crate::ir::ops::IrBinOp;
+use crate::ir::ops::{IrBinOp, IrUnaryOp};
 use crate::ir::nodes::IrNode;
 use crate::semantic::Type;
 use crate::bridge::builtin_table::BuiltinKind;
@@ -62,8 +62,31 @@ impl LoweringPass {
             IrNode::Assign { target, value } => {
                  IrNode::Assign { target, value: Box::new(self.lower_expr(*value)) }
             }
+            IrNode::IndexAssign { target, index, value } => IrNode::IndexAssign {
+                target: Box::new(self.lower_expr(*target)),
+                index: Box::new(self.lower_expr(*index)),
+                value: Box::new(self.lower_expr(*value)),
+            },
             IrNode::VarDecl { name, ty, mutable, init } => IrNode::VarDecl {
                 name, ty, mutable, init: init.map(|e| Box::new(self.lower_expr(*e))),
+            },
+            IrNode::FieldAssign { target, field, value } => IrNode::FieldAssign {
+                target: Box::new(self.lower_expr(*target)),
+                field,
+                value: Box::new(self.lower_expr(*value)),
+            },
+            IrNode::AugAssign { target, op, value } => IrNode::AugAssign {
+                target,
+                op,
+                value: Box::new(self.lower_expr(*value)),
+            },
+            IrNode::MultiAssign { targets, value } => IrNode::MultiAssign {
+                targets,
+                value: Box::new(self.lower_expr(*value)),
+            },
+            IrNode::MultiVarDecl { targets, value } => IrNode::MultiVarDecl {
+                targets,
+                value: Box::new(self.lower_expr(*value)),
             },
             IrNode::Expr(expr) => IrNode::Expr(self.lower_expr(expr)),
             IrNode::Return(Some(expr)) => IrNode::Return(Some(Box::new(self.lower_expr(*expr)))),
@@ -96,6 +119,23 @@ impl LoweringPass {
                 message: Box::new(self.lower_expr(*message)),
                 cause: cause.map(|e| Box::new(self.lower_expr(*e))),
                 line,
+            },
+            IrNode::Sequence(nodes) => IrNode::Sequence(
+                nodes.into_iter().map(|n| self.lower_node(n)).collect(),
+            ),
+            IrNode::Block { stmts } => IrNode::Block {
+                stmts: stmts.into_iter().map(|n| self.lower_node(n)).collect(),
+            },
+            IrNode::Match { value, arms } => IrNode::Match {
+                value: self.lower_expr(value),
+                arms: arms
+                    .into_iter()
+                    .map(|arm| crate::ir::nodes::MatchArm {
+                        variant: arm.variant,
+                        binding: arm.binding,
+                        body: arm.body.into_iter().map(|n| self.lower_node(n)).collect(),
+                    })
+                    .collect(),
             },
             _ => node, 
         }
@@ -197,18 +237,7 @@ impl LoweringPass {
                             keywords: vec![],
                         },
                     };
-                    if let Some(expected_ty) = self.type_table.get(&id) {
-                        if *expected_ty != Type::Any && *expected_ty != Type::Unknown {
-                            return IrExpr {
-                                id,
-                                kind: IrExprKind::FromTnkValue {
-                                    value: Box::new(bridge_call),
-                                    to_type: expected_ty.clone(),
-                                },
-                            };
-                        }
-                    }
-                    return IrExpr { id, kind: bridge_call.kind };
+                    return self.wrap_bridge_result(bridge_call);
                 }
                 IrExprKind::Call {
                     func: Box::new(lowered_func),
@@ -217,6 +246,10 @@ impl LoweringPass {
                     callee_needs_bridge,
                 }
             }
+            IrExprKind::StaticCall { path, args } => IrExprKind::StaticCall {
+                path,
+                args: args.into_iter().map(|a| self.lower_expr(a)).collect(),
+            },
             IrExprKind::FieldAccess { target, field } => IrExprKind::FieldAccess { 
                 target: Box::new(self.lower_expr(*target)), field 
             },
@@ -291,6 +324,7 @@ impl LoweringPass {
                 target: Box::new(self.lower_expr(*target)),
                 ty,
             },
+            IrExprKind::ConstRef { path } => IrExprKind::ConstRef { path },
             IrExprKind::JsonConversion { target, convert_to } => IrExprKind::JsonConversion {
                 target: Box::new(self.lower_expr(*target)),
                 convert_to,
@@ -303,7 +337,8 @@ impl LoweringPass {
             },
             _ => expr.kind,
         };
-        IrExpr { id, kind }
+        let expr = IrExpr { id, kind };
+        self.wrap_bridge_result(expr)
     }
 
     fn lower_expr_as_target(&self, expr: IrExpr) -> IrExpr {
@@ -324,6 +359,74 @@ impl LoweringPass {
             _ => self.lower_expr(expr).kind,
         };
         IrExpr { id, kind }
+    }
+
+    fn wrap_bridge_result(&self, expr: IrExpr) -> IrExpr {
+        if matches!(expr.kind, IrExprKind::FromTnkValue { .. }) {
+            return expr;
+        }
+        let expected_ty = match self.type_table.get(&expr.id) {
+            Some(t) => t,
+            None => return expr,
+        };
+        if matches!(expected_ty, Type::Any | Type::Unknown) {
+            return expr;
+        }
+        let is_bridge_result = matches!(
+            expr.kind,
+            IrExprKind::BridgeCall { .. }
+                | IrExprKind::BridgeMethodCall { .. }
+                | IrExprKind::BridgeAttributeAccess { .. }
+                | IrExprKind::BridgeItemAccess { .. }
+                | IrExprKind::BridgeSlice { .. }
+        );
+        if !is_bridge_result {
+            return expr;
+        }
+        IrExpr {
+            id: expr.id,
+            kind: IrExprKind::FromTnkValue {
+                value: Box::new(expr),
+                to_type: expected_ty.clone(),
+            },
+        }
+    }
+
+    fn format_simple_expr(&self, expr: &IrExpr) -> String {
+        match &expr.kind {
+            IrExprKind::IntLit(n) => format!("{n}i64"),
+            IrExprKind::FloatLit(f) => format!("{f}"),
+            IrExprKind::BoolLit(b) => b.to_string(),
+            IrExprKind::StringLit(s) => format!("\"{s}\""),
+            IrExprKind::Var(name) => name.clone(),
+            IrExprKind::Cast { target, ty } => format!("({} as {})", self.format_simple_expr(target), ty),
+            IrExprKind::UnaryOp { op, operand } => {
+                match op {
+                    crate::ir::ops::IrUnaryOp::Neg => format!("-{}", self.format_simple_expr(operand)),
+                    _ => self.format_simple_expr(operand),
+                }
+            }
+            IrExprKind::BinOp { left, op, right } => {
+                let op_str = match op {
+                    IrBinOp::Add => "+",
+                    IrBinOp::Sub => "-",
+                    IrBinOp::Mul => "*",
+                    IrBinOp::Div => "/",
+                    IrBinOp::Mod => "%",
+                    IrBinOp::Eq => "==",
+                    IrBinOp::NotEq => "!=",
+                    IrBinOp::Lt => "<",
+                    IrBinOp::LtEq => "<=",
+                    IrBinOp::Gt => ">",
+                    IrBinOp::GtEq => ">=",
+                    IrBinOp::And => "&&",
+                    IrBinOp::Or => "||",
+                    _ => "+",
+                };
+                format!("{} {} {}", self.format_simple_expr(left), op_str, self.format_simple_expr(right))
+            }
+            _ => "0".to_string(),
+        }
     }
 
     fn lower_builtin_call(&self, original_id: ExprId, builtin_id: BuiltinId, args: Vec<IrExpr>) -> IrExpr {
@@ -398,6 +501,742 @@ impl LoweringPass {
                 }
                 return IrExpr { id: original_id, kind: sum_call.kind };
             }
+            BuiltinId::Int => {
+                if lowered_args.is_empty() {
+                    return IrExpr { id: original_id, kind: IrExprKind::IntLit(0) };
+                }
+                let arg_ty = lowered_args
+                    .get(0)
+                    .and_then(|arg| self.type_table.get(&arg.id));
+                if matches!(arg_ty, Some(Type::Any | Type::Unknown)) {
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::JsonConversion {
+                            target: Box::new(lowered_args[0].clone()),
+                            convert_to: "i64".to_string(),
+                        },
+                    };
+                }
+                return IrExpr {
+                    id: original_id,
+                    kind: IrExprKind::Cast {
+                        target: Box::new(lowered_args[0].clone()),
+                        ty: "i64".to_string(),
+                    },
+                };
+            }
+            BuiltinId::Float => {
+                if lowered_args.is_empty() {
+                    return IrExpr { id: original_id, kind: IrExprKind::FloatLit(0.0) };
+                }
+                let arg_ty = lowered_args
+                    .get(0)
+                    .and_then(|arg| self.type_table.get(&arg.id));
+                if matches!(arg_ty, Some(Type::Any | Type::Unknown)) {
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::JsonConversion {
+                            target: Box::new(lowered_args[0].clone()),
+                            convert_to: "f64".to_string(),
+                        },
+                    };
+                }
+                return IrExpr {
+                    id: original_id,
+                    kind: IrExprKind::Cast {
+                        target: Box::new(lowered_args[0].clone()),
+                        ty: "f64".to_string(),
+                    },
+                };
+            }
+            BuiltinId::Str => {
+                if lowered_args.is_empty() {
+                    return IrExpr { id: original_id, kind: IrExprKind::StringLit(String::new()) };
+                }
+                return IrExpr {
+                    id: original_id,
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(lowered_args[0].clone()),
+                        method: "to_string".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+            }
+            BuiltinId::Print => {
+                let typed_args: Vec<(IrExpr, Type)> = lowered_args
+                    .into_iter()
+                    .map(|arg| {
+                        let ty = self.type_table.get(&arg.id).cloned().unwrap_or(Type::Unknown);
+                        (arg, ty)
+                    })
+                    .collect();
+                return IrExpr {
+                    id: original_id,
+                    kind: IrExprKind::Print { args: typed_args },
+                };
+            }
+            BuiltinId::Sorted => {
+                if lowered_args.is_empty() {
+                    return IrExpr { id: original_id, kind: IrExprKind::List { elem_type: Type::Unknown, elements: vec![] } };
+                }
+                let iter = lowered_args[0].clone();
+                let key = if lowered_args.len() >= 2 {
+                    match &lowered_args[1].kind {
+                        IrExprKind::NoneLit => None,
+                        IrExprKind::BoxNew(inner) => Some(Box::new((**inner).clone())),
+                        _ => Some(Box::new(lowered_args[1].clone())),
+                    }
+                } else {
+                    None
+                };
+                let reverse = if lowered_args.len() >= 3 {
+                    matches!(lowered_args[2].kind, IrExprKind::BoolLit(true))
+                } else {
+                    false
+                };
+                return IrExpr {
+                    id: original_id,
+                    kind: IrExprKind::Sorted {
+                        iter: Box::new(iter),
+                        key,
+                        reverse,
+                    },
+                };
+            }
+            BuiltinId::Set => {
+                if lowered_args.is_empty() {
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::Set { elem_type: Type::Unknown, elements: vec![] },
+                    };
+                }
+                let arg = lowered_args[0].clone();
+                let iter_call = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(arg),
+                        method: "iter".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+                let cloned_call = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(iter_call),
+                        method: "cloned".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+                return IrExpr {
+                    id: original_id,
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(cloned_call),
+                        method: "collect_hashset".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+            }
+            BuiltinId::List => {
+                if lowered_args.is_empty() {
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::List { elem_type: Type::Unknown, elements: vec![] },
+                    };
+                }
+                let arg = lowered_args[0].clone();
+                if let IrExprKind::Call { func, args: call_args, .. } = &arg.kind {
+                    if let IrExprKind::Var(func_name) = &func.kind {
+                        if func_name == "map" && call_args.len() == 2 {
+                            let mut lambda = call_args[0].clone();
+                            if let IrExprKind::BoxNew(inner) = lambda.kind {
+                                lambda = *inner;
+                            }
+                            let iterable = call_args[1].clone();
+                            let iter_call = IrExpr {
+                                id: self.next_id(),
+                                kind: IrExprKind::MethodCall {
+                                    target: Box::new(iterable),
+                                    method: "iter".to_string(),
+                                    args: vec![],
+                                    target_type: Type::Unknown,
+                                    callee_needs_bridge: false,
+                                },
+                            };
+                            let cloned_call = IrExpr {
+                                id: self.next_id(),
+                                kind: IrExprKind::MethodCall {
+                                    target: Box::new(iter_call),
+                                    method: "cloned".to_string(),
+                                    args: vec![],
+                                    target_type: Type::Unknown,
+                                    callee_needs_bridge: false,
+                                },
+                            };
+                            let map_call = IrExpr {
+                                id: self.next_id(),
+                                kind: IrExprKind::MethodCall {
+                                    target: Box::new(cloned_call),
+                                    method: "map".to_string(),
+                                    args: vec![lambda],
+                                    target_type: Type::Unknown,
+                                    callee_needs_bridge: false,
+                                },
+                            };
+                            return IrExpr {
+                                id: original_id,
+                                kind: IrExprKind::MethodCall {
+                                    target: Box::new(map_call),
+                                    method: "collect".to_string(),
+                                    args: vec![],
+                                    target_type: Type::Unknown,
+                                    callee_needs_bridge: false,
+                                },
+                            };
+                        }
+                        if func_name == "filter" && call_args.len() == 2 {
+                            let mut lambda = call_args[0].clone();
+                            if let IrExprKind::BoxNew(inner) = lambda.kind {
+                                lambda = *inner;
+                            }
+                            let filter_closure = if let IrExprKind::Closure { params, body, ret_type } = &lambda.kind {
+                                if params.len() == 1 {
+                                    let param = &params[0];
+                                    if !param.starts_with('&') && !param.contains('(') {
+                                        IrExpr {
+                                            id: lambda.id,
+                                            kind: IrExprKind::Closure {
+                                                params: vec![format!("&{param}")],
+                                                body: body.clone(),
+                                                ret_type: ret_type.clone(),
+                                            },
+                                        }
+                                    } else {
+                                        lambda.clone()
+                                    }
+                                } else {
+                                    lambda.clone()
+                                }
+                            } else {
+                                lambda.clone()
+                            };
+                            let iterable = call_args[1].clone();
+                            let iter_call = IrExpr {
+                                id: self.next_id(),
+                                kind: IrExprKind::MethodCall {
+                                    target: Box::new(iterable),
+                                    method: "iter".to_string(),
+                                    args: vec![],
+                                    target_type: Type::Unknown,
+                                    callee_needs_bridge: false,
+                                },
+                            };
+                            let cloned_call = IrExpr {
+                                id: self.next_id(),
+                                kind: IrExprKind::MethodCall {
+                                    target: Box::new(iter_call),
+                                    method: "cloned".to_string(),
+                                    args: vec![],
+                                    target_type: Type::Unknown,
+                                    callee_needs_bridge: false,
+                                },
+                            };
+                            let filter_call = IrExpr {
+                                id: self.next_id(),
+                                kind: IrExprKind::MethodCall {
+                                    target: Box::new(cloned_call),
+                                    method: "filter".to_string(),
+                                    args: vec![filter_closure],
+                                    target_type: Type::Unknown,
+                                    callee_needs_bridge: false,
+                                },
+                            };
+                            return IrExpr {
+                                id: original_id,
+                                kind: IrExprKind::MethodCall {
+                                    target: Box::new(filter_call),
+                                    method: "collect".to_string(),
+                                    args: vec![],
+                                    target_type: Type::Unknown,
+                                    callee_needs_bridge: false,
+                                },
+                            };
+                        }
+                    }
+                }
+                if let IrExprKind::MethodCall { target, method, target_type, .. } = &arg.kind {
+                    let target_ty = self.type_table.get(&target.id);
+                    let is_dict = matches!(target_ty, Some(Type::Dict(_, _)))
+                        || matches!(target_type, Type::Dict(_, _));
+                    if is_dict && (method == "items" || method == "iter") {
+                        let iter_call = if method == "iter" {
+                            arg.clone()
+                        } else {
+                            IrExpr {
+                                id: self.next_id(),
+                                kind: IrExprKind::MethodCall {
+                                    target: Box::new((**target).clone()),
+                                    method: "iter".to_string(),
+                                    args: vec![],
+                                    target_type: Type::Unknown,
+                                    callee_needs_bridge: false,
+                                },
+                            }
+                        };
+                        let k_var = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::Var("k".to_string()),
+                        };
+                        let v_var = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::Var("v".to_string()),
+                        };
+                        let deref_k = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::UnaryOp {
+                                op: IrUnaryOp::Deref,
+                                operand: Box::new(k_var),
+                            },
+                        };
+                        let clone_v = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::MethodCall {
+                                target: Box::new(v_var),
+                                method: "clone".to_string(),
+                                args: vec![],
+                                target_type: Type::Unknown,
+                                callee_needs_bridge: false,
+                            },
+                        };
+                        let tuple_expr = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::Tuple(vec![deref_k, clone_v]),
+                        };
+                        let map_fn = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::Closure {
+                                params: vec!["(k, v)".to_string()],
+                                body: vec![IrNode::Return(Some(Box::new(tuple_expr)))],
+                                ret_type: Type::Unknown,
+                            },
+                        };
+                        let map_call = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::MethodCall {
+                                target: Box::new(iter_call),
+                                method: "map".to_string(),
+                                args: vec![map_fn],
+                                target_type: Type::Unknown,
+                                callee_needs_bridge: false,
+                            },
+                        };
+                        return IrExpr {
+                            id: original_id,
+                            kind: IrExprKind::MethodCall {
+                                target: Box::new(map_call),
+                                method: "collect::<Vec<_>>".to_string(),
+                                args: vec![],
+                                target_type: Type::Unknown,
+                                callee_needs_bridge: false,
+                            },
+                        };
+                    }
+                }
+                if matches!(arg.kind, IrExprKind::MethodCall { .. } | IrExprKind::ListComp { .. }) {
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::MethodCall {
+                            target: Box::new(arg),
+                            method: "collect::<Vec<_>>".to_string(),
+                            args: vec![],
+                            target_type: Type::Unknown,
+                            callee_needs_bridge: false,
+                        },
+                    };
+                }
+                return IrExpr {
+                    id: original_id,
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(arg),
+                        method: "to_vec".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+            }
+            BuiltinId::Tuple => {
+                if lowered_args.is_empty() {
+                    return IrExpr { id: original_id, kind: IrExprKind::Tuple(vec![]) };
+                }
+                let arg = lowered_args[0].clone();
+                if matches!(arg.kind, IrExprKind::ListComp { .. } | IrExprKind::MethodCall { .. }) {
+                    return IrExpr { id: original_id, kind: arg.kind };
+                }
+                return IrExpr {
+                    id: original_id,
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(arg),
+                        method: "collect::<Vec<_>>".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+            }
+            BuiltinId::Dict => {
+                if lowered_args.is_empty() {
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::Dict { key_type: Type::Unknown, value_type: Type::Unknown, entries: vec![] },
+                    };
+                }
+                let arg = lowered_args[0].clone();
+                let arg_ty = self.type_table.get(&arg.id);
+                if matches!(arg_ty, Some(Type::Dict(_, _))) {
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::MethodCall {
+                            target: Box::new(arg),
+                            method: "clone".to_string(),
+                            args: vec![],
+                            target_type: Type::Unknown,
+                            callee_needs_bridge: false,
+                        },
+                    };
+                }
+                if matches!(arg.kind, IrExprKind::MethodCall { .. } | IrExprKind::ListComp { .. } | IrExprKind::DictComp { .. }) {
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::MethodCall {
+                            target: Box::new(arg),
+                            method: "collect::<std::collections::HashMap<_, _>>".to_string(),
+                            args: vec![],
+                            target_type: Type::Unknown,
+                            callee_needs_bridge: false,
+                        },
+                    };
+                }
+                let iter_call = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(arg),
+                        method: "iter".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+                let k_var = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::Var("k".to_string()),
+                };
+                let v_var = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::Var("v".to_string()),
+                };
+                let clone_k = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(k_var),
+                        method: "clone".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+                let clone_v = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(v_var),
+                        method: "clone".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+                let tuple_expr = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::Tuple(vec![clone_k, clone_v]),
+                };
+                let map_fn = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::Closure {
+                        params: vec!["(k, v)".to_string()],
+                        body: vec![IrNode::Expr(tuple_expr)],
+                        ret_type: Type::Unknown,
+                    },
+                };
+                let map_call = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(iter_call),
+                        method: "map".to_string(),
+                        args: vec![map_fn],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+                return IrExpr {
+                    id: original_id,
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(map_call),
+                        method: "collect::<std::collections::HashMap<_, _>>".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+            }
+            BuiltinId::Enumerate => {
+                if lowered_args.is_empty() {
+                    return IrExpr { id: original_id, kind: IrExprKind::BuiltinCall { id: builtin_id, args: lowered_args } };
+                }
+                let iter_call = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(lowered_args[0].clone()),
+                        method: "iter".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+                let enum_call = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(iter_call),
+                        method: "enumerate".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+                let i_var = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::Var("i".to_string()),
+                };
+                let x_var = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::Var("x".to_string()),
+                };
+                let cast_i = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::Cast {
+                        target: Box::new(i_var),
+                        ty: "i64".to_string(),
+                    },
+                };
+                let add_i = if lowered_args.len() >= 2 {
+                    IrExpr {
+                        id: self.next_id(),
+                        kind: IrExprKind::BinOp {
+                            left: Box::new(cast_i),
+                            op: IrBinOp::Add,
+                            right: Box::new(lowered_args[1].clone()),
+                        },
+                    }
+                } else {
+                    cast_i
+                };
+                let clone_x = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(x_var),
+                        method: "clone".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+                let tuple_expr = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::Tuple(vec![add_i, clone_x]),
+                };
+                let map_body = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::Closure {
+                        params: vec!["(i, x)".to_string()],
+                        body: vec![IrNode::Expr(tuple_expr)],
+                        ret_type: Type::Unknown,
+                    },
+                };
+                return IrExpr {
+                    id: original_id,
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(enum_call),
+                        method: "map".to_string(),
+                        args: vec![map_body],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+            }
+            BuiltinId::Zip => {
+                if lowered_args.len() < 2 {
+                    return IrExpr { id: original_id, kind: IrExprKind::List { elem_type: Type::Unknown, elements: vec![] } };
+                }
+                let mut target = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(lowered_args[0].clone()),
+                        method: "iter".to_string(),
+                        args: vec![],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+                for arg in lowered_args.iter().skip(1) {
+                    let iter_arg = IrExpr {
+                        id: self.next_id(),
+                        kind: IrExprKind::MethodCall {
+                            target: Box::new(arg.clone()),
+                            method: "iter".to_string(),
+                            args: vec![],
+                            target_type: Type::Unknown,
+                            callee_needs_bridge: false,
+                        },
+                    };
+                    target = IrExpr {
+                        id: self.next_id(),
+                        kind: IrExprKind::MethodCall {
+                            target: Box::new(target),
+                            method: "zip".to_string(),
+                            args: vec![iter_arg],
+                            target_type: Type::Unknown,
+                            callee_needs_bridge: false,
+                        },
+                    };
+                }
+                let map_body = match lowered_args.len() {
+                    2 => {
+                        let x_var = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::Var("x".to_string()),
+                        };
+                        let y_var = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::Var("y".to_string()),
+                        };
+                        let clone_x = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::MethodCall {
+                                target: Box::new(x_var),
+                                method: "clone".to_string(),
+                                args: vec![],
+                                target_type: Type::Unknown,
+                                callee_needs_bridge: false,
+                            },
+                        };
+                        let clone_y = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::MethodCall {
+                                target: Box::new(y_var),
+                                method: "clone".to_string(),
+                                args: vec![],
+                                target_type: Type::Unknown,
+                                callee_needs_bridge: false,
+                            },
+                        };
+                        let tuple_expr = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::Tuple(vec![clone_x, clone_y]),
+                        };
+                        IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::Closure {
+                                params: vec!["(x, y)".to_string()],
+                                body: vec![IrNode::Expr(tuple_expr)],
+                                ret_type: Type::Unknown,
+                            },
+                        }
+                    }
+                    3 => {
+                        let x_var = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::Var("x".to_string()),
+                        };
+                        let y_var = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::Var("y".to_string()),
+                        };
+                        let z_var = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::Var("z".to_string()),
+                        };
+                        let clone_x = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::MethodCall {
+                                target: Box::new(x_var),
+                                method: "clone".to_string(),
+                                args: vec![],
+                                target_type: Type::Unknown,
+                                callee_needs_bridge: false,
+                            },
+                        };
+                        let clone_y = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::MethodCall {
+                                target: Box::new(y_var),
+                                method: "clone".to_string(),
+                                args: vec![],
+                                target_type: Type::Unknown,
+                                callee_needs_bridge: false,
+                            },
+                        };
+                        let clone_z = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::MethodCall {
+                                target: Box::new(z_var),
+                                method: "clone".to_string(),
+                                args: vec![],
+                                target_type: Type::Unknown,
+                                callee_needs_bridge: false,
+                            },
+                        };
+                        let tuple_expr = IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::Tuple(vec![clone_x, clone_y, clone_z]),
+                        };
+                        IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::Closure {
+                                params: vec!["((x, y), z)".to_string()],
+                                body: vec![IrNode::Expr(tuple_expr)],
+                                ret_type: Type::Unknown,
+                            },
+                        }
+                    }
+                    _ => IrExpr {
+                        id: self.next_id(),
+                        kind: IrExprKind::Closure {
+                            params: vec!["t".to_string()],
+                            body: vec![IrNode::Expr(IrExpr {
+                                id: self.next_id(),
+                                kind: IrExprKind::Var("t".to_string()),
+                            })],
+                            ret_type: Type::Unknown,
+                        },
+                    },
+                };
+                return IrExpr {
+                    id: original_id,
+                    kind: IrExprKind::MethodCall {
+                        target: Box::new(target),
+                        method: "map".to_string(),
+                        args: vec![map_body],
+                        target_type: Type::Unknown,
+                        callee_needs_bridge: false,
+                    },
+                };
+            }
             BuiltinId::Any => {
                 if lowered_args.is_empty() {
                     return IrExpr { id: original_id, kind: IrExprKind::BoolLit(false) };
@@ -412,9 +1251,24 @@ impl LoweringPass {
                         callee_needs_bridge: false,
                     },
                 };
+                let x_var = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::Var("x".to_string()),
+                };
+                let deref_x = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::UnaryOp {
+                        op: IrUnaryOp::Deref,
+                        operand: Box::new(x_var),
+                    },
+                };
                 let any_fn = IrExpr {
                     id: self.next_id(),
-                    kind: IrExprKind::RawCode("|x| *x".to_string()),
+                    kind: IrExprKind::Closure {
+                        params: vec!["x".to_string()],
+                        body: vec![IrNode::Expr(deref_x)],
+                        ret_type: Type::Unknown,
+                    },
                 };
                 return IrExpr {
                     id: original_id,
@@ -441,9 +1295,24 @@ impl LoweringPass {
                         callee_needs_bridge: false,
                     },
                 };
+                let x_var = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::Var("x".to_string()),
+                };
+                let deref_x = IrExpr {
+                    id: self.next_id(),
+                    kind: IrExprKind::UnaryOp {
+                        op: IrUnaryOp::Deref,
+                        operand: Box::new(x_var),
+                    },
+                };
                 let all_fn = IrExpr {
                     id: self.next_id(),
-                    kind: IrExprKind::RawCode("|x| *x".to_string()),
+                    kind: IrExprKind::Closure {
+                        params: vec!["x".to_string()],
+                        body: vec![IrNode::Expr(deref_x)],
+                        ret_type: Type::Unknown,
+                    },
                 };
                 return IrExpr {
                     id: original_id,
@@ -779,5 +1648,359 @@ impl LoweringPass {
                 IrExpr { id: original_id, kind: IrExprKind::BuiltinCall { id: builtin_id, args: lowered_args } }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lower_sequence_dict_builtin_clone() {
+        let mut type_table = HashMap::new();
+        let arg_id = ExprId(0);
+        let call_id = ExprId(1);
+        type_table.insert(arg_id, Type::Dict(Box::new(Type::Int), Box::new(Type::String)));
+
+        let lowering = LoweringPass::new(HashMap::new(), type_table, 100);
+        let node = IrNode::Sequence(vec![IrNode::VarDecl {
+            name: "x".to_string(),
+            ty: Type::Dict(Box::new(Type::Int), Box::new(Type::String)),
+            mutable: false,
+            init: Some(Box::new(IrExpr {
+                id: call_id,
+                kind: IrExprKind::BuiltinCall {
+                    id: BuiltinId::Dict,
+                    args: vec![IrExpr { id: arg_id, kind: IrExprKind::Var("src".to_string()) }],
+                },
+            })),
+        }]);
+
+        let lowered = lowering.apply(vec![node]);
+        match &lowered[0] {
+            IrNode::Sequence(nodes) => match &nodes[0] {
+                IrNode::VarDecl { init: Some(expr), .. } => match &expr.kind {
+                    IrExprKind::MethodCall { method, .. } => assert_eq!(method, "clone"),
+                    _ => panic!("Expected MethodCall clone"),
+                },
+                _ => panic!("Expected VarDecl in Sequence"),
+            },
+            _ => panic!("Expected Sequence"),
+        }
+    }
+
+    #[test]
+    fn test_lower_dict_builtin_collect_from_iter() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 200);
+        let call_id = ExprId(2);
+        let arg_id = ExprId(3);
+        let expr = IrExpr {
+            id: call_id,
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Dict,
+                args: vec![IrExpr { id: arg_id, kind: IrExprKind::Var("pairs".to_string()) }],
+            },
+        };
+        let lowered = lowering.lower_expr(expr);
+        match lowered.kind {
+            IrExprKind::MethodCall { method, target, .. } => {
+                assert_eq!(method, "collect::<std::collections::HashMap<_, _>>");
+                match target.kind {
+                    IrExprKind::MethodCall { method: inner_method, .. } => {
+                        assert_eq!(inner_method, "map");
+                    }
+                    _ => panic!("Expected map() call before collect"),
+                }
+            }
+            _ => panic!("Expected collect MethodCall"),
+        }
+    }
+
+    #[test]
+    fn test_wrap_bridge_result_inserts_from_tnkvalue() {
+        let mut type_table = HashMap::new();
+        let expr_id = ExprId(10);
+        type_table.insert(expr_id, Type::Int);
+        let lowering = LoweringPass::new(HashMap::new(), type_table, 10);
+        let expr = IrExpr {
+            id: expr_id,
+            kind: IrExprKind::BridgeCall {
+                target: Box::new(IrExpr { id: ExprId(11), kind: IrExprKind::Var("f".to_string()) }),
+                args: vec![],
+                keywords: vec![],
+            },
+        };
+        let wrapped = lowering.wrap_bridge_result(expr);
+        match wrapped.kind {
+            IrExprKind::FromTnkValue { to_type, .. } => assert_eq!(to_type, Type::Int),
+            _ => panic!("Expected FromTnkValue"),
+        }
+    }
+
+    #[test]
+    fn test_wrap_bridge_result_skips_any() {
+        let mut type_table = HashMap::new();
+        let expr_id = ExprId(12);
+        type_table.insert(expr_id, Type::Any);
+        let lowering = LoweringPass::new(HashMap::new(), type_table, 12);
+        let expr = IrExpr {
+            id: expr_id,
+            kind: IrExprKind::BridgeCall {
+                target: Box::new(IrExpr { id: ExprId(13), kind: IrExprKind::Var("f".to_string()) }),
+                args: vec![],
+                keywords: vec![],
+            },
+        };
+        let wrapped = lowering.wrap_bridge_result(expr);
+        assert!(matches!(wrapped.kind, IrExprKind::BridgeCall { .. }));
+    }
+
+    #[test]
+    fn test_lower_enumerate_with_start() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 300);
+        let expr = IrExpr {
+            id: ExprId(20),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Enumerate,
+                args: vec![
+                    IrExpr { id: ExprId(21), kind: IrExprKind::Var("items".to_string()) },
+                    IrExpr { id: ExprId(22), kind: IrExprKind::IntLit(5) },
+                ],
+            },
+        };
+        let lowered = lowering.lower_expr(expr);
+        match lowered.kind {
+            IrExprKind::MethodCall { method, args, .. } => {
+                assert_eq!(method, "map");
+                assert!(matches!(args[0].kind, IrExprKind::Closure { .. }));
+            }
+            _ => panic!("Expected enumerate map call"),
+        }
+    }
+
+    #[test]
+    fn test_lower_zip_two_args() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 400);
+        let expr = IrExpr {
+            id: ExprId(30),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Zip,
+                args: vec![
+                    IrExpr { id: ExprId(31), kind: IrExprKind::Var("a".to_string()) },
+                    IrExpr { id: ExprId(32), kind: IrExprKind::Var("b".to_string()) },
+                ],
+            },
+        };
+        let lowered = lowering.lower_expr(expr);
+        match lowered.kind {
+            IrExprKind::MethodCall { method, args, .. } => {
+                assert_eq!(method, "map");
+                assert!(matches!(args[0].kind, IrExprKind::Closure { .. }));
+            }
+            _ => panic!("Expected zip map call"),
+        }
+    }
+
+    #[test]
+    fn test_lower_range_one_arg() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 500);
+        let expr = IrExpr {
+            id: ExprId(40),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Range,
+                args: vec![IrExpr { id: ExprId(41), kind: IrExprKind::IntLit(5) }],
+            },
+        };
+        let lowered = lowering.lower_expr(expr);
+        match lowered.kind {
+            IrExprKind::Range { start, end } => {
+                assert!(matches!(start.kind, IrExprKind::IntLit(0)));
+                assert!(matches!(end.kind, IrExprKind::IntLit(5)));
+            }
+            _ => panic!("Expected Range"),
+        }
+    }
+
+    #[test]
+    fn test_lower_range_two_args() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 600);
+        let expr = IrExpr {
+            id: ExprId(50),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Range,
+                args: vec![
+                    IrExpr { id: ExprId(51), kind: IrExprKind::IntLit(2) },
+                    IrExpr { id: ExprId(52), kind: IrExprKind::IntLit(4) },
+                ],
+            },
+        };
+        let lowered = lowering.lower_expr(expr);
+        match lowered.kind {
+            IrExprKind::Range { start, end } => {
+                assert!(matches!(start.kind, IrExprKind::IntLit(2)));
+                assert!(matches!(end.kind, IrExprKind::IntLit(4)));
+            }
+            _ => panic!("Expected Range"),
+        }
+    }
+
+    #[test]
+    fn test_lower_range_three_args_keeps_builtin() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 700);
+        let expr = IrExpr {
+            id: ExprId(60),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Range,
+                args: vec![
+                    IrExpr { id: ExprId(61), kind: IrExprKind::IntLit(1) },
+                    IrExpr { id: ExprId(62), kind: IrExprKind::IntLit(5) },
+                    IrExpr { id: ExprId(63), kind: IrExprKind::IntLit(2) },
+                ],
+            },
+        };
+        let lowered = lowering.lower_expr(expr);
+        assert!(matches!(lowered.kind, IrExprKind::BuiltinCall { id: BuiltinId::Range, .. }));
+    }
+
+    #[test]
+    fn test_lower_any_empty_returns_false() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 800);
+        let expr = IrExpr {
+            id: ExprId(70),
+            kind: IrExprKind::BuiltinCall { id: BuiltinId::Any, args: vec![] },
+        };
+        let lowered = lowering.lower_expr(expr);
+        assert!(matches!(lowered.kind, IrExprKind::BoolLit(false)));
+    }
+
+    #[test]
+    fn test_lower_all_empty_returns_true() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 900);
+        let expr = IrExpr {
+            id: ExprId(80),
+            kind: IrExprKind::BuiltinCall { id: BuiltinId::All, args: vec![] },
+        };
+        let lowered = lowering.lower_expr(expr);
+        assert!(matches!(lowered.kind, IrExprKind::BoolLit(true)));
+    }
+
+    #[test]
+    fn test_lower_sum_with_start_adds_binop() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 1000);
+        let expr = IrExpr {
+            id: ExprId(90),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Sum,
+                args: vec![
+                    IrExpr { id: ExprId(91), kind: IrExprKind::Var("xs".to_string()) },
+                    IrExpr { id: ExprId(92), kind: IrExprKind::IntLit(3) },
+                ],
+            },
+        };
+        let lowered = lowering.lower_expr(expr);
+        assert!(matches!(lowered.kind, IrExprKind::BinOp { op: IrBinOp::Add, .. }));
+    }
+
+    #[test]
+    fn test_lower_int_any_uses_json_conversion() {
+        let mut type_table = HashMap::new();
+        type_table.insert(ExprId(101), Type::Any);
+        let lowering = LoweringPass::new(HashMap::new(), type_table, 1100);
+        let expr = IrExpr {
+            id: ExprId(100),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Int,
+                args: vec![IrExpr { id: ExprId(101), kind: IrExprKind::Var("v".to_string()) }],
+            },
+        };
+        let lowered = lowering.lower_expr(expr);
+        assert!(matches!(lowered.kind, IrExprKind::JsonConversion { .. }));
+    }
+
+    #[test]
+    fn test_lower_float_non_any_uses_cast() {
+        let mut type_table = HashMap::new();
+        type_table.insert(ExprId(111), Type::Int);
+        let lowering = LoweringPass::new(HashMap::new(), type_table, 1200);
+        let expr = IrExpr {
+            id: ExprId(110),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Float,
+                args: vec![IrExpr { id: ExprId(111), kind: IrExprKind::Var("v".to_string()) }],
+            },
+        };
+        let lowered = lowering.lower_expr(expr);
+        assert!(matches!(lowered.kind, IrExprKind::Cast { .. }));
+    }
+
+    #[test]
+    fn test_lower_list_empty_returns_list() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 1300);
+        let expr = IrExpr {
+            id: ExprId(120),
+            kind: IrExprKind::BuiltinCall { id: BuiltinId::List, args: vec![] },
+        };
+        let lowered = lowering.lower_expr(expr);
+        assert!(matches!(lowered.kind, IrExprKind::List { .. }));
+    }
+
+    #[test]
+    fn test_lower_bin_hex_oct_format() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 1500);
+        let bin_expr = IrExpr { id: ExprId(140), kind: IrExprKind::BuiltinCall { id: BuiltinId::Bin, args: vec![IrExpr { id: ExprId(141), kind: IrExprKind::IntLit(2) }] } };
+        let hex_expr = IrExpr { id: ExprId(142), kind: IrExprKind::BuiltinCall { id: BuiltinId::Hex, args: vec![IrExpr { id: ExprId(143), kind: IrExprKind::IntLit(2) }] } };
+        let oct_expr = IrExpr { id: ExprId(144), kind: IrExprKind::BuiltinCall { id: BuiltinId::Oct, args: vec![IrExpr { id: ExprId(145), kind: IrExprKind::IntLit(2) }] } };
+        let bin_lowered = lowering.lower_expr(bin_expr);
+        let hex_lowered = lowering.lower_expr(hex_expr);
+        let oct_lowered = lowering.lower_expr(oct_expr);
+        assert!(matches!(bin_lowered.kind, IrExprKind::Call { .. }));
+        assert!(matches!(hex_lowered.kind, IrExprKind::Call { .. }));
+        assert!(matches!(oct_lowered.kind, IrExprKind::Call { .. }));
+    }
+
+    #[test]
+    fn test_lower_chr_and_ord() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 1600);
+        let chr_expr = IrExpr { id: ExprId(150), kind: IrExprKind::BuiltinCall { id: BuiltinId::Chr, args: vec![IrExpr { id: ExprId(151), kind: IrExprKind::IntLit(65) }] } };
+        let ord_expr = IrExpr { id: ExprId(152), kind: IrExprKind::BuiltinCall { id: BuiltinId::Ord, args: vec![IrExpr { id: ExprId(153), kind: IrExprKind::StringLit("A".to_string()) }] } };
+        let chr_lowered = lowering.lower_expr(chr_expr);
+        let ord_lowered = lowering.lower_expr(ord_expr);
+        assert!(matches!(chr_lowered.kind, IrExprKind::MethodCall { .. } | IrExprKind::Call { .. }));
+        assert!(matches!(ord_lowered.kind, IrExprKind::Cast { .. }));
+    }
+
+    #[test]
+    fn test_lower_abs_min_max_round() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 1700);
+        let abs_expr = IrExpr { id: ExprId(160), kind: IrExprKind::BuiltinCall { id: BuiltinId::Abs, args: vec![IrExpr { id: ExprId(161), kind: IrExprKind::IntLit(-1) }] } };
+        let min_expr = IrExpr { id: ExprId(162), kind: IrExprKind::BuiltinCall { id: BuiltinId::Min, args: vec![IrExpr { id: ExprId(163), kind: IrExprKind::IntLit(1) }, IrExpr { id: ExprId(164), kind: IrExprKind::IntLit(2) }] } };
+        let max_expr = IrExpr { id: ExprId(165), kind: IrExprKind::BuiltinCall { id: BuiltinId::Max, args: vec![IrExpr { id: ExprId(166), kind: IrExprKind::IntLit(1) }, IrExpr { id: ExprId(167), kind: IrExprKind::IntLit(2) }] } };
+        let round_expr = IrExpr { id: ExprId(168), kind: IrExprKind::BuiltinCall { id: BuiltinId::Round, args: vec![IrExpr { id: ExprId(169), kind: IrExprKind::FloatLit(1.2) }] } };
+        assert!(matches!(lowering.lower_expr(abs_expr).kind, IrExprKind::MethodCall { .. } | IrExprKind::Call { .. } | IrExprKind::BuiltinCall { .. }));
+        assert!(matches!(lowering.lower_expr(min_expr).kind, IrExprKind::MethodCall { .. } | IrExprKind::Call { .. } | IrExprKind::BuiltinCall { .. }));
+        assert!(matches!(lowering.lower_expr(max_expr).kind, IrExprKind::MethodCall { .. } | IrExprKind::Call { .. } | IrExprKind::BuiltinCall { .. }));
+        assert!(matches!(lowering.lower_expr(round_expr).kind, IrExprKind::MethodCall { .. } | IrExprKind::Call { .. } | IrExprKind::BuiltinCall { .. }));
+    }
+
+    #[test]
+    fn test_lower_tuple_from_listcomp_passthrough() {
+        let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 1400);
+        let expr = IrExpr {
+            id: ExprId(130),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Tuple,
+                args: vec![IrExpr {
+                    id: ExprId(131),
+                    kind: IrExprKind::ListComp {
+                        elt: Box::new(IrExpr { id: ExprId(132), kind: IrExprKind::Var("x".to_string()) }),
+                        target: "x".to_string(),
+                        iter: Box::new(IrExpr { id: ExprId(133), kind: IrExprKind::Var("xs".to_string()) }),
+                        condition: None,
+                    },
+                }],
+            },
+        };
+        let lowered = lowering.lower_expr(expr);
+        assert!(matches!(lowered.kind, IrExprKind::ListComp { .. }));
     }
 }

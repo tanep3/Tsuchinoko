@@ -304,4 +304,101 @@ mod tests {
         assert_eq!(Type::String.to_rust_string(), "String");
         assert_eq!(Type::List(Box::new(Type::Int)).to_rust_string(), "Vec<i64>");
     }
+
+    #[test]
+    fn test_type_from_python_hint_dict_default() {
+        let ty = Type::from_python_hint("dict", &[]);
+        assert_eq!(
+            ty,
+            Type::Dict(Box::new(Type::Unknown), Box::new(Type::Unknown))
+        );
+    }
+
+    #[test]
+    fn test_type_from_python_hint_tuple_empty_returns_list_unknown() {
+        let ty = Type::from_python_hint("tuple", &[]);
+        assert_eq!(ty, Type::List(Box::new(Type::Unknown)));
+    }
+
+    #[test]
+    fn test_type_from_python_hint_tuple_params() {
+        let ty = Type::from_python_hint("tuple", &[Type::Int, Type::String]);
+        assert_eq!(ty, Type::Tuple(vec![Type::Int, Type::String]));
+    }
+
+    #[test]
+    fn test_type_from_python_hint_optional() {
+        let ty = Type::from_python_hint("Optional", &[Type::Int]);
+        assert_eq!(ty, Type::Optional(Box::new(Type::Int)));
+    }
+
+    #[test]
+    fn test_type_from_python_hint_set() {
+        let ty = Type::from_python_hint("set", &[Type::Int]);
+        assert_eq!(ty, Type::Set(Box::new(Type::Int)));
+    }
+
+    #[test]
+    fn test_type_from_python_hint_callable_list_params() {
+        let ty = Type::from_python_hint(
+            "Callable",
+            &[Type::List(Box::new(Type::Int)), Type::Bool],
+        );
+        if let Type::Func { params, ret, is_boxed, .. } = ty {
+            assert_eq!(params, vec![Type::Int]);
+            assert_eq!(*ret, Type::Bool);
+            assert!(is_boxed);
+        } else {
+            panic!("Expected Func type");
+        }
+    }
+
+    #[test]
+    fn test_type_from_python_hint_callable_tuple_params() {
+        let ty = Type::from_python_hint(
+            "Callable",
+            &[Type::Tuple(vec![Type::Int, Type::String]), Type::Float],
+        );
+        if let Type::Func { params, ret, is_boxed, .. } = ty {
+            assert_eq!(params, vec![Type::Int, Type::String]);
+            assert_eq!(*ret, Type::Float);
+            assert!(is_boxed);
+        } else {
+            panic!("Expected Func type");
+        }
+    }
+
+    #[test]
+    fn test_type_from_python_hint_struct_name() {
+        let ty = Type::from_python_hint("Point", &[]);
+        assert_eq!(ty, Type::Struct("Point".to_string()));
+    }
+
+    #[test]
+    fn test_type_from_python_hint_dotted_name_any() {
+        let ty = Type::from_python_hint("np.ndarray", &[]);
+        assert_eq!(ty, Type::Any);
+    }
+
+    #[test]
+    fn test_type_to_rust_string_dict() {
+        let ty = Type::Dict(Box::new(Type::Int), Box::new(Type::String));
+        assert_eq!(ty.to_rust_string(), "std::collections::HashMap<i64, String>");
+    }
+
+    #[test]
+    fn test_type_to_rust_string_optional() {
+        let ty = Type::Optional(Box::new(Type::Bool));
+        assert_eq!(ty.to_rust_string(), "Option<bool>");
+    }
+
+    #[test]
+    fn test_type_to_default_value_dict_optional_tuple() {
+        let dict = Type::Dict(Box::new(Type::Int), Box::new(Type::String));
+        let opt = Type::Optional(Box::new(Type::Int));
+        let tup = Type::Tuple(vec![Type::Int, Type::Bool]);
+        assert_eq!(dict.to_default_value(), "std::collections::HashMap::new()");
+        assert_eq!(opt.to_default_value(), "None");
+        assert_eq!(tup.to_default_value(), "(0i64, false)");
+    }
 }

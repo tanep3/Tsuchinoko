@@ -564,4 +564,239 @@ mod tests {
         };
         assert_eq!(analyzer.infer_type(&expr), Type::Int);
     }
+
+    #[test]
+    fn test_infer_call_sum_returns_int() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::Call {
+            func: Box::new(Expr::Ident("sum".to_string())),
+            args: vec![Expr::List(vec![Expr::IntLiteral(1)])],
+            kwargs: vec![],
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Int);
+    }
+
+    #[test]
+    fn test_infer_call_any_returns_bool() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::Call {
+            func: Box::new(Expr::Ident("any".to_string())),
+            args: vec![Expr::List(vec![Expr::BoolLiteral(true)])],
+            kwargs: vec![],
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Bool);
+    }
+
+    #[test]
+    fn test_infer_call_all_returns_bool() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::Call {
+            func: Box::new(Expr::Ident("all".to_string())),
+            args: vec![Expr::List(vec![Expr::BoolLiteral(true)])],
+            kwargs: vec![],
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Bool);
+    }
+
+    #[test]
+    fn test_infer_call_enumerate_returns_list_tuple() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::Call {
+            func: Box::new(Expr::Ident("enumerate".to_string())),
+            args: vec![Expr::List(vec![Expr::IntLiteral(1)])],
+            kwargs: vec![],
+        };
+        assert_eq!(
+            analyzer.infer_type(&expr),
+            Type::List(Box::new(Type::Tuple(vec![Type::Int, Type::Unknown])))
+        );
+    }
+
+    #[test]
+    fn test_infer_call_zip_returns_list_tuple_len() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::Call {
+            func: Box::new(Expr::Ident("zip".to_string())),
+            args: vec![Expr::List(vec![]), Expr::List(vec![]), Expr::List(vec![])],
+            kwargs: vec![],
+        };
+        assert_eq!(
+            analyzer.infer_type(&expr),
+            Type::List(Box::new(Type::Tuple(vec![Type::Unknown; 3])))
+        );
+    }
+
+    #[test]
+    fn test_infer_call_map_returns_list_unknown() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::Call {
+            func: Box::new(Expr::Ident("map".to_string())),
+            args: vec![
+                Expr::Lambda {
+                    params: vec!["x".to_string()],
+                    body: Box::new(Expr::Ident("x".to_string())),
+                },
+                Expr::List(vec![Expr::IntLiteral(1)]),
+            ],
+            kwargs: vec![],
+        };
+        assert_eq!(
+            analyzer.infer_type(&expr),
+            Type::List(Box::new(Type::Unknown))
+        );
+    }
+
+    #[test]
+    fn test_infer_method_dict_keys_returns_list() {
+        let mut analyzer = MockAnalyzer::new();
+        analyzer
+            .scope
+            .define("d", Type::Dict(Box::new(Type::Int), Box::new(Type::String)), false);
+        let expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("d".to_string())),
+                attr: "keys".to_string(),
+            }),
+            args: vec![],
+            kwargs: vec![],
+        };
+        assert_eq!(
+            analyzer.infer_type(&expr),
+            Type::List(Box::new(Type::Int))
+        );
+    }
+
+    #[test]
+    fn test_infer_method_dict_values_returns_list() {
+        let mut analyzer = MockAnalyzer::new();
+        analyzer
+            .scope
+            .define("d", Type::Dict(Box::new(Type::Int), Box::new(Type::String)), false);
+        let expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("d".to_string())),
+                attr: "values".to_string(),
+            }),
+            args: vec![],
+            kwargs: vec![],
+        };
+        assert_eq!(
+            analyzer.infer_type(&expr),
+            Type::List(Box::new(Type::String))
+        );
+    }
+
+    #[test]
+    fn test_infer_method_list_pop_returns_elem() {
+        let mut analyzer = MockAnalyzer::new();
+        analyzer
+            .scope
+            .define("xs", Type::List(Box::new(Type::Int)), false);
+        let expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("xs".to_string())),
+                attr: "pop".to_string(),
+            }),
+            args: vec![],
+            kwargs: vec![],
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Int);
+    }
+
+    #[test]
+    fn test_infer_method_string_join_returns_string() {
+        let analyzer = MockAnalyzer::new();
+        let expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::StringLiteral(",".to_string())),
+                attr: "join".to_string(),
+            }),
+            args: vec![Expr::List(vec![Expr::StringLiteral("a".to_string())])],
+            kwargs: vec![],
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::String);
+    }
+
+    #[test]
+    fn test_infer_index_tuple_uniform_types() {
+        let mut analyzer = MockAnalyzer::new();
+        analyzer
+            .scope
+            .define("t", Type::Ref(Box::new(Type::Tuple(vec![Type::Int, Type::Int]))), false);
+        let expr = Expr::Index {
+            target: Box::new(Expr::Ident("t".to_string())),
+            index: Box::new(Expr::IntLiteral(0)),
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Int);
+    }
+
+    #[test]
+    fn test_infer_index_tuple_mixed_types() {
+        let mut analyzer = MockAnalyzer::new();
+        analyzer
+            .scope
+            .define("t", Type::Ref(Box::new(Type::Tuple(vec![Type::Int, Type::String]))), false);
+        let expr = Expr::Index {
+            target: Box::new(Expr::Ident("t".to_string())),
+            index: Box::new(Expr::IntLiteral(1)),
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Unknown);
+    }
+
+    #[test]
+    fn test_infer_call_dict_returns_dict_type() {
+        let mut analyzer = MockAnalyzer::new();
+        analyzer
+            .scope
+            .define("d", Type::Dict(Box::new(Type::Int), Box::new(Type::String)), false);
+        let expr = Expr::Call {
+            func: Box::new(Expr::Ident("dict".to_string())),
+            args: vec![Expr::Ident("d".to_string())],
+            kwargs: vec![],
+        };
+        assert_eq!(
+            analyzer.infer_type(&expr),
+            Type::Dict(Box::new(Type::Int), Box::new(Type::String))
+        );
+    }
+
+    #[test]
+    fn test_infer_external_module_call_is_any() {
+        let mut analyzer = MockAnalyzer::new();
+        analyzer
+            .external_imports
+            .push(("numpy".to_string(), "np".to_string()));
+        let expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("np".to_string())),
+                attr: "zeros".to_string(),
+            }),
+            args: vec![],
+            kwargs: vec![],
+        };
+        assert_eq!(analyzer.infer_type(&expr), Type::Any);
+    }
+
+    #[test]
+    fn test_infer_method_dict_iter() {
+        let mut analyzer = MockAnalyzer::new();
+        analyzer
+            .scope
+            .define("d", Type::Dict(Box::new(Type::Int), Box::new(Type::String)), false);
+        let expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("d".to_string())),
+                attr: "iter".to_string(),
+            }),
+            args: vec![],
+            kwargs: vec![],
+        };
+        assert_eq!(
+            analyzer.infer_type(&expr),
+            Type::List(Box::new(Type::Tuple(vec![
+                Type::Ref(Box::new(Type::Int)),
+                Type::Ref(Box::new(Type::String)),
+            ])))
+        );
+    }
 }

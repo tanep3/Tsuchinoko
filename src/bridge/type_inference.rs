@@ -37,3 +37,77 @@ pub fn from_value(v: Value) -> TnkValue {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_from_value_primitives() {
+        assert_eq!(from_value(Value::Null), TnkValue::Value { value: None });
+        assert_eq!(
+            from_value(Value::Bool(true)),
+            TnkValue::Value { value: Some(JsonPrimitive::Bool(true)) }
+        );
+        assert_eq!(
+            from_value(Value::Number(serde_json::Number::from(7))),
+            TnkValue::Value { value: Some(JsonPrimitive::Int(7)) }
+        );
+        assert_eq!(
+            from_value(Value::Number(serde_json::Number::from_f64(2.5).unwrap())),
+            TnkValue::Value { value: Some(JsonPrimitive::Float(2.5)) }
+        );
+        assert_eq!(
+            from_value(Value::String("hi".to_string())),
+            TnkValue::Value { value: Some(JsonPrimitive::String("hi".to_string())) }
+        );
+    }
+
+    #[test]
+    fn test_from_value_array_and_object_as_dict() {
+        let v = json!([1, "a"]);
+        assert_eq!(
+            from_value(v),
+            TnkValue::List {
+                items: vec![
+                    TnkValue::Value { value: Some(JsonPrimitive::Int(1)) },
+                    TnkValue::Value { value: Some(JsonPrimitive::String("a".to_string())) },
+                ]
+            }
+        );
+
+        let obj = json!({"k": 1});
+        let dict = from_value(obj);
+        match dict {
+            TnkValue::Dict { items } => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].key, TnkValue::Value { value: Some(JsonPrimitive::String("k".to_string())) });
+                assert_eq!(items[0].value, TnkValue::Value { value: Some(JsonPrimitive::Int(1)) });
+            }
+            _ => panic!("Expected Dict"),
+        }
+    }
+
+    #[test]
+    fn test_from_value_prefers_tagged_tnkvalue() {
+        let tagged = json!({
+            "kind": "handle",
+            "id": "h1",
+            "type": "str",
+            "repr": "'x'",
+            "str": "x",
+            "session_id": "s1"
+        });
+        let value = from_value(tagged);
+        match value {
+            TnkValue::Handle { id, type_, str_, session_id, .. } => {
+                assert_eq!(id, "h1");
+                assert_eq!(type_, "str");
+                assert_eq!(str_, "x");
+                assert_eq!(session_id, "s1");
+            }
+            _ => panic!("Expected Handle"),
+        }
+    }
+}

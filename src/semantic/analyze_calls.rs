@@ -1189,10 +1189,30 @@ impl SemanticAnalyzer {
 #[cfg(test)]
 mod v1_5_2_tests {
     use super::*;
+    use crate::ir::BuiltinId;
     use crate::parser::*;
     use crate::semantic::SemanticAnalyzer;
 
-    // Test int(Any) generates JsonConversion
+    fn expr_has_method(expr: &IrExpr, name: &str) -> bool {
+        match &expr.kind {
+            IrExprKind::MethodCall { method, target, args, .. } => {
+                method == name
+                    || expr_has_method(target, name)
+                    || args.iter().any(|a| expr_has_method(a, name))
+            }
+            IrExprKind::Call { func, args, .. } => {
+                expr_has_method(func, name) || args.iter().any(|a| expr_has_method(a, name))
+            }
+            IrExprKind::BridgeMethodCall { method, target, args, .. } => {
+                method == name
+                    || expr_has_method(target, name)
+                    || args.iter().any(|a| expr_has_method(a, name))
+            }
+            _ => false,
+        }
+    }
+
+    // Test int(Any) resolves to BuiltinCall (conversion is handled in Lowering)
     #[test]
     fn test_int_any_generates_json_conversion() {
         // Create a variable of Type::Any and call int() on it
@@ -1210,21 +1230,17 @@ mod v1_5_2_tests {
         assert!(result.is_ok());
         let ir = result.unwrap();
 
-        // Should generate JsonConversion, not Cast
         match ir.kind {
-            IrExprKind::JsonConversion { convert_to, .. } => {
-                assert_eq!(convert_to, "i64");
-            }
-            IrExprKind::Cast { .. } => {
-                panic!("Expected JsonConversion for int(Any), got Cast");
+            IrExprKind::BuiltinCall { id, .. } => {
+                assert_eq!(id, BuiltinId::Int);
             }
             _ => {
-                panic!("Expected JsonConversion, got {:?}", ir);
+                panic!("Expected BuiltinCall for int(Any), got {:?}", ir);
             }
         }
     }
 
-    // Test int(i64) generates Cast (not JsonConversion)
+    // Test int(i64) resolves to BuiltinCall (conversion is handled in Lowering)
     #[test]
     fn test_int_i64_generates_cast() {
         let mut analyzer = SemanticAnalyzer::new();
@@ -1241,16 +1257,16 @@ mod v1_5_2_tests {
         let ir = result.unwrap();
 
         match ir.kind {
-            IrExprKind::Cast { ty, .. } => {
-                assert_eq!(ty, "i64");
+            IrExprKind::BuiltinCall { id, .. } => {
+                assert_eq!(id, BuiltinId::Int);
             }
             _ => {
-                panic!("Expected Cast for int(i64), got {:?}", ir);
+                panic!("Expected BuiltinCall for int(i64), got {:?}", ir);
             }
         }
     }
 
-    // Test float(Any) generates JsonConversion
+    // Test float(Any) resolves to BuiltinCall (conversion is handled in Lowering)
     #[test]
     fn test_float_any_generates_json_conversion() {
         let mut analyzer = SemanticAnalyzer::new();
@@ -1267,12 +1283,108 @@ mod v1_5_2_tests {
         let ir = result.unwrap();
 
         match ir.kind {
-            IrExprKind::JsonConversion { convert_to, .. } => {
-                assert_eq!(convert_to, "f64");
+            IrExprKind::BuiltinCall { id, .. } => {
+                assert_eq!(id, BuiltinId::Float);
             }
             _ => {
-                panic!("Expected JsonConversion for float(Any), got {:?}", ir);
+                panic!("Expected BuiltinCall for float(Any), got {:?}", ir);
             }
         }
+    }
+
+    #[test]
+    fn test_dict_keys_method_call() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define("d", Type::Dict(Box::new(Type::Int), Box::new(Type::String)), false);
+        let call_expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("d".to_string())),
+                attr: "keys".to_string(),
+            }),
+            args: vec![],
+            kwargs: vec![],
+        };
+        let ir = analyzer.analyze_expr(&call_expr).unwrap();
+        assert!(expr_has_method(&ir, "keys"));
+    }
+
+    #[test]
+    fn test_dict_values_method_call() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define("d", Type::Dict(Box::new(Type::Int), Box::new(Type::String)), false);
+        let call_expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("d".to_string())),
+                attr: "values".to_string(),
+            }),
+            args: vec![],
+            kwargs: vec![],
+        };
+        let ir = analyzer.analyze_expr(&call_expr).unwrap();
+        assert!(expr_has_method(&ir, "values"));
+    }
+
+    #[test]
+    fn test_list_append_method_call() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define("xs", Type::List(Box::new(Type::Int)), true);
+        let call_expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("xs".to_string())),
+                attr: "append".to_string(),
+            }),
+            args: vec![Expr::IntLiteral(1)],
+            kwargs: vec![],
+        };
+        let ir = analyzer.analyze_expr(&call_expr).unwrap();
+        assert!(expr_has_method(&ir, "append") || expr_has_method(&ir, "push"));
+    }
+
+    #[test]
+    fn test_dict_get_method_call() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define("d", Type::Dict(Box::new(Type::String), Box::new(Type::Int)), false);
+        let call_expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("d".to_string())),
+                attr: "get".to_string(),
+            }),
+            args: vec![Expr::StringLiteral("a".to_string())],
+            kwargs: vec![],
+        };
+        let ir = analyzer.analyze_expr(&call_expr).unwrap();
+        assert!(expr_has_method(&ir, "get"));
+    }
+
+    #[test]
+    fn test_list_insert_method_call() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define("xs", Type::List(Box::new(Type::Int)), true);
+        let call_expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("xs".to_string())),
+                attr: "insert".to_string(),
+            }),
+            args: vec![Expr::IntLiteral(0), Expr::IntLiteral(1)],
+            kwargs: vec![],
+        };
+        let ir = analyzer.analyze_expr(&call_expr).unwrap();
+        assert!(matches!(ir.kind, IrExprKind::MethodCall { method, .. } if method == "insert"));
+    }
+
+    #[test]
+    fn test_string_upper_method_call() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.scope.define("s", Type::String, false);
+        let call_expr = Expr::Call {
+            func: Box::new(Expr::Attribute {
+                value: Box::new(Expr::Ident("s".to_string())),
+                attr: "upper".to_string(),
+            }),
+            args: vec![],
+            kwargs: vec![],
+        };
+        let ir = analyzer.analyze_expr(&call_expr).unwrap();
+        assert!(matches!(ir.kind, IrExprKind::MethodCall { method, .. } if method == "upper"));
     }
 }

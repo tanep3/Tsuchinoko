@@ -1360,44 +1360,10 @@ impl SemanticAnalyzer {
                         ir_value
                     };
 
-                // If expression is a Bridge* result and target type is concrete, convert from TnkValue.
-                let ir_value = if !matches!(ty, Type::Any | Type::Unknown)
-                    && matches!(
-                        ir_value.kind,
-                        IrExprKind::BridgeCall { .. }
-                            | IrExprKind::BridgeMethodCall { .. }
-                            | IrExprKind::BridgeGet { .. }
-                            | IrExprKind::BridgeAttributeAccess { .. }
-                            | IrExprKind::BridgeItemAccess { .. }
-                            | IrExprKind::BridgeSlice { .. }
-                            | IrExprKind::Call { .. }
-                    )
-                {
-                    let is_call_bridge = matches!(
-                        ir_value.kind,
-                        IrExprKind::Call { ref func, .. }
-                            if matches!(
-                                func.kind,
-                                IrExprKind::BridgeGet { .. }
-                                    | IrExprKind::BridgeAttributeAccess { .. }
-                                    | IrExprKind::BridgeItemAccess { .. }
-                                    | IrExprKind::BridgeSlice { .. }
-                            )
-                    );
-                    if matches!(ir_value.kind, IrExprKind::Call { .. }) && !is_call_bridge {
-                        ir_value
-                    } else {
-                    if matches!(ty, Type::Optional(_)) {
-                        skip_optional_wrap = true;
-                    }
-                    self.create_expr(IrExprKind::FromTnkValue {
-                        value: Box::new(ir_value),
-                        to_type: ty.clone(),
-                    }, ty.clone())
-                    }
-                } else {
-                    ir_value
-                };
+                // Bridge結果はLoweringでFromTnkValueを挿入するため、OptionalのSomeラップだけ抑止する。
+                if matches!(ty, Type::Optional(_)) && is_bridge_value {
+                    skip_optional_wrap = true;
+                }
 
                 // V1.5.0: If type hint is List with known element type, update IrExpr::List's elem_type
                 // This ensures emitter can correctly add .to_string() for String elements in tuples
