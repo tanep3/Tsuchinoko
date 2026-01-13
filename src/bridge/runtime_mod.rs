@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 
 use self::bridge_error::BridgeError;
-use self::protocol::{Command as BridgeCmd, Response, TnkValue};
+use self::protocol::{Command as BridgeCmd, Response, ResponseMeta, TnkValue};
 
 /// 埋め込み Python ワーカーコード
 const WORKER_CODE: &str = include_str!("python/worker.py");
@@ -79,7 +79,7 @@ impl PythonBridge {
     /// 汎用リクエスト送信
     /// Uses interior mutability to lock valid only for the duration of the send/recv
     /// Accepts Command with lifetimes
-    fn send_command<'a>(&self, cmd: BridgeCmd<'a>) -> Result<TnkValue, BridgeError> {
+    fn send_command_with_meta<'a>(&self, cmd: BridgeCmd<'a>) -> Result<(TnkValue, Option<ResponseMeta>), BridgeError> {
         let mut process = self.process.borrow_mut();
         
         // リクエスト送信
@@ -101,7 +101,7 @@ impl PythonBridge {
         let response: Response = serde_json::from_str(&line)?;
 
         match response {
-            Response::Ok { value, .. } => Ok(value),
+            Response::Ok { value, meta, .. } => Ok((value, meta)),
             Response::Error { error, .. } => Err(BridgeError::from_api_error(
                 &error.code,
                 error.message,
@@ -109,6 +109,11 @@ impl PythonBridge {
                 error.traceback
             )),
         }
+    }
+
+    fn send_command<'a>(&self, cmd: BridgeCmd<'a>) -> Result<TnkValue, BridgeError> {
+        let (value, _) = self.send_command_with_meta(cmd)?;
+        Ok(value)
     }
 
     // --- V1.7.0 New APIs ---
@@ -121,6 +126,13 @@ impl PythonBridge {
                 "module": module
             })),
             _ => Err(BridgeError::TypeMismatch(format!("Target object is not a handle or module. Got: {:?}", target))),
+        }
+    }
+
+    fn resolve_handle_id(&self, target: &TnkValue) -> Result<String, BridgeError> {
+        match target {
+            TnkValue::Handle { id, .. } => Ok(id.clone()),
+            _ => Err(BridgeError::TypeMismatch(format!("Target object is not a handle. Got: {:?}", target))),
         }
     }
 
@@ -202,6 +214,38 @@ impl PythonBridge {
             stop: stop.unwrap_or_else(none_val),
             step: step.unwrap_or_else(none_val),
         })
+    }
+
+    pub fn iter(&self, target: &TnkValue) -> Result<TnkValue, BridgeError> {
+        let target_id = self.resolve_handle_id(target)?;
+        let req_id = self.request_id.fetch_add(1, Ordering::SeqCst).to_string();
+        self.send_command(BridgeCmd::Iter {
+            session_id: self.session_id.clone(),
+            req_id: Some(req_id),
+            target: serde_json::Value::String(target_id),
+        })
+    }
+
+    pub fn iter_next_batch(&self, target: &TnkValue, batch_size: usize) -> Result<IterBatch, BridgeError> {
+        let target_id = self.resolve_handle_id(target)?;
+        let req_id = self.request_id.fetch_add(1, Ordering::SeqCst).to_string();
+        let (value, meta) = self.send_command_with_meta(BridgeCmd::IterNextBatch {
+            session_id: self.session_id.clone(),
+            req_id: Some(req_id),
+            target: target_id,
+            batch_size,
+        })?;
+        let items = match value {
+            TnkValue::List { items } => items,
+            other => {
+                return Err(BridgeError::TypeMismatch(format!(
+                    "iter_next_batch expects list value, got: {:?}",
+                    other
+                )));
+            }
+        };
+        let done = meta.and_then(|m| m.done).unwrap_or(false);
+        Ok(IterBatch { items, done })
     }
 
     pub fn shutdown(&self) -> Result<(), BridgeError> {
@@ -324,6 +368,28 @@ impl<'a> HandleRef<'a> {
         };
         self.bridge.get_item(&target, key)
     }
+
+    pub fn iter(&self) -> Result<TnkValue, BridgeError> {
+        let target = TnkValue::Handle {
+            id: self.handle_id.clone(),
+            type_: "ref".to_string(),
+            repr: "ref".to_string(),
+            str_: "ref".to_string(),
+            session_id: self.bridge.session_id.clone(),
+        };
+        self.bridge.iter(&target)
+    }
+
+    pub fn iter_next_batch(&self, batch_size: usize) -> Result<IterBatch, BridgeError> {
+        let target = TnkValue::Handle {
+            id: self.handle_id.clone(),
+            type_: "ref".to_string(),
+            repr: "ref".to_string(),
+            str_: "ref".to_string(),
+            session_id: self.bridge.session_id.clone(),
+        };
+        self.bridge.iter_next_batch(&target, batch_size)
+    }
 }
 
 impl<'a> From<HandleRef<'a>> for TnkValue {
@@ -340,6 +406,11 @@ impl<'a> From<HandleRef<'a>> for TnkValue {
 
 pub fn display_value(value: &TnkValue) -> String {
     value.to_string()
+}
+
+pub struct IterBatch {
+    pub items: Vec<TnkValue>,
+    pub done: bool,
 }
 
 // Compatibility layer for Emitter's generic calls

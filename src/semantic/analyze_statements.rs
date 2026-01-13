@@ -1696,7 +1696,8 @@ mod tests {
                         .map(|b| b.iter().any(|n| node_matches(n, pred)))
                         .unwrap_or(false)
             }
-            IrNode::For { body, .. } => body.iter().any(|n| node_matches(n, pred)),
+            IrNode::For { body, .. }
+            | IrNode::BridgeBatchFor { body, .. } => body.iter().any(|n| node_matches(n, pred)),
             IrNode::While { body, .. } => body.iter().any(|n| node_matches(n, pred)),
             IrNode::TryBlock { try_body, except_body, else_body, finally_body, .. } => {
                 try_body.iter().any(|n| node_matches(n, pred))

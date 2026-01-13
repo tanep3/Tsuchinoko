@@ -10,11 +10,13 @@ use crate::semantic::Type;
 use crate::bridge::builtin_table::BuiltinKind;
 use std::collections::HashMap;
 use std::cell::Cell;
+use std::cell::RefCell;
 
 pub struct LoweringPass {
     module_aliases: HashMap<String, String>,
     type_table: HashMap<ExprId, Type>,
     next_id: Cell<u32>,
+    bridge_batch_vars: RefCell<Vec<String>>,
 }
 
 impl LoweringPass {
@@ -23,6 +25,7 @@ impl LoweringPass {
             module_aliases, 
             type_table, 
             next_id: Cell::new(next_id_start),
+            bridge_batch_vars: RefCell::new(Vec::new()),
         }
     }
 
@@ -99,10 +102,30 @@ impl LoweringPass {
                 cond: Box::new(self.lower_expr(*cond)),
                 body: body.into_iter().map(|n| self.lower_node(n)).collect(),
             },
-            IrNode::For { var, var_type, iter, body } => IrNode::For {
-                var, var_type, iter: Box::new(self.lower_expr(*iter)),
-                body: body.into_iter().map(|n| self.lower_node(n)).collect(),
-            },
+            IrNode::For { var, var_type, iter, body } => {
+                let lowered_iter = self.lower_expr(*iter);
+                let use_bridge_batch = !var.contains(',')
+                    && self.iter_expr_uses_bridge(&lowered_iter);
+                if use_bridge_batch {
+                    self.bridge_batch_vars.borrow_mut().push(var.clone());
+                    let lowered_body: Vec<IrNode> = body.into_iter().map(|n| self.lower_node(n)).collect();
+                    self.bridge_batch_vars.borrow_mut().pop();
+                    IrNode::BridgeBatchFor {
+                        var,
+                        var_type,
+                        iter: Box::new(lowered_iter),
+                        body: lowered_body,
+                    }
+                } else {
+                    let lowered_body: Vec<IrNode> = body.into_iter().map(|n| self.lower_node(n)).collect();
+                    IrNode::For {
+                        var,
+                        var_type,
+                        iter: Box::new(lowered_iter),
+                        body: lowered_body,
+                    }
+                }
+            }
             IrNode::TryBlock { try_body, except_body, except_var, else_body, finally_body } => IrNode::TryBlock {
                 try_body: try_body.into_iter().map(|n| self.lower_node(n)).collect(),
                 except_body: except_body.into_iter().map(|n| self.lower_node(n)).collect(),
@@ -139,6 +162,23 @@ impl LoweringPass {
             },
             _ => node, 
         }
+    }
+
+    fn iter_expr_uses_bridge(&self, expr: &IrExpr) -> bool {
+        match &expr.kind {
+            IrExprKind::BridgeMethodCall { .. }
+            | IrExprKind::BridgeCall { .. }
+            | IrExprKind::BridgeAttributeAccess { .. }
+            | IrExprKind::BridgeItemAccess { .. }
+            | IrExprKind::BridgeSlice { .. }
+            | IrExprKind::BridgeGet { .. } => true,
+            IrExprKind::Ref(inner) | IrExprKind::TnkValueFrom(inner) => self.iter_expr_uses_bridge(inner),
+            _ => false,
+        }
+    }
+
+    fn is_bridge_batch_var(&self, name: &str) -> bool {
+        self.bridge_batch_vars.borrow().iter().any(|v| v == name)
     }
 
     fn lower_expr(&self, expr: IrExpr) -> IrExpr {
@@ -505,6 +545,17 @@ impl LoweringPass {
                 if lowered_args.is_empty() {
                     return IrExpr { id: original_id, kind: IrExprKind::IntLit(0) };
                 }
+                if let IrExprKind::Var(name) = &lowered_args[0].kind {
+                    if self.is_bridge_batch_var(name) {
+                        return IrExpr {
+                            id: original_id,
+                            kind: IrExprKind::JsonConversion {
+                                target: Box::new(lowered_args[0].clone()),
+                                convert_to: "i64".to_string(),
+                            },
+                        };
+                    }
+                }
                 let arg_ty = lowered_args
                     .get(0)
                     .and_then(|arg| self.type_table.get(&arg.id));
@@ -528,6 +579,17 @@ impl LoweringPass {
             BuiltinId::Float => {
                 if lowered_args.is_empty() {
                     return IrExpr { id: original_id, kind: IrExprKind::FloatLit(0.0) };
+                }
+                if let IrExprKind::Var(name) = &lowered_args[0].kind {
+                    if self.is_bridge_batch_var(name) {
+                        return IrExpr {
+                            id: original_id,
+                            kind: IrExprKind::JsonConversion {
+                                target: Box::new(lowered_args[0].clone()),
+                                convert_to: "f64".to_string(),
+                            },
+                        };
+                    }
                 }
                 let arg_ty = lowered_args
                     .get(0)
@@ -848,6 +910,18 @@ impl LoweringPass {
                             },
                         };
                     }
+                }
+                if matches!(arg.kind, IrExprKind::Range { .. }) {
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::MethodCall {
+                            target: Box::new(arg),
+                            method: "collect::<Vec<_>>".to_string(),
+                            args: vec![],
+                            target_type: Type::Unknown,
+                            callee_needs_bridge: false,
+                        },
+                    };
                 }
                 if matches!(arg.kind, IrExprKind::MethodCall { .. } | IrExprKind::ListComp { .. }) {
                     return IrExpr {

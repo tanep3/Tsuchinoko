@@ -95,6 +95,13 @@ pub enum IrNode {
         iter: Box<IrExpr>,
         body: Vec<IrNode>,
     },
+    /// Bridge 経由のバッチ反復 for ループ
+    BridgeBatchFor {
+        var: String,
+        var_type: Type,
+        iter: Box<IrExpr>,
+        body: Vec<IrNode>,
+    },
     /// whileループ
     While {
         cond: Box<IrExpr>,

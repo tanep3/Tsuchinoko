@@ -1,8 +1,8 @@
 # Tsuchinoko 要件定義書
 
 > **著者**: Tane Channel Technology  
-> **バージョン**: 1.5.2  
-> **最終更新**: 2026-01-08
+> **バージョン**: 1.7.0  
+> **最終更新**: 2026-01-13
 
 ---
 
@@ -125,6 +125,9 @@ flowchart LR
 | F-048 | Result型統一 | 例外発生関数は `Result<T, TsuchinokoError>` | 高 | 1.5.2 | ✅ V1.5.2 |
 | F-049 | 外部境界Result化 | PyO3/py_bridge 失敗を `Err` で返す | 高 | 1.5.2 | ✅ V1.5.2 |
 | F-050 | エラー行番号 | `[line 10] RuntimeError: ...` 形式 | 中 | 1.5.2 | ✅ V1.5.2 |
+| F-051 | 変換時診断の一括出力 | 変換不能を収集しEmitter前に一括で返却 | 高 | 1.7.0 | 仕様追加 |
+| F-052 | 変換時診断の複数件通知 | VSCode向けに複数エラーをまとめて通知 | 高 | 1.7.0 | 仕様追加 |
+| F-053 | CLI出力分離 | stdout=人間向けテキスト, stderr=JSON診断(失敗時のみ) | 高 | 1.7.0 | 仕様追加 |
 
 ### 3.2 サポート対象外
 
@@ -227,6 +230,18 @@ flowchart LR
 | 型不整合 | 明示型に変換不能 | `TypeError` |
 | 参照不能 | 未定義変数 | `UndefinedVariable` |
 
+**変換時診断の出力要件（V1.7.0）**
+- 変換不能は **検知点で収集** し、**Emitter前に一括出力** する
+- VSCode には **複数件をまとめて通知** する
+- CLI は **stdoutに人間向けテキスト**、**stderrにJSON診断** を出力（失敗時のみ）
+
+**診断情報の最小項目**
+- `code`: 例 `TNK-UNSUPPORTED-SYNTAX`
+- `message`: ユーザ向け説明
+- `severity`: `Error` / `Warning`
+- `span`: `file/line/column/range`
+- `phase`: `parse/semantic/lowering`
+
 #### 3.5.2 実行時（生成コード）エラー
 
 1. **raise / raise from**
@@ -273,6 +288,21 @@ Rust は `fn main()` だけのため、変換規約を明示する。
 - Pythonでは `if/try/for/while` ブロック内で定義した変数も関数スコープで有効  
 - Rustではブロックスコープになるため、**ブロック内で初めて定義された変数は hoist して `Option<T>` として宣言**する  
 - これにより **トップレベル/`__main__` ガード内での変数参照が破綻しない**
+
+### 3.7 未対応機能ガード（UnsupportedFeatureRegistry）
+
+> [!IMPORTANT]
+> 未対応機能の検知は、各フェーズに散らさず **中央レジストリで一元管理** する。
+
+**要件**
+- 未対応機能は `UnsupportedFeatureRegistry` で **ガードON/OFFを制御** する
+- 変換不能は **TnkDiagnostics** として収集・一括出力する
+- 新機能実装時は **ガードOFF** にするだけで解除可能であること
+
+**運用方針**
+- デフォルトは **ガードON**
+- 対応済みの項目は **ガードOFF**
+- ガードOFFの一覧は `docs/supported_features.md` / `_jp.md` に記載
 
 ---
 

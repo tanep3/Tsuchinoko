@@ -868,23 +868,23 @@ impl std::fmt::Display for TnkValue {{
                     self.shadowed_vars.push(loop_var_name.clone());
                 }
 
-                self.indent += 1;
+                let base_indent = self.indent;
+                self.indent = base_indent + 1;
                 let body_str = self.emit_nodes(body);
+                self.indent = base_indent;
 
                 // V1.5.2: For hoisted loop variables, add assignment at START of loop body
                 // This ensures i.unwrap() works inside the loop body
                 let mut hoisted_init_assignments = Vec::new();
                 for (hoisted_name, loop_var_name, is_hoisted) in &var_mapping {
                     if *is_hoisted {
-                        let inner_indent = "    ".repeat(self.indent);
+                        let inner_indent = "    ".repeat(base_indent + 1);
                         hoisted_init_assignments.push(format!(
                             "{}{} = Some({});",
                             inner_indent, hoisted_name, loop_var_name
                         ));
                     }
                 }
-
-                self.indent -= 1;
 
                 // Restore shadowed_vars
                 self.shadowed_vars.truncate(old_shadowed_len);
@@ -913,6 +913,114 @@ impl std::fmt::Display for TnkValue {{
                     final_body,
                     indent
                 )
+            }
+            IrNode::BridgeBatchFor {
+                var,
+                var_type: _,
+                iter,
+                body,
+            } => {
+                // V1.5.2: Check which loop variables are hoisted
+                let loop_vars: Vec<String> = if var.contains(',') {
+                    var.split(',').map(|s| to_snake_case(s.trim())).collect()
+                } else {
+                    vec![to_snake_case(var)]
+                };
+
+                // Build mapping: (original_name, actual_loop_var_name, is_hoisted)
+                // If hoisted, use _loop_<name> as loop variable to avoid shadowing
+                let mut var_mapping: Vec<(String, String, bool)> = Vec::new();
+                for lv in &loop_vars {
+                    let is_hoisted = self
+                        .current_hoisted_vars
+                        .iter()
+                        .any(|v| to_snake_case(&v.name) == *lv);
+                    let loop_var_name = if is_hoisted {
+                        format!("_loop_{}", lv)
+                    } else {
+                        lv.clone()
+                    };
+                    var_mapping.push((lv.clone(), loop_var_name, is_hoisted));
+                }
+
+                // Add renamed loop vars to shadowed_vars (these override hoisted check)
+                let old_shadowed_len = self.shadowed_vars.len();
+                for (_, loop_var_name, _) in &var_mapping {
+                    self.shadowed_vars.push(loop_var_name.clone());
+                }
+
+                let base_indent = self.indent;
+                self.indent = base_indent + 2;
+                let body_str = self.emit_nodes(body);
+                self.indent = base_indent;
+
+                // V1.5.2: For hoisted loop variables, add assignment at START of loop body
+                // This ensures i.unwrap() works inside the loop body
+                let mut hoisted_init_assignments = Vec::new();
+                for (hoisted_name, loop_var_name, is_hoisted) in &var_mapping {
+                    if *is_hoisted {
+                        let inner_indent = "    ".repeat(base_indent + 2);
+                        hoisted_init_assignments.push(format!(
+                            "{}{} = Some({});",
+                            inner_indent, hoisted_name, loop_var_name
+                        ));
+                    }
+                }
+
+                // Restore shadowed_vars
+                self.shadowed_vars.truncate(old_shadowed_len);
+
+                // Build the loop variable string for the for statement
+                let var_str = if var.contains(',') {
+                    let parts: Vec<String> =
+                        var_mapping.iter().map(|(_, lv, _)| lv.clone()).collect();
+                    format!("({})", parts.join(", "))
+                } else {
+                    var_mapping[0].1.clone()
+                };
+
+                // Build final body: hoisted init + original body
+                let final_body = if hoisted_init_assignments.is_empty() {
+                    body_str
+                } else {
+                    format!("{}\n{}", hoisted_init_assignments.join("\n"), body_str)
+                };
+
+                let iter_target = self.emit_expr(iter);
+                let iter_call = "py_bridge.iter(&__iter_target)";
+                let iter_mapped = format!(
+                    "{}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))",
+                    iter_call
+                );
+                let iter_handle_expr = if self.current_func_returns_result {
+                    format!("{}?", iter_mapped)
+                } else {
+                    format!("{}.unwrap()", iter_mapped)
+                };
+                let batch_call = "py_bridge.iter_next_batch(&__iter_handle, 1000)";
+                let batch_mapped = format!(
+                    "{}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))",
+                    batch_call
+                );
+                let batch_expr = if self.current_func_returns_result {
+                    format!("{}?", batch_mapped)
+                } else {
+                    format!("{}.unwrap()", batch_mapped)
+                };
+                let while_indent = "    ".repeat(base_indent + 1);
+                let mut block = String::new();
+                block.push_str(&format!("{indent}let __iter_target = {};\n", iter_target));
+                block.push_str(&format!("{indent}let __iter_handle = {};\n", iter_handle_expr));
+                block.push_str(&format!("{indent}let mut __iter_done = false;\n"));
+                block.push_str(&format!("{indent}while !__iter_done {{\n"));
+                block.push_str(&format!("{while_indent}let __batch = {};\n", batch_expr));
+                block.push_str(&format!(
+                    "{while_indent}for {} in __batch.items {{\n{}\n{while_indent}}}\n",
+                    var_str, final_body
+                ));
+                block.push_str(&format!("{while_indent}__iter_done = __batch.done;\n"));
+                block.push_str(&format!("{indent}}}"));
+                block
             }
             IrNode::While { cond, body } => {
                 self.indent += 1;
@@ -2554,6 +2662,11 @@ impl std::fmt::Display for TnkValue {{
                 } else {
                     self.emit_expr_internal(target)
                 };
+                let target_str = if matches!(target.kind, IrExprKind::Range { .. }) {
+                    format!("({})", target_str)
+                } else {
+                    target_str
+                };
 
                 if args.is_empty() {
                     if method == "len" {
@@ -3213,6 +3326,7 @@ impl std::fmt::Display for TnkValue {{
         }
         s
     }
+
 }
 
 /// Implementation of CodeEmitter trait for RustEmitter

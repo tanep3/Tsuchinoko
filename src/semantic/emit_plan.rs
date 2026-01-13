@@ -224,7 +224,8 @@ fn scan_node(node: &IrNode, flags: &mut ScanFlags, alias_map: &AliasMap) {
                 }
             }
         }
-        IrNode::For { var_type, iter, body, .. } => {
+        IrNode::For { var_type, iter, body, .. }
+        | IrNode::BridgeBatchFor { var_type, iter, body, .. } => {
             scan_type(var_type, flags);
             scan_expr(iter, flags, alias_map);
             for node in body {
@@ -667,7 +668,9 @@ fn collect_aliases_from_node(node: &IrNode, aliases: &mut AliasMap) {
                 }
             }
         }
-        IrNode::For { body, .. } | IrNode::While { body, .. } => {
+        IrNode::For { body, .. }
+        | IrNode::BridgeBatchFor { body, .. }
+        | IrNode::While { body, .. } => {
             for node in body {
                 collect_aliases_from_node(node, aliases);
             }

@@ -129,6 +129,52 @@ Rust の `chars().step_by()` / `rev()` は構文変換での特殊ケースが�
 `module_table` の native binding は `ConstRef` や `MethodCall` を通じて構造化出力する。  
 従来の `generate_native_code` は廃止し、`NativeBinding` を直接参照する。
 
+### 2.4 変換時診断（TnkDiagnostics）
+
+変換時エラーは **TsuchinokoError（生成コード実行時）とは別レイヤ** として扱う。  
+検知は分散（parse/semantic/lowering）、出力は一括（Emitter前）とする。
+
+#### 診断収集と出力フロー
+
+```mermaid
+flowchart TB
+    PARSE[Parser] --> DIAG[TnkDiagnostics<br/>ErrorSink]
+    SEM[Semantic] --> DIAG
+    LOW[Lowering] --> DIAG
+    DIAG -->|has_errors| STOP[Emitter前で中断]
+    STOP --> OUT1[stdout: 人間向けテキスト]
+    STOP --> OUT2[stderr: JSON診断 失敗時のみ]
+```
+
+#### 診断データ構造（最小項目）
+- `code`: 例 `TNK-UNSUPPORTED-SYNTAX`
+- `message`: ユーザ向け説明
+- `severity`: `Error` / `Warning`
+- `span`: `file/line/column/range`
+- `phase`: `parse/semantic/lowering`
+- `meta`: バージョン等のメタ情報
+
+#### CLI/VSCode 出力方針
+- **CLI**: stdout に短いエラーメッセージ（人間向け）
+- **VSCode**: stderr の JSON を解析して複数診断を一括表示
+- **JSON は失敗時のみ出力**
+
+### 2.5 未対応機能ガード（UnsupportedFeatureRegistry）
+
+未対応機能は **中央レジストリ** でガードし、検知は各フェーズで行う。  
+解除は **unsupported から削除して supported に移す** ことで行う。
+
+#### ガード構造（概念）
+- `UnsupportedFeature` enum に機能一覧を集約
+- `UnsupportedFeatureRegistry` で ON/OFF 管理
+- `guard(feature, span, phase, sink)` で診断を追加
+
+#### 解除手順（将来対応時）
+1. 実装を追加
+2. `docs/unsupported_features.md` / `_jp.md` から削除
+3. `docs/supported_features.md` / `_jp.md` に追記
+4. 回帰テストで確認
+
 ---
 
 ## 3. モジュール構成
