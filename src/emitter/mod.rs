@@ -1,12 +1,13 @@
 //! Emitter module - Rust code generation
 
 use crate::ir::{HoistedVar, IrAugAssignOp, IrBinOp, IrExpr, IrExprKind, IrNode, IrUnaryOp};
-use crate::semantic::Type;
+use crate::semantic::{EmitPlan, FuncEmitPlan, Type};
+use crate::utils::naming::to_snake_case;
 use std::collections::HashMap;
 
 /// Emit Rust code from IR
-pub fn emit(nodes: &[IrNode]) -> String {
-    let mut emitter = RustEmitter::new();
+pub fn emit(nodes: &[IrNode], plan: &EmitPlan) -> String {
+    let mut emitter = RustEmitter::new(plan.clone());
     emitter.emit_nodes(nodes)
 }
 
@@ -36,12 +37,8 @@ pub struct RustEmitter {
     struct_defs: HashMap<String, Vec<String>>,
     /// Whether PyO3 is needed for this file
     // uses_pyo3: bool, // Removed as unused
-    /// Whether resident Python process is needed
-    needs_resident: bool,
     /// PyO3 imports: (module, alias) - e.g., ("numpy", "np")
     external_imports: Vec<(String, String)>,
-    /// Functions that require py_bridge argument
-    resident_functions: std::collections::HashSet<String>,
     /// Whether we are currently emitting inside a function wrapper that already has py_bridge
     is_inside_resident_func: bool,
     /// Current function's hoisted variables (need Option<T> pattern)
@@ -50,10 +47,6 @@ pub struct RustEmitter {
     try_hoisted_vars: Vec<String>,
     /// V1.5.2: Variables that shadow hoisted variables in current scope (e.g., for loop vars)
     shadowed_vars: Vec<String>,
-    /// V1.5.2: Whether TsuchinokoError type is needed (any may_raise=true function)
-    uses_tsuchinoko_error: bool,
-    /// V1.5.2: Whether current function may raise (for Ok() wrapping)
-    current_func_may_raise: bool,
     /// Return type is Result<..> (signature basis for Ok()/?) 
     current_func_returns_result: bool,
     /// V1.5.2: Whether we are inside try body closure (? not allowed, use .unwrap())
@@ -70,91 +63,15 @@ pub struct RustEmitter {
     force_move_closure: bool,
     /// V1.6.0: Map of struct name -> base class name (for composition)
     struct_bases: HashMap<String, String>,
-}
-
-/// Convert camelCase/PascalCase to snake_case
-fn to_snake_case(s: &str) -> String {
-    if s == "_" {
-        return "__tnk_underscore".to_string();
-    }
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_lowercase().next().unwrap());
-        } else {
-            result.push(c);
-        }
-    }
-    if is_rust_keyword(&result) {
-        format!("_{}_tsuchinoko", result)
-    } else {
-        result
-    }
-}
-
-fn is_rust_keyword(name: &str) -> bool {
-    matches!(
-        name,
-        "as"
-            | "break"
-            | "const"
-            | "continue"
-            | "crate"
-            | "else"
-            | "enum"
-            | "extern"
-            | "false"
-            | "fn"
-            | "for"
-            | "if"
-            | "impl"
-            | "in"
-            | "let"
-            | "loop"
-            | "match"
-            | "mod"
-            | "move"
-            | "mut"
-            | "pub"
-            | "ref"
-            | "return"
-            | "self"
-            | "Self"
-            | "static"
-            | "struct"
-            | "super"
-            | "trait"
-            | "true"
-            | "type"
-            | "unsafe"
-            | "use"
-            | "where"
-            | "while"
-            | "async"
-            | "await"
-            | "dyn"
-            | "abstract"
-            | "become"
-            | "box"
-            | "do"
-            | "final"
-            | "macro"
-            | "override"
-            | "priv"
-            | "try"
-            | "typeof"
-            | "unsized"
-            | "virtual"
-            | "yield"
-    )
+    /// Emit plan computed by semantic/lowering
+    plan: EmitPlan,
+    /// Current struct name when emitting methods
+    current_struct_name: Option<String>,
 }
 
 impl Default for RustEmitter {
     fn default() -> Self {
-        Self::new()
+        Self::new(EmitPlan::default())
     }
 }
 
@@ -169,7 +86,6 @@ impl RustEmitter {
             } => {
                 let p: Vec<_> = params.iter().map(|t| t.to_rust_string()).collect();
                 let ret_str = if *may_raise {
-                    self.uses_tsuchinoko_error = true;
                     format!("Result<{}, TsuchinokoError>", ret.to_rust_string())
                 } else {
                     ret.to_rust_string()
@@ -186,20 +102,16 @@ impl RustEmitter {
 }
 
 impl RustEmitter {
-    pub fn new() -> Self {
+    pub fn new(plan: EmitPlan) -> Self {
         Self {
             indent: 0,
             struct_defs: HashMap::new(),
             // uses_pyo3: false, // Removed as unused
-            needs_resident: false,
             external_imports: Vec::new(),
-            resident_functions: std::collections::HashSet::new(),
             is_inside_resident_func: false,
             current_hoisted_vars: Vec::new(),
             try_hoisted_vars: Vec::new(),
             shadowed_vars: Vec::new(),
-            uses_tsuchinoko_error: false,
-            current_func_may_raise: false,
             current_func_returns_result: false,
             in_try_body: false,
             in_except_body: false,
@@ -208,7 +120,36 @@ impl RustEmitter {
             current_func_takes_self: false,
             force_move_closure: false,
             struct_bases: HashMap::new(),
+            plan,
+            current_struct_name: None,
         }
+    }
+
+    fn func_plan_for(
+        &self,
+        name: &str,
+        may_raise: bool,
+        needs_bridge: bool,
+        is_top_level: bool,
+    ) -> FuncEmitPlan {
+        self.plan
+            .func_plans
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| FuncEmitPlan::fallback(may_raise, needs_bridge, is_top_level))
+    }
+
+    fn method_plan_for(&self, name: &str, may_raise: bool, needs_bridge: bool) -> FuncEmitPlan {
+        let key = if let Some(struct_name) = &self.current_struct_name {
+            format!("{}::{}", struct_name, name)
+        } else {
+            name.to_string()
+        };
+        self.plan
+            .method_plans
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| FuncEmitPlan::fallback(may_raise, needs_bridge, false))
     }
 
     pub fn emit_nodes(&mut self, nodes: &[IrNode]) -> String {
@@ -251,7 +192,7 @@ impl RustEmitter {
         // Only add wrapper at top level
         if is_top_level {
             // V1.5.2: Prepend TsuchinokoError if needed
-            let error_def = if self.uses_tsuchinoko_error {
+            let error_def = if self.plan.uses_tsuchinoko_error {
                 crate::bridge::tsuchinoko_error::TSUCHINOKO_ERROR_DEFINITION
             } else {
                 ""
@@ -263,7 +204,7 @@ impl RustEmitter {
                 body
             };
 
-            if self.needs_resident {
+            if self.plan.needs_resident {
                 // py_bridge ランタイムを挿入（常駐プロセス方式）
                 self.emit_resident_wrapped(&final_body)
             } else {
@@ -311,9 +252,7 @@ use tsuchinoko::bridge::protocol::{{TnkValue, DictItem}};
 
     /// V1.7.0: Add minimal TnkValue stub for standalone builds that might reference it
     fn prepend_standalone_stubs(&self, body: &str) -> String {
-        // If the code references TnkValue but doesn't use the resident bridge,
-        // we provide a minimal stub to allow standalone rustc builds to pass.
-        if body.contains("TnkValue") && !body.contains("PythonBridge") {
+        if self.plan.tnk_stub_needed {
             format!(
                 r#"#[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -661,19 +600,13 @@ impl std::fmt::Display for TnkValue {{
                 may_raise,
                 needs_bridge,
             } => {
+                let func_plan = self.func_plan_for(name, *may_raise, *needs_bridge, name == "__top_level__");
                 // Check if this is the auto-generated top-level function -> "fn main"
                 if name == "__top_level__" {
                     self.indent += 1;
 
-                    // needs_resident をバックアップ
-                    let needs_resident_backup = self.needs_resident;
-                    self.needs_resident = false;
-
-                    // V1.5.2: __top_level__ (main) is never may_raise
-                    let old_may_raise = self.current_func_may_raise;
-                    self.current_func_may_raise = false;
                     let old_returns_result = self.current_func_returns_result;
-                    self.current_func_returns_result = true;
+                    self.current_func_returns_result = func_plan.returns_result;
 
                     // Set current hoisted variables for top-level scope
                     let old_hoisted =
@@ -700,16 +633,8 @@ impl std::fmt::Display for TnkValue {{
 
                     let body_str = self.emit_nodes(body);
 
-                    // Restore may_raise state
-                    self.current_func_may_raise = old_may_raise;
                     self.current_func_returns_result = old_returns_result;
                     self.current_hoisted_vars = old_hoisted;
-
-                    // 関数内で resident 機能が使われたか
-                    let func_needs_resident = self.needs_resident;
-
-                    // グローバルステートを復元（OR演算）
-                    self.needs_resident = needs_resident_backup || func_needs_resident;
 
                     self.indent -= 1;
 
@@ -719,8 +644,7 @@ impl std::fmt::Display for TnkValue {{
                         format!("{hoisted_decls}\n{body_str}")
                     };
 
-                    if func_needs_resident || self.needs_resident {
-                        // self.needs_resident is global state (might be set by previous nodes)
+                    if self.plan.needs_resident {
                         self.emit_resident_main(&body_str)
                     } else {
                         // V1.5.2: Wrap main in catch_unwind for panic diagnosis
@@ -755,10 +679,6 @@ impl std::fmt::Display for TnkValue {{
                         to_snake_case(name)
                     };
 
-                    // needs_resident をバックアップして、この関数内での変化を追跡
-                    let needs_resident_backup = self.needs_resident;
-                    self.needs_resident = false;
-
                     // Set current hoisted variables for this function scope
                     let old_hoisted =
                         std::mem::replace(&mut self.current_hoisted_vars, hoisted_vars.clone());
@@ -784,11 +704,8 @@ impl std::fmt::Display for TnkValue {{
                         String::new()
                     };
 
-                    // V1.5.2: Set may_raise flag for return statement wrapping
-                    let old_may_raise = self.current_func_may_raise;
-                    self.current_func_may_raise = *may_raise;
                     let old_returns_result = self.current_func_returns_result;
-                    self.current_func_returns_result = *may_raise;
+                    self.current_func_returns_result = func_plan.returns_result;
 
                     // V1.7.0: Set return type for TryBlock return value type inference
                     let old_ret_type = self.current_ret_type.clone();
@@ -799,17 +716,11 @@ impl std::fmt::Display for TnkValue {{
                     let body_str = self.emit_nodes(body);
                     self.indent -= 1;
 
-                    // Restore previous hoisted vars, may_raise and ret_type
+                    // Restore previous hoisted vars and ret_type
                     self.current_hoisted_vars = old_hoisted;
-                    self.current_func_may_raise = old_may_raise;
                     self.current_func_returns_result = old_returns_result;
                     self.current_ret_type = old_ret_type;
                     self.current_func_takes_self = old_takes_self;
-
-                    let func_needs_resident = self.needs_resident;
-
-                    // グローバルステートを復元（OR演算）
-                    self.needs_resident = needs_resident_backup || func_needs_resident;
 
                     // 通常のパラメータ
                     let mut params_str: Vec<_> = params
@@ -821,10 +732,6 @@ impl std::fmt::Display for TnkValue {{
                     let has_value_return =
                         body.iter().any(|n| matches!(n, IrNode::Return(Some(_))));
 
-                    if let Type::Func { may_raise: true, .. } = ret {
-                        self.uses_tsuchinoko_error = true;
-                    }
-
                     let effective_ret = if *ret == Type::Unit && has_value_return {
                         &Type::Any // Will be emitted as serde_json::Value
                     } else {
@@ -832,7 +739,7 @@ impl std::fmt::Display for TnkValue {{
                     };
 
                     // Re-generate body if resident features are needed, to ensure correct args passing
-                    let final_body_str = if func_needs_resident {
+                    let final_body_str = if func_plan.needs_resident {
                         // Re-emit with flag set
                         self.indent += 1;
                         let backup_flag = self.is_inside_resident_func;
@@ -842,20 +749,14 @@ impl std::fmt::Display for TnkValue {{
                         // Actually, this block is the "else" (non-__top_level__) path, so it's always true.
                         self.is_inside_resident_func = true;
 
-                        // Phase F: Set may_raise for proper Ok() wrapping in Return statements
-                        let backup_may_raise = self.current_func_may_raise;
-                        self.current_func_may_raise = *may_raise || func_needs_resident;
                         let backup_returns_result = self.current_func_returns_result;
-                        self.current_func_returns_result = *may_raise || func_needs_resident;
+                        self.current_func_returns_result = func_plan.returns_result;
                         self.current_ret_type = Some(ret.clone()); // Store ret type for inner Try blocks
 
-                        // Reset needs_resident just in case, though we know it will become true
-                        self.needs_resident = false;
                         let s = self.emit_nodes(body);
 
                         self.is_inside_resident_func = backup_flag;
                         self.current_hoisted_vars = backup_hoisted;
-                        self.current_func_may_raise = backup_may_raise;
                         self.current_func_returns_result = backup_returns_result;
                         self.indent -= 1;
                         s
@@ -870,30 +771,22 @@ impl std::fmt::Display for TnkValue {{
                         final_body_str
                     };
 
-                    // V1.5.2: Determine return type string based on may_raise or external calls
-                    // External calls (func_needs_resident) also require Result type
-                    let effective_may_raise = *may_raise || func_needs_resident;
-                    let ret_str = if effective_may_raise {
-                        // Mark that TsuchinokoError type is needed
-                        self.uses_tsuchinoko_error = true;
-                        // Result<T, TsuchinokoError> for functions that may raise
+                    let ret_str = if func_plan.returns_result {
                         let inner_type = effective_ret.to_rust_string();
                         format!("Result<{}, TsuchinokoError>", inner_type)
                     } else {
                         effective_ret.to_rust_string()
                     };
 
-                    if *needs_bridge || func_needs_resident {
+                    if func_plan.needs_bridge {
                         params_str.insert(
                             0,
                             "py_bridge: &mut tsuchinoko::bridge::PythonBridge".to_string(),
                         );
-                        // 関数を resident_functions セットに登録
-                        self.resident_functions.insert(snake_name.clone());
                     }
 
                     // V1.5.2: Add implicit Ok(()) for may_raise functions that return Unit
-                    let final_body_with_ok = if effective_may_raise && *effective_ret == Type::Unit
+                    let final_body_with_ok = if func_plan.returns_result && *effective_ret == Type::Unit
                     {
                         let inner_indent = "    ".repeat(self.indent + 1);
                         format!("{}\n{}Ok(())", final_body_str, inner_indent)
@@ -1369,12 +1262,15 @@ impl std::fmt::Display for TnkValue {{
                 methods,
             } => {
                 let mut result = format!("{indent}impl {struct_name} {{\n");
+                let old_struct = self.current_struct_name.clone();
+                self.current_struct_name = Some(struct_name.clone());
                 self.indent += 1;
                 for method in methods {
                     result.push_str(&self.emit_node(method));
                     result.push('\n');
                 }
                 self.indent -= 1;
+                self.current_struct_name = old_struct;
                 result.push_str(&format!("{indent}}}\n"));
                 result
             }
@@ -1388,6 +1284,7 @@ impl std::fmt::Display for TnkValue {{
                 may_raise,
                 needs_bridge,
             } => {
+                let method_plan = self.method_plan_for(name, *may_raise, *needs_bridge);
                 let inner_indent = "    ".repeat(self.indent);
                 let self_param = if !*takes_self {
                     ""
@@ -1402,13 +1299,7 @@ impl std::fmt::Display for TnkValue {{
                     .map(|(n, t)| format!("{}: {}", to_snake_case(n), self.format_param_type_for_sig(t)))
                     .collect();
 
-                // V1.5.2: Use Result type if may_raise
-                if let Type::Func { may_raise: true, .. } = ret {
-                    self.uses_tsuchinoko_error = true;
-                }
-
-                let ret_str = if *may_raise {
-                    self.uses_tsuchinoko_error = true;
+                let ret_str = if method_plan.returns_result {
                     format!(" -> Result<{}, TsuchinokoError>", ret.to_rust_string())
                 } else if *ret == Type::Unit {
                     "".to_string()
@@ -1417,7 +1308,7 @@ impl std::fmt::Display for TnkValue {{
                 };
 
                 // V1.7.0: Use needs_bridge to decide if py_bridge argument is needed
-                let params_str = if *needs_bridge {
+                let params_str = if method_plan.needs_bridge {
                     let mut p = params_str;
                     p.insert(0, "py_bridge: &mut tsuchinoko::bridge::PythonBridge".to_string());
                     p.join(", ")
@@ -1434,11 +1325,8 @@ impl std::fmt::Display for TnkValue {{
                     ret_str
                 );
 
-                // V1.5.2: Track may_raise for return statement wrapping
-                let old_may_raise = self.current_func_may_raise;
-                self.current_func_may_raise = *may_raise;
                 let old_returns_result = self.current_func_returns_result;
-                self.current_func_returns_result = *may_raise;
+                self.current_func_returns_result = method_plan.returns_result;
 
                 // V1.7.0: Set return type for TryBlock return value type inference
                 let old_ret_type = self.current_ret_type.clone();
@@ -1453,12 +1341,11 @@ impl std::fmt::Display for TnkValue {{
                 }
 
                 // V1.5.2: Add implicit Ok(()) for may_raise methods returning Unit
-                if *may_raise && *ret == Type::Unit {
+                if method_plan.returns_result && *ret == Type::Unit {
                     let ok_indent = "    ".repeat(self.indent);
                     result.push_str(&format!("{}Ok(())\n", ok_indent));
                 }
 
-                self.current_func_may_raise = old_may_raise;
                 self.current_func_returns_result = old_returns_result;
                 self.current_ret_type = old_ret_type;
                 self.current_func_takes_self = old_takes_self;
@@ -1544,10 +1431,6 @@ impl std::fmt::Display for TnkValue {{
                 items,
             } => {
                 // V1.7.0: Emit Bridge import code to bind module handle to variable
-                self.needs_resident = true;
-                self.current_func_may_raise = true;
-                self.uses_tsuchinoko_error = true;
-
                 if let Some(ref item_list) = items {
                      // from module import a, b
                      let mut code = String::new();
@@ -1631,9 +1514,6 @@ impl std::fmt::Display for TnkValue {{
                     value_str
                 };
                 let use_fallible = self.current_func_returns_result;
-                if use_fallible {
-                    self.uses_tsuchinoko_error = true;
-                }
                 match to_type {
                     Type::Int => {
                         if use_fallible {
@@ -1785,9 +1665,6 @@ impl std::fmt::Display for TnkValue {{
                     IrBinOp::MatMul => {
                         // V1.3.0: a @ b -> py_bridge.call_json("numpy.matmul", &[a, b])
                         // For NumPy arrays, use the resident worker
-                        // V1.5.2: Use ? instead of unwrap() for error propagation
-                        self.current_func_may_raise = true;
-                        self.uses_tsuchinoko_error = true;
                         return format!(
                             "py_bridge.call_json::<TnkValue>(\"numpy.matmul\", &[serde_json::json!({}), serde_json::json!({})]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?",
                             self.emit_expr(left),
@@ -1950,8 +1827,7 @@ impl std::fmt::Display for TnkValue {{
                                 to_snake_case(&name)
                             };
                             // V1.7.0: Use callee_needs_bridge flag
-                            if *callee_needs_bridge || self.resident_functions.contains(&func_name) {
-                                self.needs_resident = true;
+                            if *callee_needs_bridge {
                                 if self.indent > 0 && name != "main" && name != "__top_level__" {
                                     if self.is_inside_resident_func {
                                         args_str.insert(0, "py_bridge".to_string());
@@ -2147,7 +2023,7 @@ impl std::fmt::Display for TnkValue {{
                         let s = self.emit_expr_internal(v);
                         if is_any_type(ty) {
                             // Use display_value helper if available
-                            if self.needs_resident {
+                            if self.plan.needs_resident {
                                 format!("bridge::display_value(&{})", s.trim_start_matches('&'))
                             } else {
                                 s
@@ -2368,10 +2244,7 @@ impl std::fmt::Display for TnkValue {{
                 body,
                 ret_type,
             } => {
-                let old_may_raise = self.current_func_may_raise;
                 let old_returns_result = self.current_func_returns_result;
-                let old_uses_error = self.uses_tsuchinoko_error;
-                self.current_func_may_raise = false;
                 self.current_func_returns_result = false;
 
                 let params_str: Vec<String> = params
@@ -2420,7 +2293,6 @@ impl std::fmt::Display for TnkValue {{
                 }
 
                 let closure_may_raise = self.current_func_returns_result;
-                let closure_uses_error = closure_may_raise;
 
                 let ret_str = if closure_may_raise {
                     let inner = match ret_type {
@@ -2445,9 +2317,7 @@ impl std::fmt::Display for TnkValue {{
                     ret_str,
                     body_str
                 );
-                self.current_func_may_raise = old_may_raise;
                 self.current_func_returns_result = old_returns_result;
-                self.uses_tsuchinoko_error = old_uses_error || closure_uses_error;
                 self.shadowed_vars.truncate(old_shadowed_len);
                 out
             }
@@ -2490,7 +2360,6 @@ impl std::fmt::Display for TnkValue {{
                         // For vectors, we need more complex conversion if using TnkValue directly
                         // But usually BridgeCall returns TnkValue. 
                         // Let's use a generic from_value if convert_to is complex.
-                        self.uses_tsuchinoko_error = true;
                         format!(
                             "serde_json::from_value::<{}>({}).map_err(|e| TsuchinokoError::internal(e.to_string()))?",
                             convert_to, base
@@ -2498,7 +2367,6 @@ impl std::fmt::Display for TnkValue {{
                     }
                     _ => {
                         // V1.7.0: fallback to generic serde_json deserialization
-                        self.uses_tsuchinoko_error = true;
                         format!(
                             "serde_json::from_value::<{}>({}).map_err(|e| TsuchinokoError::internal(e.to_string()))?",
                             convert_to, base
@@ -2889,7 +2757,6 @@ impl std::fmt::Display for TnkValue {{
                 method,
                 args,
             } => {
-                self.needs_resident = true;
                 let mut arg_evals = Vec::new();
                 for (i, arg) in args.iter().enumerate() {
                     arg_evals.push(format!(
@@ -2903,9 +2770,6 @@ impl std::fmt::Display for TnkValue {{
                     .map(|i| format!("serde_json::json!(_arg_{i})"))
                     .collect();
 
-                // V1.5.2: Use ? instead of unwrap() for error propagation
-                self.current_func_may_raise = true;
-                self.uses_tsuchinoko_error = true;
                 format!(
                     "{{\n{}    py_bridge.call_json_method::<TnkValue>({}.clone(), {:?}, &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
                     arg_evals.join("\n    ") + "\n",
@@ -2989,7 +2853,7 @@ impl std::fmt::Display for TnkValue {{
                             } else if is_any_type(ty) {
                                 // For Type::Any (serde_json::Value), use display_value helper
                                 // to handle Value::String without quotes
-                                if self.needs_resident {
+                                if self.plan.needs_resident {
                                     format!(
                                         "bridge::display_value(&{})",
                                         expr_str.trim_start_matches('&')
@@ -3054,11 +2918,6 @@ impl std::fmt::Display for TnkValue {{
                 args,
                 keywords,
             } => {
-                self.needs_resident = true;
-                // V1.5.2: Use ? for error propagation
-                self.current_func_may_raise = true;
-                self.uses_tsuchinoko_error = true;
-
                 let target_str = self.emit_expr(target);
                 let args_str: String = args
                     .iter()
@@ -3122,10 +2981,6 @@ impl std::fmt::Display for TnkValue {{
                 args,
                 keywords,
             } => {
-                self.needs_resident = true;
-                self.current_func_may_raise = true;
-                self.uses_tsuchinoko_error = true;
-
                 let target_str = self.emit_expr(target);
                 let args_str: String = args
                     .iter()
@@ -3168,8 +3023,6 @@ impl std::fmt::Display for TnkValue {{
                 self.emit_as_tnk_value(inner)
             },
             IrExprKind::BridgeAttributeAccess { target, attribute } => {
-                self.needs_resident = true;
-                self.uses_tsuchinoko_error = true;
                 let target_str = self.emit_expr(target);
                 
                 // Check if target is BridgeGet (supports fluent syntax)
@@ -3192,9 +3045,6 @@ impl std::fmt::Display for TnkValue {{
                 }
             }
             IrExprKind::BridgeItemAccess { target, index } => {
-                self.needs_resident = true;
-                self.current_func_may_raise = true;
-                self.uses_tsuchinoko_error = true;
                 let target_str = self.emit_expr(target);
                 let index_str = if matches!(&index.kind, IrExprKind::NoneLit) {
                     "TnkValue::Value { value: None }".to_string()
@@ -3216,9 +3066,6 @@ impl std::fmt::Display for TnkValue {{
                 stop,
                 step,
             } => {
-                self.needs_resident = true;
-                self.current_func_may_raise = true;
-                self.uses_tsuchinoko_error = true;
                 let target_str = self.emit_expr(target);
 
                 let start_str = if matches!(&start.kind, IrExprKind::NoneLit) {
@@ -3252,7 +3099,6 @@ impl std::fmt::Display for TnkValue {{
                 )
             }
             IrExprKind::BridgeGet { alias } => {
-                self.needs_resident = true;
                 format!("py_bridge.get(\"{}\")", alias)
             }
             IrExprKind::PyO3Call {
@@ -3324,14 +3170,9 @@ impl std::fmt::Display for TnkValue {{
                     }
                     ImportMode::PyO3 | ImportMode::Resident => {
                         // 常駐プロセス方式が必要
-                        self.needs_resident = true;
                         let args_json: Vec<String> = (0..args.len())
                             .map(|i| format!("serde_json::json!(_arg_{i})"))
                             .collect();
-                        // V1.5.2: Use ? instead of unwrap() for error propagation
-                        // Mark that this function now may raise (for Ok() wrapping of returns)
-                        self.current_func_may_raise = true;
-                        self.uses_tsuchinoko_error = true;
                         format!(
                             "{{\n{}    py_bridge.call_json::<TnkValue>(\"{}\", &[{}]).map_err(|e| TsuchinokoError::new(\"ExternalError\", &e, None))?\n}}",
                             arg_evals.join("\n    ") + "\n",

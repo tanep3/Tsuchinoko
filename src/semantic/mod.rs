@@ -22,6 +22,7 @@ mod analyze_statements;
 mod analyze_types;
 pub mod builtins;
 pub mod coercion;
+pub mod emit_plan;
 pub mod lowering;  // V1.7.0
 pub mod operators;
 mod scope;
@@ -32,6 +33,7 @@ pub use operators::convert_binop;
 pub use scope::*;
 pub use type_infer::TypeInference;
 pub use types::*;
+pub use emit_plan::{build_emit_plan, EmitPlan, FuncEmitPlan};
 
 use crate::error::TsuchinokoError;
 use crate::ir::{HoistedVar, IrAugAssignOp, IrBinOp, IrExpr, IrExprKind, IrNode, IrUnaryOp};

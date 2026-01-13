@@ -110,12 +110,19 @@ impl From<&str> for TnkValue {
 // Use bridge::type_inference::from_value(v) for intelligent interpretation.
 
 
-impl From<std::collections::HashMap<String, TnkValue>> for TnkValue {
-    fn from(map: std::collections::HashMap<String, TnkValue>) -> Self {
-        let items = map.into_iter().map(|(k, v)| DictItem {
-            key: TnkValue::from(k),
-            value: v,
-        }).collect();
+impl<K, V> From<std::collections::HashMap<K, V>> for TnkValue
+where
+    K: Into<TnkValue>,
+    V: Into<TnkValue>,
+{
+    fn from(map: std::collections::HashMap<K, V>) -> Self {
+        let items = map
+            .into_iter()
+            .map(|(k, v)| DictItem {
+                key: k.into(),
+                value: v.into(),
+            })
+            .collect();
         TnkValue::Dict { items }
     }
 }

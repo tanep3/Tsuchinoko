@@ -13,6 +13,7 @@ pub mod ir;
 pub mod lexer;
 pub mod parser;
 pub mod semantic;
+pub mod utils;
 
 use anyhow::Result;
 use std::path::Path;
@@ -33,7 +34,8 @@ pub fn transpile(source: &str) -> Result<String> {
     let ir = analyze_to_ir(source)?;
 
     // 3. Emit Rust code
-    let rust_code = emitter::emit(&ir);
+    let plan = semantic::build_emit_plan(&ir);
+    let rust_code = emitter::emit(&ir, &plan);
 
     Ok(rust_code)
 }

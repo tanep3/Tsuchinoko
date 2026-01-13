@@ -2,10 +2,15 @@
 
 use tsuchinoko::emitter::emit;
 use tsuchinoko::ir::{ExprId, IrBinOp, IrExpr, IrExprKind, IrNode};
-use tsuchinoko::semantic::Type;
+use tsuchinoko::semantic::{build_emit_plan, Type};
 
 fn expr(kind: IrExprKind) -> IrExpr {
     IrExpr { id: ExprId(0), kind }
+}
+
+fn emit_with_plan(ir: &[IrNode]) -> String {
+    let plan = build_emit_plan(ir);
+    emit(ir, &plan)
 }
 
 /// Test: Simple variable assignment
@@ -21,7 +26,7 @@ fn test_simple_assignment_to_rust() {
         init: Some(Box::new(expr(IrExprKind::IntLit(10)))),
     }];
 
-    let result = emit(&ir);
+    let result = emit_with_plan(&ir);
     assert_eq!(result.trim(), "let x: i64 = 10i64;");
 }
 
@@ -50,7 +55,7 @@ fn test_function_def_to_rust() {
         needs_bridge: false,
     }];
 
-    let result = emit(&ir);
+    let result = emit_with_plan(&ir);
     assert!(result.contains("fn add(a: i64, b: i64) -> i64"));
     assert!(result.contains("return (a + b)"));
 }
@@ -79,7 +84,7 @@ fn test_if_statement_to_rust() {
         }]),
     }];
 
-    let result = emit(&ir);
+    let result = emit_with_plan(&ir);
     // Parentheses around conditions are now stripped
     assert!(result.contains("if x > 0"));
     assert!(result.contains("y = 1"));
@@ -107,7 +112,7 @@ fn test_for_loop_to_rust() {
         }))],
     }];
 
-    let result = emit(&ir);
+    let result = emit_with_plan(&ir);
     // Range currently emits with i64 suffixes
     assert!(result.contains("for i in 0i64..10i64"));
 }
@@ -131,7 +136,7 @@ fn test_list_to_vec() {
         }))),
     }];
 
-    let result = emit(&ir);
+    let result = emit_with_plan(&ir);
     assert!(result.contains("let nums: Vec<i64> = vec![1i64, 2i64, 3i64]"));
 }
 
@@ -167,7 +172,7 @@ fn test_mutable_variable() {
         },
     ];
 
-    let result = emit(&ir);
+    let result = emit_with_plan(&ir);
     assert!(result.contains("let mut x: i64 = 10"));
     assert!(result.contains("x = 20"));
 }

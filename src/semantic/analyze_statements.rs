@@ -161,6 +161,7 @@ impl SemanticAnalyzer {
                     }, Type::Unit)))
                 } else if matches!(current_target_ty, Type::Any) {
                     // For Any type, use __setitem__ method call
+                    self.current_func_needs_bridge = true;
                     Ok(IrNode::Expr(self.create_expr(IrExprKind::PyO3MethodCall {
                         target: Box::new(ir_target),
                         method: "__setitem__".to_string(),

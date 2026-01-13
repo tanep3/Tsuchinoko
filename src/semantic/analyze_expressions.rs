@@ -564,6 +564,7 @@ impl SemanticAnalyzer {
                         }
  
                         self.current_func_may_raise = true;
+                        self.current_func_needs_bridge = true;
  
                         return Ok(self.create_expr(IrExprKind::BridgeMethodCall {
                             target: Box::new(ir_target),
@@ -599,6 +600,7 @@ impl SemanticAnalyzer {
 
                             // V1.5.2: PyO3 calls can fail, mark current function as may_raise
                             self.current_func_may_raise = true;
+                            self.current_func_needs_bridge = true;
 
                             // Return structured PyO3 call
                             return Ok(self.create_expr(IrExprKind::PyO3Call {
@@ -957,7 +959,20 @@ impl SemanticAnalyzer {
                         )?;
 
                         let final_func = if name == "main" {
-                            Box::new(self.create_expr(IrExprKind::Var("_main_tsuchinoko".to_string()), Type::Unknown))
+                            Box::new(self.create_expr(
+                                IrExprKind::Var("_main_tsuchinoko".to_string()),
+                                Type::Unknown,
+                            ))
+                        } else if let Some(real_target) = self.module_global_aliases.get(name) {
+                            if !crate::bridge::module_table::is_native_module(real_target) {
+                                self.current_func_needs_bridge = true;
+                                Box::new(self.create_expr(
+                                    IrExprKind::BridgeGet { alias: name.clone() },
+                                    Type::Any,
+                                ))
+                            } else {
+                                Box::new(self.create_expr(IrExprKind::Var(name.clone()), Type::Unknown))
+                            }
                         } else {
                             Box::new(self.create_expr(IrExprKind::Var(name.clone()), Type::Unknown))
                         };
@@ -1232,6 +1247,7 @@ impl SemanticAnalyzer {
                 if matches!(target_ty, Type::Any) {
                     // V1.7.0: Remote Item Access via Bridge
                     self.current_func_may_raise = true;
+                    self.current_func_needs_bridge = true;
 
                     return Ok(self.create_expr(IrExprKind::BridgeItemAccess {
                         target: Box::new(ir_target),
@@ -1836,6 +1852,7 @@ impl SemanticAnalyzer {
                 // V1.7.0: Bridge Slice for Any type (Remote Handle)
                 if matches!(target_type, Type::Any) {
                     self.current_func_may_raise = true;
+                    self.current_func_needs_bridge = true;
                     // Handle start/end/step options, default to NoneLit
                     let ir_start = match start {
                         Some(s) => Box::new(self.analyze_expr(s)?),
@@ -1962,6 +1979,7 @@ impl SemanticAnalyzer {
                 let target_ty = self.infer_type(value);
                 if matches!(target_ty, Type::Any) {
                     self.current_func_may_raise = true;
+                    self.current_func_needs_bridge = true;
                     let target = self.analyze_expr(value)?;
                     return Ok(self.create_expr(IrExprKind::BridgeAttributeAccess {
                         target: Box::new(target),

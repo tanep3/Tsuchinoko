@@ -5,9 +5,15 @@
 #![allow(clippy::approx_constant)]
 use super::*;
 use crate::ir::{ExprId, IrExprKind};
+use crate::semantic::{build_emit_plan, EmitPlan};
 
 fn expr(kind: IrExprKind) -> IrExpr {
     IrExpr { id: ExprId(0), kind }
+}
+
+fn emit_with_plan(nodes: &[IrNode]) -> String {
+    let plan = build_emit_plan(nodes);
+    emit(nodes, &plan)
 }
 
 #[test]
@@ -18,7 +24,7 @@ fn test_emit_var_decl() {
         mutable: false,
         init: Some(Box::new(expr(IrExprKind::IntLit(42)))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert_eq!(result, "let x: i64 = 42i64;");
 }
 
@@ -37,7 +43,7 @@ fn test_emit_function() {
         may_raise: false,
         needs_bridge: false,
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("fn add(a: i64, b: i64) -> i64"));
     assert!(result.contains("return (a + b)"));
 }
@@ -45,19 +51,19 @@ fn test_emit_function() {
 // --- リテラル式テスト ---
 #[test]
 fn test_emit_int_lit() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     assert_eq!(emitter.emit_expr(&expr(IrExprKind::IntLit(42))), "42i64");
 }
 
 #[test]
 fn test_emit_float_lit() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     assert_eq!(emitter.emit_expr(&expr(IrExprKind::FloatLit(3.14))), "3.1");
 }
 
 #[test]
 fn test_emit_string_lit() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     assert_eq!(
         emitter.emit_expr(&expr(IrExprKind::StringLit("hello".to_string()))),
         "\"hello\""
@@ -66,27 +72,27 @@ fn test_emit_string_lit() {
 
 #[test]
 fn test_emit_bool_lit() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     assert_eq!(emitter.emit_expr(&expr(IrExprKind::BoolLit(true))), "true");
     assert_eq!(emitter.emit_expr(&expr(IrExprKind::BoolLit(false))), "false");
 }
 
 #[test]
 fn test_emit_none_lit() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     assert_eq!(emitter.emit_expr(&expr(IrExprKind::NoneLit)), "None");
 }
 
 // --- 変数テスト ---
 #[test]
 fn test_emit_var() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     assert_eq!(emitter.emit_expr(&expr(IrExprKind::Var("x".to_string()))), "x");
 }
 
 #[test]
 fn test_emit_var_camel_to_snake() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     assert_eq!(
         emitter.emit_expr(&expr(IrExprKind::Var("myVariable".to_string()))),
         "my_variable"
@@ -96,7 +102,7 @@ fn test_emit_var_camel_to_snake() {
 // --- 演算テスト ---
 #[test]
 fn test_emit_binop_add() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(1))),
         op: IrBinOp::Add,
@@ -107,7 +113,7 @@ fn test_emit_binop_add() {
 
 #[test]
 fn test_emit_binop_sub() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(5))),
         op: IrBinOp::Sub,
@@ -118,7 +124,7 @@ fn test_emit_binop_sub() {
 
 #[test]
 fn test_emit_binop_mul() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(4))),
         op: IrBinOp::Mul,
@@ -129,7 +135,7 @@ fn test_emit_binop_mul() {
 
 #[test]
 fn test_emit_binop_eq() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(1))),
         op: IrBinOp::Eq,
@@ -140,7 +146,7 @@ fn test_emit_binop_eq() {
 
 #[test]
 fn test_emit_binop_pow() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(2))),
         op: IrBinOp::Pow,
@@ -152,7 +158,7 @@ fn test_emit_binop_pow() {
 
 #[test]
 fn test_emit_unary_neg() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::UnaryOp{
         op: IrUnaryOp::Neg,
         operand: Box::new(expr(IrExprKind::IntLit(5))),
@@ -162,7 +168,7 @@ fn test_emit_unary_neg() {
 
 #[test]
 fn test_emit_unary_not() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::UnaryOp{
         op: IrUnaryOp::Not,
         operand: Box::new(expr(IrExprKind::BoolLit(true))),
@@ -173,7 +179,7 @@ fn test_emit_unary_not() {
 // --- コレクションテスト ---
 #[test]
 fn test_emit_list_int() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::List{
         elem_type: Type::Int,
         elements: vec![expr(IrExprKind::IntLit(1)), expr(IrExprKind::IntLit(2))],
@@ -184,7 +190,7 @@ fn test_emit_list_int() {
 
 #[test]
 fn test_emit_tuple() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Tuple(vec![expr(IrExprKind::IntLit(1)), expr(IrExprKind::IntLit(2))]));
     let result = emitter.emit_expr(&expr);
     assert!(result.contains("(1i64, 2i64)"));
@@ -192,7 +198,7 @@ fn test_emit_tuple() {
 
 #[test]
 fn test_emit_dict_empty() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Dict{
         key_type: Type::String,
         value_type: Type::Int,
@@ -205,7 +211,7 @@ fn test_emit_dict_empty() {
 // --- 特殊式テスト ---
 #[test]
 fn test_emit_if_exp() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::IfExp{
         test: Box::new(expr(IrExprKind::BoolLit(true))),
         body: Box::new(expr(IrExprKind::IntLit(1))),
@@ -217,7 +223,7 @@ fn test_emit_if_exp() {
 
 #[test]
 fn test_emit_cast() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Cast{
         target: Box::new(expr(IrExprKind::IntLit(42))),
         ty: "f64".to_string(),
@@ -228,7 +234,7 @@ fn test_emit_cast() {
 
 #[test]
 fn test_emit_box_new() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BoxNew(Box::new(expr(IrExprKind::IntLit(42)))));
     let result = emitter.emit_expr(&expr);
     assert!(result.contains("Rc::new")); // BoxNewはRc::newを生成
@@ -236,7 +242,7 @@ fn test_emit_box_new() {
 
 #[test]
 fn test_emit_raw_code() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::RawCode("custom_code()".to_string()));
     assert_eq!(emitter.emit_expr(&expr), "custom_code()");
 }
@@ -250,7 +256,7 @@ fn test_emit_mutable_var() {
         mutable: true,
         init: Some(Box::new(expr(IrExprKind::IntLit(10)))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("let mut y"));
 }
 
@@ -261,7 +267,7 @@ fn test_emit_if_stmt() {
         then_block: vec![IrNode::Return(Some(Box::new(expr(IrExprKind::IntLit(1)))))],
         else_block: Some(vec![IrNode::Return(Some(Box::new(expr(IrExprKind::IntLit(0)))))]),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("if true"));
     assert!(result.contains("else"));
 }
@@ -272,7 +278,7 @@ fn test_emit_while_stmt() {
         cond: Box::new(expr(IrExprKind::BoolLit(true))),
         body: vec![IrNode::Break],
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("while true"));
     assert!(result.contains("break"));
 }
@@ -280,14 +286,14 @@ fn test_emit_while_stmt() {
 #[test]
 fn test_emit_return_none() {
     let node = IrNode::Return(None);
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert_eq!(result, "return;");
 }
 
 #[test]
 fn test_emit_return_value() {
     let node = IrNode::Return(Some(Box::new(expr(IrExprKind::IntLit(42)))));
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("return 42i64"));
 }
 
@@ -298,7 +304,7 @@ fn test_emit_assign() {
         target: "x".to_string(),
         value: Box::new(expr(IrExprKind::IntLit(10))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("x = 10i64"));
 }
 
@@ -309,7 +315,7 @@ fn test_emit_aug_assign_add() {
         op: IrAugAssignOp::Add,
         value: Box::new(expr(IrExprKind::IntLit(5))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("x += 5i64"));
 }
 
@@ -320,7 +326,7 @@ fn test_emit_aug_assign_sub() {
         op: IrAugAssignOp::Sub,
         value: Box::new(expr(IrExprKind::IntLit(3))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("x -= 3i64"));
 }
 
@@ -336,7 +342,7 @@ fn test_emit_for_range() {
         })),
         body: vec![IrNode::Break],
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("for i in"));
     assert!(result.contains("0i64..10i64"));
 }
@@ -349,7 +355,7 @@ fn test_emit_struct_def() {
         fields: vec![("x".to_string(), Type::Int), ("y".to_string(), Type::Int)],
         base: None,
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("struct Point"));
     assert!(result.contains("x:"));
     assert!(result.contains("i64"));
@@ -358,7 +364,7 @@ fn test_emit_struct_def() {
 // --- Method Callテスト ---
 #[test]
 fn test_emit_method_call() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
@@ -372,7 +378,7 @@ fn test_emit_method_call() {
 
 #[test]
 fn test_emit_method_call_with_args() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
@@ -387,7 +393,7 @@ fn test_emit_method_call_with_args() {
 // --- Field Accessテスト ---
 #[test]
 fn test_emit_field_access() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::FieldAccess{
         target: Box::new(expr(IrExprKind::Var("obj".to_string()))),
         field: "name".to_string(),
@@ -399,7 +405,7 @@ fn test_emit_field_access() {
 // --- Indexテスト ---
 #[test]
 fn test_emit_index() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Index{
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
         index: Box::new(expr(IrExprKind::IntLit(0))),
@@ -411,7 +417,7 @@ fn test_emit_index() {
 // --- Sliceテスト ---
 #[test]
 fn test_emit_slice() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Slice{
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
         start: Some(Box::new(expr(IrExprKind::IntLit(1)))),
@@ -426,7 +432,7 @@ fn test_emit_slice() {
 // --- Rangeテスト ---
 #[test]
 fn test_emit_range() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Range{
         start: Box::new(expr(IrExprKind::IntLit(0))),
         end: Box::new(expr(IrExprKind::IntLit(10))),
@@ -438,7 +444,7 @@ fn test_emit_range() {
 // --- FStringテスト ---
 #[test]
 fn test_emit_fstring() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::FString{
         parts: vec!["val: ".to_string(), "".to_string()],
         values: vec![(expr(IrExprKind::Var("v".to_string())), Type::Int)],
@@ -451,14 +457,14 @@ fn test_emit_fstring() {
 #[test]
 fn test_emit_continue() {
     let node = IrNode::Continue;
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert_eq!(result, "continue;");
 }
 
 // --- ListCompテスト ---
 #[test]
 fn test_emit_list_comp() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::ListComp{
         elt: Box::new(expr(IrExprKind::BinOp{
             left: Box::new(expr(IrExprKind::Var("x".to_string()))),
@@ -479,7 +485,7 @@ fn test_emit_list_comp() {
 // --- JsonConversionテスト ---
 #[test]
 fn test_emit_json_conversion_i64() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::JsonConversion{
         target: Box::new(expr(IrExprKind::Var("val".to_string()))),
         convert_to: "i64".to_string(),
@@ -490,7 +496,7 @@ fn test_emit_json_conversion_i64() {
 
 #[test]
 fn test_emit_json_conversion_string() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::JsonConversion{
         target: Box::new(expr(IrExprKind::Var("val".to_string()))),
         convert_to: "String".to_string(),
@@ -502,7 +508,7 @@ fn test_emit_json_conversion_string() {
 // --- StructConstructテスト ---
 #[test]
 fn test_emit_struct_construct() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::StructConstruct{
         name: "Point".to_string(),
         fields: vec![
@@ -519,7 +525,7 @@ fn test_emit_struct_construct() {
 // --- 比較演算テスト ---
 #[test]
 fn test_emit_binop_lt() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(1))),
         op: IrBinOp::Lt,
@@ -530,7 +536,7 @@ fn test_emit_binop_lt() {
 
 #[test]
 fn test_emit_binop_gt() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(3))),
         op: IrBinOp::Gt,
@@ -541,7 +547,7 @@ fn test_emit_binop_gt() {
 
 #[test]
 fn test_emit_binop_and() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::BoolLit(true))),
         op: IrBinOp::And,
@@ -552,7 +558,7 @@ fn test_emit_binop_and() {
 
 #[test]
 fn test_emit_binop_or() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::BoolLit(true))),
         op: IrBinOp::Or,
@@ -566,7 +572,7 @@ fn test_emit_binop_or() {
 // --- 残りのBinOp ---
 #[test]
 fn test_emit_binop_div() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(10))),
         op: IrBinOp::Div,
@@ -577,7 +583,7 @@ fn test_emit_binop_div() {
 
 #[test]
 fn test_emit_binop_mod() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(10))),
         op: IrBinOp::Mod,
@@ -588,7 +594,7 @@ fn test_emit_binop_mod() {
 
 #[test]
 fn test_emit_binop_floor_div() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(10))),
         op: IrBinOp::FloorDiv,
@@ -599,7 +605,7 @@ fn test_emit_binop_floor_div() {
 
 #[test]
 fn test_emit_binop_not_eq() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(1))),
         op: IrBinOp::NotEq,
@@ -610,7 +616,7 @@ fn test_emit_binop_not_eq() {
 
 #[test]
 fn test_emit_binop_lt_eq() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(1))),
         op: IrBinOp::LtEq,
@@ -621,7 +627,7 @@ fn test_emit_binop_lt_eq() {
 
 #[test]
 fn test_emit_binop_gt_eq() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(2))),
         op: IrBinOp::GtEq,
@@ -632,7 +638,7 @@ fn test_emit_binop_gt_eq() {
 
 #[test]
 fn test_emit_binop_bit_and() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(5))),
         op: IrBinOp::BitAnd,
@@ -643,7 +649,7 @@ fn test_emit_binop_bit_and() {
 
 #[test]
 fn test_emit_binop_bit_or() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(5))),
         op: IrBinOp::BitOr,
@@ -654,7 +660,7 @@ fn test_emit_binop_bit_or() {
 
 #[test]
 fn test_emit_binop_shl() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(1))),
         op: IrBinOp::Shl,
@@ -665,7 +671,7 @@ fn test_emit_binop_shl() {
 
 #[test]
 fn test_emit_binop_shr() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(16))),
         op: IrBinOp::Shr,
@@ -676,7 +682,7 @@ fn test_emit_binop_shr() {
 
 #[test]
 fn test_emit_binop_contains() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(1))),
         op: IrBinOp::Contains,
@@ -688,7 +694,7 @@ fn test_emit_binop_contains() {
 // --- Call ---
 #[test]
 fn test_emit_call_simple() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Call{
         callee_may_raise: false,
         callee_needs_bridge: false,
@@ -702,7 +708,7 @@ fn test_emit_call_simple() {
 // --- Dict with entries ---
 #[test]
 fn test_emit_dict_with_entries() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Dict{
         key_type: Type::String,
         value_type: Type::Int,
@@ -715,7 +721,7 @@ fn test_emit_dict_with_entries() {
 // --- DictComp ---
 #[test]
 fn test_emit_dict_comp() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::DictComp{
         key: Box::new(expr(IrExprKind::Var("k".to_string()))),
         value: Box::new(expr(IrExprKind::BinOp{
@@ -740,14 +746,14 @@ fn test_emit_dict_comp() {
 // --- Print ---
 #[test]
 fn test_emit_print_empty() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Print{ args: vec![] });
     assert_eq!(emitter.emit_expr(&expr), "println!()");
 }
 
 #[test]
 fn test_emit_print_with_args() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Print{
         args: vec![(expr(IrExprKind::IntLit(42)), Type::Int)],
     });
@@ -758,7 +764,7 @@ fn test_emit_print_with_args() {
 // --- Unwrap ---
 #[test]
 fn test_emit_unwrap() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Unwrap(Box::new(expr(IrExprKind::Var("opt".to_string())))));
     assert!(emitter.emit_expr(&expr).contains(".unwrap()"));
 }
@@ -766,7 +772,7 @@ fn test_emit_unwrap() {
 // --- Reference ---
 #[test]
 fn test_emit_reference() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Reference{
         target: Box::new(expr(IrExprKind::Var("x".to_string()))),
     });
@@ -776,7 +782,7 @@ fn test_emit_reference() {
 // --- MutReference ---
 #[test]
 fn test_emit_mut_reference() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MutReference{
         target: Box::new(expr(IrExprKind::Var("x".to_string()))),
     });
@@ -786,7 +792,7 @@ fn test_emit_mut_reference() {
 // --- UnaryOp Deref ---
 #[test]
 fn test_emit_unary_deref() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::UnaryOp{
         op: IrUnaryOp::Deref,
         operand: Box::new(expr(IrExprKind::Var("ptr".to_string()))),
@@ -804,7 +810,7 @@ fn test_emit_index_assign() {
         index: Box::new(expr(IrExprKind::IntLit(0))),
         value: Box::new(expr(IrExprKind::IntLit(42))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("arr["));
     assert!(result.contains("= 42i64"));
 }
@@ -817,7 +823,7 @@ fn test_emit_field_assign() {
         field: "name".to_string(),
         value: Box::new(expr(IrExprKind::StringLit("test".to_string()))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("obj.name ="));
 }
 
@@ -828,7 +834,7 @@ fn test_emit_multi_assign() {
         targets: vec!["a".to_string(), "b".to_string()],
         value: Box::new(expr(IrExprKind::Tuple(vec![expr(IrExprKind::IntLit(1)), expr(IrExprKind::IntLit(2))]))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("(a, b)") || result.contains("a ="));
 }
 
@@ -839,7 +845,7 @@ fn test_emit_type_alias() {
         name: "MyInt".to_string(),
         ty: Type::Int,
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("type MyInt"));
 }
 
@@ -851,7 +857,7 @@ fn test_emit_if_no_else() {
         then_block: vec![IrNode::Break],
         else_block: None,
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("if true"));
     assert!(!result.contains("else"));
 }
@@ -859,7 +865,7 @@ fn test_emit_if_no_else() {
 // --- list with string type ---
 #[test]
 fn test_emit_list_string() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::List{
         elem_type: Type::String,
         elements: vec![expr(IrExprKind::StringLit("a".to_string()))],
@@ -871,7 +877,7 @@ fn test_emit_list_string() {
 // --- JsonConversion f64 ---
 #[test]
 fn test_emit_json_conversion_f64() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::JsonConversion{
         target: Box::new(expr(IrExprKind::Var("val".to_string()))),
         convert_to: "f64".to_string(),
@@ -883,7 +889,7 @@ fn test_emit_json_conversion_f64() {
 // --- JsonConversion bool ---
 #[test]
 fn test_emit_json_conversion_bool() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::JsonConversion{
         target: Box::new(expr(IrExprKind::Var("val".to_string()))),
         convert_to: "bool".to_string(),
@@ -900,7 +906,7 @@ fn test_emit_aug_assign_mul() {
         op: IrAugAssignOp::Mul,
         value: Box::new(expr(IrExprKind::IntLit(2))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("*="));
 }
 
@@ -911,14 +917,14 @@ fn test_emit_aug_assign_div() {
         op: IrAugAssignOp::Div,
         value: Box::new(expr(IrExprKind::IntLit(2))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("/="));
 }
 
 // --- Var with module path ---
 #[test]
 fn test_emit_var_module_path() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Var("std::collections::HashMap".to_string()));
     assert_eq!(emitter.emit_expr(&expr), "std::collections::HashMap");
 }
@@ -926,7 +932,7 @@ fn test_emit_var_module_path() {
 // --- Var starting with uppercase (type name) ---
 #[test]
 fn test_emit_var_type_name() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Var("MyStruct".to_string()));
     assert_eq!(emitter.emit_expr(&expr), "MyStruct");
 }
@@ -934,7 +940,7 @@ fn test_emit_var_type_name() {
 // --- IfExp ---
 #[test]
 fn test_emit_if_exp_full() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::IfExp{
         test: Box::new(expr(IrExprKind::BoolLit(true))),
         body: Box::new(expr(IrExprKind::IntLit(1))),
@@ -948,7 +954,7 @@ fn test_emit_if_exp_full() {
 // --- ListComp with condition ---
 #[test]
 fn test_emit_list_comp_with_condition() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::ListComp{
         elt: Box::new(expr(IrExprKind::Var("x".to_string()))),
         target: "x".to_string(),
@@ -969,7 +975,7 @@ fn test_emit_list_comp_with_condition() {
 // --- MethodCall with multiple args ---
 #[test]
 fn test_emit_method_call_multi_args() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("s".to_string()))),
@@ -987,7 +993,7 @@ fn test_emit_method_call_multi_args() {
 // --- Slice without end ---
 #[test]
 fn test_emit_slice_no_end() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Slice{
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
         start: Some(Box::new(expr(IrExprKind::IntLit(2)))),
@@ -1003,7 +1009,7 @@ fn test_emit_slice_no_end() {
 // --- Closure ---
 #[test]
 fn test_emit_closure_simple() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Closure{
         params: vec!["x".to_string()],
         body: vec![IrNode::Expr(expr(IrExprKind::BinOp{
@@ -1020,7 +1026,7 @@ fn test_emit_closure_simple() {
 
 #[test]
 fn test_emit_closure_no_params() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Closure{
         params: vec![],
         body: vec![IrNode::Expr(expr(IrExprKind::IntLit(42)))],
@@ -1042,7 +1048,7 @@ fn test_emit_func_decl_simple() {
         may_raise: false,
         needs_bridge: false,
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("fn my_func("));
     assert!(result.contains("-> i64"));
     assert!(result.contains("return"));
@@ -1059,7 +1065,7 @@ fn test_emit_func_unit_return() {
         may_raise: false,
         needs_bridge: false,
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("fn do_nothing()"));
     // Unit型の戻り値表示は実装依存（表示することも省略することもある）
 }
@@ -1077,7 +1083,7 @@ fn test_emit_method_decl() {
         may_raise: false,
         needs_bridge: false,
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("fn get_value("));
     assert!(result.contains("&self"));
 }
@@ -1094,7 +1100,7 @@ fn test_emit_method_decl_mut_self() {
         may_raise: false,
         needs_bridge: false,
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("&mut self"));
 }
 
@@ -1105,14 +1111,14 @@ fn test_emit_impl_block() {
         struct_name: "Point".to_string(),
         methods: vec![],
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("impl Point"));
 }
 
 // --- Call with Some/None ---
 #[test]
 fn test_emit_call_some() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Call{
         callee_may_raise: false,
         callee_needs_bridge: false,
@@ -1125,7 +1131,7 @@ fn test_emit_call_some() {
 
 #[test]
 fn test_emit_call_with_path() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Call{
         callee_may_raise: false,
         callee_needs_bridge: false,
@@ -1139,7 +1145,7 @@ fn test_emit_call_with_path() {
 // --- Print with multiple args ---
 #[test]
 fn test_emit_print_multiple() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Print{
         args: vec![
             (expr(IrExprKind::IntLit(1)), Type::Int),
@@ -1153,7 +1159,7 @@ fn test_emit_print_multiple() {
 // --- List with tuple element ---
 #[test]
 fn test_emit_list_tuple() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::List{
         elem_type: Type::Tuple(vec![Type::String, Type::Int]),
         elements: vec![],
@@ -1165,7 +1171,7 @@ fn test_emit_list_tuple() {
 // --- FString with multiple values ---
 #[test]
 fn test_emit_fstring_multiple() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::FString{
         parts: vec!["a: ".to_string(), ", b: ".to_string(), "".to_string()],
         values: vec![
@@ -1180,7 +1186,7 @@ fn test_emit_fstring_multiple() {
 // --- DictComp with condition ---
 #[test]
 fn test_emit_dict_comp_with_condition() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::DictComp{
         key: Box::new(expr(IrExprKind::Var("k".to_string()))),
         value: Box::new(expr(IrExprKind::Var("v".to_string()))),
@@ -1205,7 +1211,7 @@ fn test_emit_dict_comp_with_condition() {
 // --- Index with negative ---
 #[test]
 fn test_emit_index_negative() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Index{
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
         index: Box::new(expr(IrExprKind::UnaryOp{
@@ -1227,14 +1233,14 @@ fn test_emit_multi_var_decl() {
         ],
         value: Box::new(expr(IrExprKind::Tuple(vec![expr(IrExprKind::IntLit(1)), expr(IrExprKind::IntLit(2))]))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("let (a, b)"));
 }
 
 // --- Slice without start ---
 #[test]
 fn test_emit_slice_no_start() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Slice{
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
         start: None,
@@ -1253,14 +1259,14 @@ fn test_emit_aug_assign_pow() {
         op: IrAugAssignOp::Pow,
         value: Box::new(expr(IrExprKind::IntLit(2))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains(".pow(") || result.contains("**"));
 }
 
 // --- BitXor ---
 #[test]
 fn test_emit_binop_bit_xor() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(5))),
         op: IrBinOp::BitXor,
@@ -1272,7 +1278,7 @@ fn test_emit_binop_bit_xor() {
 // --- NotContains ---
 #[test]
 fn test_emit_binop_not_contains() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(1))),
         op: IrBinOp::NotContains,
@@ -1284,7 +1290,7 @@ fn test_emit_binop_not_contains() {
 // --- Call field access ---
 #[test]
 fn test_emit_call_field_func() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Call{
         callee_may_raise: false,
         callee_needs_bridge: false,
@@ -1301,7 +1307,7 @@ fn test_emit_call_field_func() {
 // --- Is/IsNot ---
 #[test]
 fn test_emit_binop_is() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::Var("x".to_string()))),
         op: IrBinOp::Is,
@@ -1314,7 +1320,7 @@ fn test_emit_binop_is() {
 // --- Call with print using clone wrapper ---
 #[test]
 fn test_emit_call_print_string_literal() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Call{
         callee_may_raise: false,
         callee_needs_bridge: false,
@@ -1328,7 +1334,7 @@ fn test_emit_call_print_string_literal() {
 // --- print with MethodCall wrapper (clone) ---
 #[test]
 fn test_emit_call_print_with_clone() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Call{
         callee_may_raise: false,
         callee_needs_bridge: false,
@@ -1348,7 +1354,7 @@ fn test_emit_call_print_with_clone() {
 // --- UnaryOp BitNot ---
 #[test]
 fn test_emit_unary_bitnot() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::UnaryOp{
         op: IrUnaryOp::BitNot,
         operand: Box::new(expr(IrExprKind::IntLit(5))),
@@ -1366,7 +1372,7 @@ fn test_emit_var_decl_no_init() {
         mutable: true,
         init: None,
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("let mut x"));
     assert!(!result.contains("="));
 }
@@ -1374,7 +1380,7 @@ fn test_emit_var_decl_no_init() {
 // --- Dict iter ---
 #[test]
 fn test_emit_dict_iter() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("d".to_string()))),
@@ -1389,7 +1395,7 @@ fn test_emit_dict_iter() {
 // --- ListComp with dict iter ---
 #[test]
 fn test_emit_list_comp_dict_values() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::ListComp{
         elt: Box::new(expr(IrExprKind::Var("v".to_string()))),
         target: "v".to_string(),
@@ -1417,7 +1423,7 @@ fn test_emit_for_tuple_unpacking() {
         iter: Box::new(expr(IrExprKind::Var("items".to_string()))),
         body: vec![IrNode::Break],
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("(i, item)"));
 }
 
@@ -1425,14 +1431,14 @@ fn test_emit_for_tuple_unpacking() {
 #[test]
 fn test_emit_expr_docstring() {
     let node = IrNode::Expr(expr(IrExprKind::StringLit("This is a docstring".to_string())));
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("//"));
 }
 
 // --- List with Option type ---
 #[test]
 fn test_emit_list_option_type() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::List{
         elem_type: Type::Optional(Box::new(Type::Int)),
         elements: vec![],
@@ -1444,7 +1450,7 @@ fn test_emit_list_option_type() {
 // --- MatMul operator ---
 #[test]
 fn test_emit_binop_matmul() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::Var("a".to_string()))),
         op: IrBinOp::MatMul,
@@ -1462,14 +1468,14 @@ fn test_emit_aug_assign_mod() {
         op: IrAugAssignOp::Mod,
         value: Box::new(expr(IrExprKind::IntLit(3))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("%="));
 }
 
 // --- print with variable ---
 #[test]
 fn test_emit_call_print_variable() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Call{
         callee_may_raise: false,
         callee_needs_bridge: false,
@@ -1484,7 +1490,7 @@ fn test_emit_call_print_variable() {
 // --- main function rename ---
 #[test]
 fn test_emit_call_main() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Call{
         callee_may_raise: false,
         callee_needs_bridge: false,
@@ -1498,7 +1504,7 @@ fn test_emit_call_main() {
 // --- MethodCall to_string special ---
 #[test]
 fn test_emit_method_call_to_string() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::IntLit(42))),
@@ -1513,7 +1519,7 @@ fn test_emit_method_call_to_string() {
 // --- MethodCall append as push ---
 #[test]
 fn test_emit_method_call_append() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
@@ -1528,7 +1534,7 @@ fn test_emit_method_call_append() {
 // --- MethodCall split ---
 #[test]
 fn test_emit_method_call_split() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("s".to_string()))),
@@ -1543,7 +1549,7 @@ fn test_emit_method_call_split() {
 // --- Index with cast ---
 #[test]
 fn test_emit_index_cast() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Index{
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
         index: Box::new(expr(IrExprKind::Var("i".to_string()))),
@@ -1555,7 +1561,7 @@ fn test_emit_index_cast() {
 // --- Range only ---
 #[test]
 fn test_emit_range_only() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Range{
         start: Box::new(expr(IrExprKind::IntLit(0))),
         end: Box::new(expr(IrExprKind::Var("n".to_string()))),
@@ -1567,7 +1573,7 @@ fn test_emit_range_only() {
 // --- BinOp IsNot ---
 #[test]
 fn test_emit_binop_is_not() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::Var("x".to_string()))),
         op: IrBinOp::IsNot,
@@ -1580,7 +1586,7 @@ fn test_emit_binop_is_not() {
 // --- Empty print ---
 #[test]
 fn test_emit_call_print_empty() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Call{
         callee_may_raise: false,
         callee_needs_bridge: false,
@@ -1604,7 +1610,7 @@ fn test_emit_method_decl_static() {
         may_raise: false,
         needs_bridge: false,
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("fn create("));
     assert!(!result.contains("self"));
 }
@@ -1612,7 +1618,7 @@ fn test_emit_method_decl_static() {
 // --- Slice both None ---
 #[test]
 fn test_emit_slice_full() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Slice{
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
         start: None,
@@ -1626,7 +1632,7 @@ fn test_emit_slice_full() {
 // --- MethodCall strip ---
 #[test]
 fn test_emit_method_call_strip() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("s".to_string()))),
@@ -1641,7 +1647,7 @@ fn test_emit_method_call_strip() {
 // --- Print expr with type info ---
 #[test]
 fn test_emit_print_expr_string_type() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Print{
         args: vec![(expr(IrExprKind::Var("s".to_string())), Type::String)],
     });
@@ -1657,7 +1663,7 @@ fn test_emit_aug_assign_floor_div() {
         op: IrAugAssignOp::FloorDiv,
         value: Box::new(expr(IrExprKind::IntLit(2))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("/="));
 }
 
@@ -1669,7 +1675,7 @@ fn test_emit_aug_assign_bit_and() {
         op: IrAugAssignOp::BitAnd,
         value: Box::new(expr(IrExprKind::IntLit(3))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("&="));
 }
 
@@ -1680,7 +1686,7 @@ fn test_emit_aug_assign_bit_or() {
         op: IrAugAssignOp::BitOr,
         value: Box::new(expr(IrExprKind::IntLit(3))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("|="));
 }
 
@@ -1691,7 +1697,7 @@ fn test_emit_aug_assign_shl() {
         op: IrAugAssignOp::Shl,
         value: Box::new(expr(IrExprKind::IntLit(1))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("<<="));
 }
 
@@ -1702,7 +1708,7 @@ fn test_emit_aug_assign_shr() {
         op: IrAugAssignOp::Shr,
         value: Box::new(expr(IrExprKind::IntLit(1))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains(">>="));
 }
 
@@ -1711,7 +1717,7 @@ fn test_emit_aug_assign_shr() {
 // --- PyO3Call ---
 #[test]
 fn test_emit_pyo3_call() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::PyO3Call{
         module: "numpy".to_string(),
         method: "array".to_string(),
@@ -1727,7 +1733,7 @@ fn test_emit_pyo3_call() {
 // --- PyO3MethodCall ---
 #[test]
 fn test_emit_pyo3_method_call() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::PyO3MethodCall{
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
         method: "sum".to_string(),
@@ -1740,7 +1746,7 @@ fn test_emit_pyo3_method_call() {
 // --- MethodCall join ---
 #[test]
 fn test_emit_method_call_join() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::StringLit(",".to_string()))),
@@ -1755,7 +1761,7 @@ fn test_emit_method_call_join() {
 // --- MethodCall format ---
 #[test]
 fn test_emit_method_call_format() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::StringLit("{}".to_string()))),
@@ -1770,7 +1776,7 @@ fn test_emit_method_call_format() {
 // --- MethodCall lower/upper ---
 #[test]
 fn test_emit_method_call_lower() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("s".to_string()))),
@@ -1784,7 +1790,7 @@ fn test_emit_method_call_lower() {
 
 #[test]
 fn test_emit_method_call_upper() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("s".to_string()))),
@@ -1799,7 +1805,7 @@ fn test_emit_method_call_upper() {
 // --- MethodCall startswith/endswith ---
 #[test]
 fn test_emit_method_call_startswith() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("s".to_string()))),
@@ -1813,7 +1819,7 @@ fn test_emit_method_call_startswith() {
 
 #[test]
 fn test_emit_method_call_endswith() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("s".to_string()))),
@@ -1828,7 +1834,7 @@ fn test_emit_method_call_endswith() {
 // --- MethodCall get (dict) ---
 #[test]
 fn test_emit_method_call_get() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("d".to_string()))),
@@ -1843,7 +1849,7 @@ fn test_emit_method_call_get() {
 // --- MethodCall keys/values ---
 #[test]
 fn test_emit_method_call_keys() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("d".to_string()))),
@@ -1858,7 +1864,7 @@ fn test_emit_method_call_keys() {
 // --- MethodCall pop (list) ---
 #[test]
 fn test_emit_method_call_pop() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
@@ -1873,7 +1879,7 @@ fn test_emit_method_call_pop() {
 // --- MethodCall extend ---
 #[test]
 fn test_emit_method_call_extend() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
@@ -1888,7 +1894,7 @@ fn test_emit_method_call_extend() {
 // --- MethodCall copy/deepcopy ---
 #[test]
 fn test_emit_method_call_copy() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
@@ -1919,7 +1925,7 @@ fn test_emit_func_decl_multi_params() {
         may_raise: false,
         needs_bridge: false,
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("name: String"));
     assert!(result.contains("count: i64"));
     assert!(result.contains("flag: bool"));
@@ -1941,7 +1947,7 @@ fn test_emit_impl_block_with_method() {
             needs_bridge: false,
         }],
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("impl Counter"));
     assert!(result.contains("fn increment"));
 }
@@ -1958,7 +1964,7 @@ fn test_emit_if_elif() {
             else_block: None,
         }]),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("if true"));
     assert!(result.contains("else"));
 }
@@ -1971,14 +1977,14 @@ fn test_emit_aug_assign_bit_xor() {
         op: IrAugAssignOp::BitXor,
         value: Box::new(expr(IrExprKind::IntLit(3))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("^="));
 }
 
 // --- List with float type ---
 #[test]
 fn test_emit_list_float() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::List{
         elem_type: Type::Float,
         elements: vec![expr(IrExprKind::FloatLit(1.0)), expr(IrExprKind::FloatLit(2.0))],
@@ -1990,7 +1996,7 @@ fn test_emit_list_float() {
 // --- Dict with int key ---
 #[test]
 fn test_emit_dict_int_key() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Dict{
         key_type: Type::Int,
         value_type: Type::String,
@@ -2003,7 +2009,7 @@ fn test_emit_dict_int_key() {
 // --- Var with underscore prefix (private) ---
 #[test]
 fn test_emit_var_private() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Var("_private_var".to_string()));
     assert_eq!(emitter.emit_expr(&expr), "_private_var");
 }
@@ -2011,7 +2017,7 @@ fn test_emit_var_private() {
 // --- MethodCall find ---
 #[test]
 fn test_emit_method_call_find() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("s".to_string()))),
@@ -2026,7 +2032,7 @@ fn test_emit_method_call_find() {
 // --- MethodCall replace ---
 #[test]
 fn test_emit_method_call_replace_full() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("s".to_string()))),
@@ -2046,7 +2052,7 @@ fn test_emit_method_call_replace_full() {
 // --- FString empty ---
 #[test]
 fn test_emit_fstring_empty() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::FString{
         parts: vec!["hello".to_string()],
         values: vec![],
@@ -2058,7 +2064,7 @@ fn test_emit_fstring_empty() {
 // --- MethodCall enumerate ---
 #[test]
 fn test_emit_method_call_enumerate() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
@@ -2082,7 +2088,7 @@ fn test_emit_try_block() {
         else_body: None,  // V1.5.2
         finally_body: None,
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("catch_unwind") || result.contains("panic"));
 }
 
@@ -2098,7 +2104,7 @@ fn test_emit_var_decl_tuple_init() {
             expr(IrExprKind::IntLit(2)),
         ])))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("let point"));
     assert!(result.contains("(1i64, 2i64)"));
 }
@@ -2112,7 +2118,7 @@ fn test_emit_var_decl_string_init() {
         mutable: true,
         init: Some(Box::new(expr(IrExprKind::StringLit("hello".to_string())))),
     };
-    let result = emit(&[node]);
+    let result = emit_with_plan(&[node]);
     assert!(result.contains("let mut name"));
     assert!(result.contains(".to_string()"));
 }
@@ -2120,7 +2126,7 @@ fn test_emit_var_decl_string_init() {
 // --- List with tuple String element ---
 #[test]
 fn test_emit_list_tuple_string() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::List{
         elem_type: Type::Tuple(vec![Type::String, Type::Int]),
         elements: vec![expr(IrExprKind::Tuple(vec![
@@ -2135,7 +2141,7 @@ fn test_emit_list_tuple_string() {
 // --- BinOp Pow ---
 #[test]
 fn test_emit_binop_pow_v2() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::BinOp{
         left: Box::new(expr(IrExprKind::IntLit(2))),
         op: IrBinOp::Pow,
@@ -2148,7 +2154,7 @@ fn test_emit_binop_pow_v2() {
 // --- Nonelit ---
 #[test]
 fn test_emit_nonellit() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::NoneLit);
     assert_eq!(emitter.emit_expr(&expr), "None");
 }
@@ -2156,7 +2162,7 @@ fn test_emit_nonellit() {
 // --- Closure with Unit return ---
 #[test]
 fn test_emit_closure_unit_return() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Closure{
         params: vec![],
         body: vec![],
@@ -2169,7 +2175,7 @@ fn test_emit_closure_unit_return() {
 // --- Closure with Unknown return ---
 #[test]
 fn test_emit_closure_unknown_return() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Closure{
         params: vec!["x".to_string()],
         body: vec![IrNode::Expr(expr(IrExprKind::Var("x".to_string())))],
@@ -2182,7 +2188,7 @@ fn test_emit_closure_unknown_return() {
 // --- MethodCall zip ---
 #[test]
 fn test_emit_method_call_zip() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("a".to_string()))),
@@ -2197,7 +2203,7 @@ fn test_emit_method_call_zip() {
 // --- MethodCall count ---
 #[test]
 fn test_emit_method_call_count() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("s".to_string()))),
@@ -2212,7 +2218,7 @@ fn test_emit_method_call_count() {
 // --- RawCode ---
 #[test]
 fn test_emit_raw_code_v2() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::RawCode("unsafe { std::mem::transmute(x) }".to_string()));
     let result = emitter.emit_expr(&expr);
     assert_eq!(result, "unsafe { std::mem::transmute(x) }");
@@ -2221,7 +2227,7 @@ fn test_emit_raw_code_v2() {
 // --- Cast ---
 #[test]
 fn test_emit_cast_v2() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Cast{
         target: Box::new(expr(IrExprKind::Var("x".to_string()))),
         ty: "f64".to_string(),
@@ -2233,7 +2239,7 @@ fn test_emit_cast_v2() {
 // --- MethodCall abs ---
 #[test]
 fn test_emit_method_call_abs() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("x".to_string()))),
@@ -2248,7 +2254,7 @@ fn test_emit_method_call_abs() {
 // --- MethodCall sort ---
 #[test]
 fn test_emit_method_call_sort() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
@@ -2263,7 +2269,7 @@ fn test_emit_method_call_sort() {
 // --- MethodCall reverse ---
 #[test]
 fn test_emit_method_call_reverse() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::MethodCall{
         target_type: Type::Unknown,
         target: Box::new(expr(IrExprKind::Var("arr".to_string()))),
@@ -2281,7 +2287,7 @@ fn test_emit_method_call_reverse() {
 // --- expr(IrExprKind::Call)with callee_may_raise ---
 #[test]
 fn test_emit_call_callee_may_raise_false() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let expr = expr(IrExprKind::Call{
         callee_may_raise: false,
         callee_needs_bridge: false,
@@ -2296,7 +2302,7 @@ fn test_emit_call_callee_may_raise_false() {
 
 #[test]
 fn test_emit_call_callee_may_raise_true_in_normal_context() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     // current_func_may_raise is false by default
     let expr = expr(IrExprKind::Call{
         callee_may_raise: true,
@@ -2314,8 +2320,7 @@ fn test_emit_call_callee_may_raise_true_in_normal_context() {
 
 #[test]
 fn test_emit_call_callee_may_raise_true_in_may_raise_context() {
-    let mut emitter = RustEmitter::new();
-    emitter.current_func_may_raise = true; // Simulate being inside a may_raise function
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     emitter.current_func_returns_result = true;
     let expr = expr(IrExprKind::Call{
         callee_may_raise: true,
@@ -2331,7 +2336,7 @@ fn test_emit_call_callee_may_raise_true_in_may_raise_context() {
 // --- FuncDecl with may_raise ---
 #[test]
 fn test_emit_func_decl_with_may_raise() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let node = IrNode::FuncDecl {
         name: "risky_operation".to_string(),
         params: vec![],
@@ -2356,7 +2361,7 @@ fn test_emit_func_decl_with_may_raise() {
 
 #[test]
 fn test_emit_func_decl_without_may_raise() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let node = IrNode::FuncDecl {
         name: "safe_operation".to_string(),
         params: vec![],
@@ -2382,7 +2387,7 @@ fn test_emit_func_decl_without_may_raise() {
 // --- Raise node ---
 #[test]
 fn test_emit_raise_node() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let node = IrNode::Raise {
         exc_type: "ValueError".to_string(),
         message: Box::new(expr(IrExprKind::StringLit("invalid input".to_string()))),
@@ -2404,7 +2409,7 @@ fn test_emit_raise_node() {
 
 #[test]
 fn test_emit_raise_from_node() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let node = IrNode::Raise {
         exc_type: "RuntimeError".to_string(),
         message: Box::new(expr(IrExprKind::StringLit("operation failed".to_string()))),
@@ -2427,7 +2432,7 @@ fn test_emit_raise_from_node() {
 // --- TryBlock with else ---
 #[test]
 fn test_emit_try_block_with_else() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let node = IrNode::TryBlock {
         try_body: vec![IrNode::Expr(expr(IrExprKind::IntLit(1)))],
         except_body: vec![IrNode::Expr(expr(IrExprKind::IntLit(-1)))],
@@ -2447,7 +2452,7 @@ fn test_emit_try_block_with_else() {
 // --- Unit return with may_raise should add Ok(()) ---
 #[test]
 fn test_emit_func_decl_unit_return_with_may_raise() {
-    let mut emitter = RustEmitter::new();
+    let mut emitter = RustEmitter::new(EmitPlan::default());
     let node = IrNode::FuncDecl {
         name: "do_something".to_string(),
         params: vec![],
