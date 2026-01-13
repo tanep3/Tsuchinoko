@@ -152,19 +152,25 @@ impl Type {
                 params,
                 ret,
                 is_boxed,
+                may_raise,
                 ..
             } => {
                 let p: Vec<_> = params.iter().map(|t| t.to_rust_string()).collect();
+                let ret_str = if *may_raise {
+                    format!("Result<{}, TsuchinokoError>", ret.to_rust_string())
+                } else {
+                    ret.to_rust_string()
+                };
                 if *is_boxed {
-                    // Use Arc<dyn Fn(...) + Send + Sync> for Clone support
+                    // Use Rc<dyn Fn(...)> for boxed callables (type aliases, fields)
                     format!(
-                        "std::sync::Arc<dyn Fn({}) -> {} + Send + Sync>",
+                        "std::rc::Rc<dyn Fn({}) -> {}>",
                         p.join(", "),
-                        ret.to_rust_string()
+                        ret_str
                     )
                 } else {
                     // Use fn(...) -> ... for raw function pointers (items)
-                    format!("fn({}) -> {}", p.join(", "), ret.to_rust_string())
+                    format!("fn({}) -> {}", p.join(", "), ret_str)
                 }
             }
             Type::Unit => "()".to_string(),

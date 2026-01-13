@@ -4,12 +4,19 @@
 
 use super::*;
 
+#[derive(Clone, Copy)]
+pub(crate) enum CallArgContext {
+    Normal,
+    StructField,
+}
+
 impl SemanticAnalyzer {
     pub(crate) fn analyze_call_args(
         &mut self,
         args: &[Expr],
         expected_param_types: &[Type],
         _func_name: &str,
+        context: CallArgContext,
     ) -> Result<Vec<IrExpr>, TsuchinokoError> {
         let mut ir_args = Vec::new();
         for (i, a) in args.iter().enumerate() {
@@ -20,7 +27,7 @@ impl SemanticAnalyzer {
                 .cloned()
                 .unwrap_or(Type::Unknown);
 
-            let coerced = self.coerce_arg(ir_arg, &actual_ty, &expected_ty, a);
+            let coerced = self.coerce_arg(ir_arg, &actual_ty, &expected_ty, a, context);
             ir_args.push(coerced);
         }
         Ok(ir_args)
@@ -34,6 +41,7 @@ impl SemanticAnalyzer {
         actual_ty: &Type,
         expected_ty: &Type,
         expr: &Expr,
+        context: CallArgContext,
     ) -> IrExpr {
         // 1. Unpack expectation (check if expected type is a reference or mutable reference)
         let (target_ty, needs_ref, needs_mut_ref) = match expected_ty {
@@ -85,20 +93,101 @@ impl SemanticAnalyzer {
 
         // 2. Auto-Box: Fn -> Box<dyn Fn>
         if let Type::Func { is_boxed: true, .. } = &resolved_target {
-            if let Type::Func {
-                is_boxed: false, ..
-            } = &resolved_actual
-            {
-                ir_arg = self.create_expr(IrExprKind::BoxNew(Box::new(ir_arg)), resolved_target.clone());
+            match context {
+                CallArgContext::StructField => {
+                    // For struct fields, keep/ensure boxed callables (Rc<dyn Fn>).
+                    if let IrExprKind::BoxNew(inner) = &ir_arg.kind {
+                        if matches!(inner.kind, IrExprKind::Closure { .. }) {
+                            return ir_arg;
+                        }
+                    }
+                    if matches!(ir_arg.kind, IrExprKind::Closure { .. }) {
+                        return self.create_expr(IrExprKind::BoxNew(Box::new(ir_arg)), resolved_target.clone());
+                    }
+                    if let Type::Func { is_boxed: true, .. } = &resolved_actual {
+                        return ir_arg;
+                    }
+                    ir_arg = self.create_expr(IrExprKind::BoxNew(Box::new(ir_arg)), resolved_target.clone());
 
-                // If target was a named alias, add explicit cast
-                if let Type::Struct(alias_name) = &target_ty {
-                    ir_arg = self.create_expr(IrExprKind::Cast {
-                        target: Box::new(ir_arg),
-                        ty: alias_name.clone(),
-                    }, target_ty.clone());
+                    // If target was a named alias, add explicit cast
+                    if let Type::Struct(alias_name) = &target_ty {
+                        ir_arg = self.create_expr(IrExprKind::Cast {
+                            target: Box::new(ir_arg),
+                            ty: alias_name.clone(),
+                        }, target_ty.clone());
+                    }
+                    return ir_arg;
                 }
-                return ir_arg;
+                CallArgContext::Normal => {
+                    // If the expected type is a named alias (Struct) to a boxed callable,
+                    // keep boxed semantics (Rc<dyn Fn>) to match the alias type.
+                    if matches!(target_ty, Type::Struct(_)) {
+                        if let IrExprKind::BoxNew(inner) = &ir_arg.kind {
+                            if matches!(inner.kind, IrExprKind::Closure { .. }) {
+                                return ir_arg;
+                            }
+                        }
+                        if matches!(ir_arg.kind, IrExprKind::Closure { .. }) {
+                            return self.create_expr(IrExprKind::BoxNew(Box::new(ir_arg)), resolved_target.clone());
+                        }
+                        if let Type::Func { is_boxed: true, .. } = &resolved_actual {
+                            return ir_arg;
+                        }
+                        ir_arg = self.create_expr(IrExprKind::BoxNew(Box::new(ir_arg)), resolved_target.clone());
+
+                        if let Type::Struct(alias_name) = &target_ty {
+                            ir_arg = self.create_expr(IrExprKind::Cast {
+                                target: Box::new(ir_arg),
+                                ty: alias_name.clone(),
+                            }, target_ty.clone());
+                        }
+                        return ir_arg;
+                    }
+
+                    // If we're passing a closure literal into a callable parameter, keep it unboxed.
+                    if let IrExprKind::BoxNew(inner) = &ir_arg.kind {
+                        if matches!(inner.kind, IrExprKind::Closure { .. }) {
+                            return *inner.clone();
+                        }
+                    }
+                    if matches!(ir_arg.kind, IrExprKind::Closure { .. }) {
+                        return ir_arg;
+                    }
+
+                    // If we already have a boxed callable (Rc<dyn Fn>), pass a reference to it.
+                    if let Type::Func { is_boxed: true, .. } = &resolved_actual {
+                        return self.create_expr(IrExprKind::MethodCall {
+                            target_type: resolved_actual.clone(),
+                            target: Box::new(ir_arg),
+                            method: "as_ref".to_string(),
+                            args: vec![],
+                            callee_needs_bridge: false,
+                        }, Type::Unknown);
+                    }
+
+                    // If it's a plain function item, pass it directly (impl Fn accepts it).
+                    if let Type::Func { is_boxed: false, .. } = &resolved_actual {
+                        if matches!(ir_arg.kind, IrExprKind::Var(_)) {
+                            return ir_arg;
+                        }
+                    }
+
+                    if let Type::Func {
+                        is_boxed: false, ..
+                    } = &resolved_actual
+                    {
+                        ir_arg = self.create_expr(IrExprKind::BoxNew(Box::new(ir_arg)), resolved_target.clone());
+
+                        // If target was a named alias, add explicit cast
+                        if let Type::Struct(alias_name) = &target_ty {
+                            ir_arg = self.create_expr(IrExprKind::Cast {
+                                target: Box::new(ir_arg),
+                                ty: alias_name.clone(),
+                            }, target_ty.clone());
+                        }
+                        return ir_arg;
+                    }
+                }
             }
         }
 

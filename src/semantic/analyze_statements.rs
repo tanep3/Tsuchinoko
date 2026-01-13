@@ -568,7 +568,10 @@ impl SemanticAnalyzer {
 
                 for (i, p) in params.iter().enumerate() {
                     // First try to use refined type from forward_declare
-                    let base_ty = if let Some(ref refined) = refined_func_params {
+                    let hinted_ty = p.type_hint.as_ref().map(|th| self.type_from_hint(th));
+                    let base_ty = if matches!(hinted_ty, Some(Type::Optional(_))) {
+                        hinted_ty.unwrap()
+                    } else if let Some(ref refined) = refined_func_params {
                         if let Some(refined_ty) = refined.get(i) {
                             // Unwrap Ref/MutRef to get the base type
                             match refined_ty {
@@ -608,6 +611,16 @@ impl SemanticAnalyzer {
                             .as_ref()
                             .map(|th| self.type_from_hint(th))
                             .unwrap_or(Type::Unknown)
+                    };
+                    let base_ty = if matches!(
+                        (&p.default, &base_ty),
+                        (Some(Expr::NoneLiteral), Type::Optional(_))
+                    ) {
+                        base_ty
+                    } else if matches!(p.default, Some(Expr::NoneLiteral)) {
+                        Type::Optional(Box::new(base_ty))
+                    } else {
+                        base_ty
                     };
 
                     // For variadic parameters (*args), wrap in Vec<T>
@@ -781,6 +794,22 @@ impl SemanticAnalyzer {
 
                 let ir_body = self.analyze_stmts(body)?;
 
+                // Update parameter types based on usage inside the function body
+                let mut updated_param_types = Vec::new();
+                for (i, p) in params.iter().enumerate() {
+                    let mut updated_ty = self
+                        .scope
+                        .get_effective_type(&p.name)
+                        .unwrap_or_else(|| param_types[i].clone());
+                    // Optionalの型情報はシグネチャから落とさない（分岐内のナローイングは無視）
+                    if matches!(param_types[i], Type::Optional(_))
+                        && !matches!(updated_ty, Type::Optional(_))
+                    {
+                        updated_ty = param_types[i].clone();
+                    }
+                    updated_param_types.push(updated_ty);
+                }
+
                 // Restore old return type
                 self.current_return_type = old_return_type;
 
@@ -812,10 +841,37 @@ impl SemanticAnalyzer {
                     self.needs_bridge_funcs.insert(name.clone());
                 }
 
+                // Update function signature in outer scope with refined param types
+                let signature_params = if updated_param_types.is_empty() {
+                    param_types.clone()
+                } else {
+                    updated_param_types.clone()
+                };
+                self.scope.define(
+                    name,
+                    Type::Func {
+                        params: signature_params.clone(),
+                        ret: Box::new(resolved_ret_type.clone()),
+                        is_boxed: false,
+                        may_raise: func_may_raise,
+                    },
+                    false,
+                );
+
                 let ir_name = name.clone();
                 Ok(IrNode::FuncDecl {
                     name: ir_name,
-                    params: ir_params,
+                    params: ir_params
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, (n, _))| {
+                            let ty = signature_params
+                                .get(i)
+                                .cloned()
+                                .unwrap_or(Type::Unknown);
+                            (n, ty)
+                        })
+                        .collect(),
                     ret: ret_type,
                     body: ir_body,
                     hoisted_vars,
@@ -1246,25 +1302,24 @@ impl SemanticAnalyzer {
                 if !methods.is_empty() {
                     let mut ir_methods = Vec::new();
 
-                    for method in methods {
-                        // Skip __init__ - it's handled via fields
-                        if method.name == "__init__" {
-                            continue;
-                        }
-
-                        // Parse method parameters
-                        let ir_params: Vec<(String, Type)> = method
-                            .params
-                            .iter()
-                            .map(|p| {
-                                let ty = p
-                                    .type_hint
-                                    .as_ref()
-                                    .map(|h| self.type_from_hint(h))
-                                    .unwrap_or(Type::Unknown);
-                                (p.name.clone(), ty)
-                            })
-                            .collect();
+                        for method in methods {
+                            // Skip __init__ - it's handled via fields
+                            if method.name == "__init__" {
+                                continue;
+                            }
+                            // Parse method parameters
+                            let ir_params: Vec<(String, Type)> = method
+                                .params
+                                .iter()
+                                .map(|p| {
+                                    let ty = p
+                                        .type_hint
+                                        .as_ref()
+                                        .map(|h| self.type_from_hint(h))
+                                        .unwrap_or(Type::Unknown);
+                                    Ok((p.name.clone(), ty))
+                                })
+                                .collect::<Result<Vec<_>, TsuchinokoError>>()?;
 
                         let ret_ty = method
                             .return_type

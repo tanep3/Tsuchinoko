@@ -6,6 +6,7 @@ use super::operators::convert_binop;
 use crate::ir::BuiltinId;
 // use super::type_infer::TypeInference;
 use super::*;
+use crate::semantic::analyze_calls::CallArgContext;
 
 impl SemanticAnalyzer {
     /// 名前解決された関数名を取得 (e.g., "len", "pd.read_csv")
@@ -817,8 +818,12 @@ impl SemanticAnalyzer {
                                 field_types.iter().map(|(_, ty)| ty.clone()).collect();
                             let field_names: Vec<String> =
                                 field_types.iter().map(|(name, _)| name.clone()).collect();
-                            let ir_args =
-                                self.analyze_call_args(&resolved_args, &expected_types, name)?;
+                            let ir_args = self.analyze_call_args(
+                                &resolved_args,
+                                &expected_types,
+                                name,
+                                CallArgContext::StructField,
+                            )?;
 
                             // Build field list with names and values
                             // V1.5.2: If no arguments provided but fields exist, use default values from __init__
@@ -948,6 +953,7 @@ impl SemanticAnalyzer {
                             &resolved_args,
                             &expected_param_types,
                             &self.get_func_name_for_debug(func.as_ref()),
+                            CallArgContext::Normal,
                         )?;
 
                         let final_func = if name == "main" {
@@ -957,7 +963,7 @@ impl SemanticAnalyzer {
                         };
 
                         // V1.5.2: Check if callee may raise (from scope, set by forward_declare_functions)
-                        let callee_may_raise = if let Some(var_info) = self.scope.lookup(name) {
+                        let mut callee_may_raise = if let Some(var_info) = self.scope.lookup(name) {
                             matches!(
                                 &var_info.ty,
                                 Type::Func {
@@ -969,6 +975,16 @@ impl SemanticAnalyzer {
                             // Fallback to may_raise_funcs for functions set during analyze
                             self.may_raise_funcs.contains(name)
                         };
+                        // Phase G: from-import functions always may raise
+                        if !callee_may_raise {
+                            let is_from_import = self
+                                .external_imports
+                                .iter()
+                                .any(|(_, item)| item == name);
+                            if is_from_import {
+                                callee_may_raise = true;
+                            }
+                        }
 
                         // Propagate may_raise to current function
                         if callee_may_raise {
@@ -1022,7 +1038,12 @@ impl SemanticAnalyzer {
                                     if let Type::Func { .. } = resolved_ty {
                                         // This is a Callable field - emit as Call not MethodCall
                                         let ir_args =
-                                            self.analyze_call_args(args, &[], &field_lookup)?;
+                                        self.analyze_call_args(
+                                            args,
+                                            &[],
+                                            &field_lookup,
+                                            CallArgContext::Normal,
+                                        )?;
                                         let field_access = self.create_expr(IrExprKind::FieldAccess {
                                             target: Box::new(ir_target),
                                             field: stripped_attr.to_string(),
@@ -1055,6 +1076,7 @@ impl SemanticAnalyzer {
                             args,
                             &expected_param_types,
                             &format!("{}.{}", target_ty.to_rust_string(), method_name),
+                            CallArgContext::Normal,
                         )?;
 
                         if matches!(target_ty, Type::Any) {
@@ -1124,6 +1146,7 @@ impl SemanticAnalyzer {
                             args,
                             &expected_param_types,
                             &self.get_func_name_for_debug(func.as_ref()),
+                            CallArgContext::Normal,
                         )?;
 
                         // V1.5.2: Check if callee may raise (from function type)

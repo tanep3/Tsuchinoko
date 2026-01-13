@@ -394,11 +394,25 @@ impl SemanticAnalyzer {
                 let param_types: Vec<Type> = params
                     .iter()
                     .map(|p| {
-                        let base_ty = p
-                            .type_hint
-                            .as_ref()
-                            .map(|th| self.type_from_hint(th))
-                            .unwrap_or(Type::Unknown);
+                        let hinted_ty = p.type_hint.as_ref().map(|th| self.type_from_hint(th));
+                        let base_ty = if matches!(hinted_ty, Some(Type::Optional(_))) {
+                            hinted_ty.unwrap()
+                        } else {
+                            p.type_hint
+                                .as_ref()
+                                .map(|th| self.type_from_hint(th))
+                                .unwrap_or(Type::Unknown)
+                        };
+                        let base_ty = if matches!(
+                            (&p.default, &base_ty),
+                            (Some(Expr::NoneLiteral), Type::Optional(_))
+                        ) {
+                            base_ty
+                        } else if matches!(p.default, Some(Expr::NoneLiteral)) {
+                            Type::Optional(Box::new(base_ty))
+                        } else {
+                            base_ty
+                        };
                         if p.variadic {
                             Type::List(Box::new(base_ty))
                         } else {

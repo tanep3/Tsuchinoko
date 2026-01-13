@@ -54,6 +54,8 @@ pub struct RustEmitter {
     uses_tsuchinoko_error: bool,
     /// V1.5.2: Whether current function may raise (for Ok() wrapping)
     current_func_may_raise: bool,
+    /// Return type is Result<..> (signature basis for Ok()/?) 
+    current_func_returns_result: bool,
     /// V1.5.2: Whether we are inside try body closure (? not allowed, use .unwrap())
     in_try_body: bool,
     /// V1.5.2: Whether we are inside except body
@@ -62,6 +64,10 @@ pub struct RustEmitter {
     current_except_var: Option<String>,
     /// V1.7.0: Current function's return type (for Return in Try handling)
     current_ret_type: Option<Type>,
+    /// Whether current function is an instance method (self is available)
+    current_func_takes_self: bool,
+    /// Force closures to use `move` (for boxed/returned closures)
+    force_move_closure: bool,
     /// V1.6.0: Map of struct name -> base class name (for composition)
     struct_bases: HashMap<String, String>,
 }
@@ -82,12 +88,100 @@ fn to_snake_case(s: &str) -> String {
             result.push(c);
         }
     }
-    result
+    if is_rust_keyword(&result) {
+        format!("_{}_tsuchinoko", result)
+    } else {
+        result
+    }
+}
+
+fn is_rust_keyword(name: &str) -> bool {
+    matches!(
+        name,
+        "as"
+            | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "fn"
+            | "for"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "Self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "type"
+            | "unsafe"
+            | "use"
+            | "where"
+            | "while"
+            | "async"
+            | "await"
+            | "dyn"
+            | "abstract"
+            | "become"
+            | "box"
+            | "do"
+            | "final"
+            | "macro"
+            | "override"
+            | "priv"
+            | "try"
+            | "typeof"
+            | "unsized"
+            | "virtual"
+            | "yield"
+    )
 }
 
 impl Default for RustEmitter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl RustEmitter {
+    fn format_param_type_for_sig(&mut self, ty: &Type) -> String {
+        match ty {
+            Type::Func {
+                params,
+                ret,
+                is_boxed,
+                may_raise,
+            } => {
+                let p: Vec<_> = params.iter().map(|t| t.to_rust_string()).collect();
+                let ret_str = if *may_raise {
+                    self.uses_tsuchinoko_error = true;
+                    format!("Result<{}, TsuchinokoError>", ret.to_rust_string())
+                } else {
+                    ret.to_rust_string()
+                };
+                if *is_boxed {
+                    format!("impl Fn({}) -> {}", p.join(", "), ret_str)
+                } else {
+                    format!("fn({}) -> {}", p.join(", "), ret_str)
+                }
+            }
+            _ => ty.to_rust_string(),
+        }
     }
 }
 
@@ -106,10 +200,13 @@ impl RustEmitter {
             shadowed_vars: Vec::new(),
             uses_tsuchinoko_error: false,
             current_func_may_raise: false,
+            current_func_returns_result: false,
             in_try_body: false,
             in_except_body: false,
             current_except_var: None,
             current_ret_type: None,
+            current_func_takes_self: false,
+            force_move_closure: false,
             struct_bases: HashMap::new(),
         }
     }
@@ -575,6 +672,8 @@ impl std::fmt::Display for TnkValue {{
                     // V1.5.2: __top_level__ (main) is never may_raise
                     let old_may_raise = self.current_func_may_raise;
                     self.current_func_may_raise = false;
+                    let old_returns_result = self.current_func_returns_result;
+                    self.current_func_returns_result = true;
 
                     // Set current hoisted variables for top-level scope
                     let old_hoisted =
@@ -603,6 +702,7 @@ impl std::fmt::Display for TnkValue {{
 
                     // Restore may_raise state
                     self.current_func_may_raise = old_may_raise;
+                    self.current_func_returns_result = old_returns_result;
                     self.current_hoisted_vars = old_hoisted;
 
                     // 関数内で resident 機能が使われたか
@@ -687,10 +787,14 @@ impl std::fmt::Display for TnkValue {{
                     // V1.5.2: Set may_raise flag for return statement wrapping
                     let old_may_raise = self.current_func_may_raise;
                     self.current_func_may_raise = *may_raise;
+                    let old_returns_result = self.current_func_returns_result;
+                    self.current_func_returns_result = *may_raise;
 
                     // V1.7.0: Set return type for TryBlock return value type inference
                     let old_ret_type = self.current_ret_type.clone();
                     self.current_ret_type = Some(ret.clone());
+                    let old_takes_self = self.current_func_takes_self;
+                    self.current_func_takes_self = false;
 
                     let body_str = self.emit_nodes(body);
                     self.indent -= 1;
@@ -698,7 +802,9 @@ impl std::fmt::Display for TnkValue {{
                     // Restore previous hoisted vars, may_raise and ret_type
                     self.current_hoisted_vars = old_hoisted;
                     self.current_func_may_raise = old_may_raise;
+                    self.current_func_returns_result = old_returns_result;
                     self.current_ret_type = old_ret_type;
+                    self.current_func_takes_self = old_takes_self;
 
                     let func_needs_resident = self.needs_resident;
 
@@ -708,12 +814,16 @@ impl std::fmt::Display for TnkValue {{
                     // 通常のパラメータ
                     let mut params_str: Vec<_> = params
                         .iter()
-                        .map(|(n, t)| format!("{}: {}", to_snake_case(n), t.to_rust_string()))
+                        .map(|(n, t)| format!("{}: {}", to_snake_case(n), self.format_param_type_for_sig(t)))
                         .collect();
 
                     // Hack: If return type is Unit but body has Return with value, force return type to Value
                     let has_value_return =
                         body.iter().any(|n| matches!(n, IrNode::Return(Some(_))));
+
+                    if let Type::Func { may_raise: true, .. } = ret {
+                        self.uses_tsuchinoko_error = true;
+                    }
 
                     let effective_ret = if *ret == Type::Unit && has_value_return {
                         &Type::Any // Will be emitted as serde_json::Value
@@ -735,6 +845,8 @@ impl std::fmt::Display for TnkValue {{
                         // Phase F: Set may_raise for proper Ok() wrapping in Return statements
                         let backup_may_raise = self.current_func_may_raise;
                         self.current_func_may_raise = *may_raise || func_needs_resident;
+                        let backup_returns_result = self.current_func_returns_result;
+                        self.current_func_returns_result = *may_raise || func_needs_resident;
                         self.current_ret_type = Some(ret.clone()); // Store ret type for inner Try blocks
 
                         // Reset needs_resident just in case, though we know it will become true
@@ -744,6 +856,7 @@ impl std::fmt::Display for TnkValue {{
                         self.is_inside_resident_func = backup_flag;
                         self.current_hoisted_vars = backup_hoisted;
                         self.current_func_may_raise = backup_may_raise;
+                        self.current_func_returns_result = backup_returns_result;
                         self.indent -= 1;
                         s
                     } else {
@@ -927,10 +1040,11 @@ impl std::fmt::Display for TnkValue {{
                 if self.in_try_body {
                     match expr {
                         Some(e) => {
+                            let expr_str = self.emit_expr(e);
                             // If we have a return value, we MUST store it somewhere.
                             // The specialized TryBlock IR would have already detected this?
                             // For now, let's assume __ret_val is available if needed.
-                            return format!("{}__ret_val = Some({}); return Ok(());", indent, self.emit_expr(e));
+                            return format!("{}__ret_val = Some({}); return Ok(());", indent, expr_str);
                         }
                         None => {
                              return format!("{}return Ok(());", indent);
@@ -938,16 +1052,23 @@ impl std::fmt::Display for TnkValue {{
                     }
                 }
 
-                // V1.5.2: Wrap in Ok() if current function may raise
-                if self.current_func_may_raise {
-                    match expr {
-                        Some(e) => format!("{}return Ok({});", indent, self.emit_expr(e)),
-                        None => format!("{indent}return Ok(());"),
+                // 戻り値は「Resultを返す関数かどうか」で決める
+                let use_result_wrap = self.current_func_returns_result;
+                match expr {
+                    Some(e) => {
+                        let expr_str = self.emit_expr(e);
+                        if use_result_wrap {
+                            format!("{}return Ok({});", indent, expr_str)
+                        } else {
+                            format!("{}return {};", indent, expr_str)
+                        }
                     }
-                } else {
-                    match expr {
-                        Some(e) => format!("{}return {};", indent, self.emit_expr(e)),
-                        None => format!("{indent}return;"),
+                    None => {
+                        if use_result_wrap {
+                            format!("{indent}return Ok(());")
+                        } else {
+                            format!("{indent}return;")
+                        }
                     }
                 }
             }
@@ -1102,7 +1223,7 @@ impl std::fmt::Display for TnkValue {{
                 // Handle return if occurred inside try
                 if try_has_return {
                     let inner_indent = "    ".repeat(self.indent + 1);
-                    if self.current_func_may_raise {
+                    if self.current_func_returns_result {
                          result.push_str(&format!("{}if let Some(val) = __ret_val {{ return Ok(val); }}\n", inner_indent));
                     } else {
                          result.push_str(&format!("{}if let Some(val) = __ret_val {{ return val; }}\n", inner_indent));
@@ -1131,7 +1252,7 @@ impl std::fmt::Display for TnkValue {{
                 if let Some(var_name) = except_var {
                      self.indent += 2;
                      // Bind exception
-                     if self.current_func_may_raise {
+                     if self.current_func_returns_result {
                          result.push_str(&format!(
                              "{}let {} = TsuchinokoError::new(\"Exception\", &format!(\"{{:?}}\", __exc), None);\n",
                              "    ".repeat(self.indent), to_snake_case(var_name)
@@ -1178,7 +1299,7 @@ impl std::fmt::Display for TnkValue {{
                          indent_str, to_snake_case(var_name)
                      ));
                      // If TsuchinokoError is needed
-                     if self.current_func_may_raise {
+                     if self.current_func_returns_result {
                          result.push_str(&format!(
                              "{}let {} = TsuchinokoError::new(\"InternalError\", {}, None);\n",
                              indent_str, to_snake_case(var_name), to_snake_case(var_name)
@@ -1233,7 +1354,7 @@ impl std::fmt::Display for TnkValue {{
                 // V1.7.0: Add a fallback return if we fell through the TryBlock and the function expects a value
                 if let Some(ret_ty) = &self.current_ret_type {
                     if *ret_ty != Type::Unit {
-                        if self.current_func_may_raise {
+                        if self.current_func_returns_result {
                             result.push_str(&format!("{}return Ok({});\n", indent, ret_ty.to_default_value()));
                         } else {
                             result.push_str(&format!("{}return {};\n", indent, ret_ty.to_default_value()));
@@ -1278,10 +1399,14 @@ impl std::fmt::Display for TnkValue {{
 
                 let params_str: Vec<String> = params
                     .iter()
-                    .map(|(n, t)| format!("{}: {}", to_snake_case(n), t.to_rust_string()))
+                    .map(|(n, t)| format!("{}: {}", to_snake_case(n), self.format_param_type_for_sig(t)))
                     .collect();
 
                 // V1.5.2: Use Result type if may_raise
+                if let Type::Func { may_raise: true, .. } = ret {
+                    self.uses_tsuchinoko_error = true;
+                }
+
                 let ret_str = if *may_raise {
                     self.uses_tsuchinoko_error = true;
                     format!(" -> Result<{}, TsuchinokoError>", ret.to_rust_string())
@@ -1312,10 +1437,14 @@ impl std::fmt::Display for TnkValue {{
                 // V1.5.2: Track may_raise for return statement wrapping
                 let old_may_raise = self.current_func_may_raise;
                 self.current_func_may_raise = *may_raise;
+                let old_returns_result = self.current_func_returns_result;
+                self.current_func_returns_result = *may_raise;
 
                 // V1.7.0: Set return type for TryBlock return value type inference
                 let old_ret_type = self.current_ret_type.clone();
                 self.current_ret_type = Some(ret.clone());
+                let old_takes_self = self.current_func_takes_self;
+                self.current_func_takes_self = *takes_self;
 
                 self.indent += 1;
                 for node in body {
@@ -1330,7 +1459,9 @@ impl std::fmt::Display for TnkValue {{
                 }
 
                 self.current_func_may_raise = old_may_raise;
+                self.current_func_returns_result = old_returns_result;
                 self.current_ret_type = old_ret_type;
+                self.current_func_takes_self = old_takes_self;
                 self.indent -= 1;
                 result.push_str(&format!("{inner_indent}}}"));
                 result
@@ -1345,7 +1476,7 @@ impl std::fmt::Display for TnkValue {{
                     if self.in_except_body {
                         if let Some(var) = &self.current_except_var {
                             let var_name = to_snake_case(var);
-                            if self.current_func_may_raise {
+                            if self.current_func_returns_result {
                                 return format!("{indent}return Err({var_name}.into());");
                             }
                             return format!("{indent}panic!(\"{{}}\", {var_name});");
@@ -1499,7 +1630,7 @@ impl std::fmt::Display for TnkValue {{
                 } else {
                     value_str
                 };
-                let use_fallible = self.current_func_may_raise;
+                let use_fallible = self.current_func_returns_result;
                 if use_fallible {
                     self.uses_tsuchinoko_error = true;
                 }
@@ -1581,7 +1712,9 @@ impl std::fmt::Display for TnkValue {{
             IrExprKind::NoneLit => "None".to_string(),
             IrExprKind::Var(name) => {
                 // Don't snake_case qualified paths like std::collections::HashMap
-                let var_name = if name.contains("::") {
+                let var_name = if name == "self" && self.current_func_takes_self {
+                    "self".to_string()
+                } else if name.contains("::") {
                     name.clone()
                 } else if name
                     .chars()
@@ -1834,12 +1967,11 @@ impl std::fmt::Display for TnkValue {{
                             // V1.5.2: If calling a may_raise function from a non-may_raise context, add .unwrap()
                             // Use IR's callee_may_raise instead of tracking in emitter
                             // Also, in try body closure, use .unwrap() instead of ? (closure returns ())
-                            if *callee_may_raise
-                                && (!self.current_func_may_raise || self.in_try_body)
+                            if *callee_may_raise && (!self.current_func_returns_result || self.in_try_body)
                             {
                                 format!("{}.unwrap()", call_str)
                             } else if *callee_may_raise
-                                && self.current_func_may_raise
+                                && self.current_func_returns_result
                                 && !self.in_try_body
                             {
                                 // Both caller and callee may raise, and not in try body - use ?
@@ -2236,6 +2368,12 @@ impl std::fmt::Display for TnkValue {{
                 body,
                 ret_type,
             } => {
+                let old_may_raise = self.current_func_may_raise;
+                let old_returns_result = self.current_func_returns_result;
+                let old_uses_error = self.uses_tsuchinoko_error;
+                self.current_func_may_raise = false;
+                self.current_func_returns_result = false;
+
                 let params_str: Vec<String> = params
                     .iter()
                     .map(|p| {
@@ -2281,7 +2419,17 @@ impl std::fmt::Display for TnkValue {{
                     }
                 }
 
-                let ret_str = if let Type::Unit = ret_type {
+                let closure_may_raise = self.current_func_returns_result;
+                let closure_uses_error = closure_may_raise;
+
+                let ret_str = if closure_may_raise {
+                    let inner = match ret_type {
+                        Type::Unit => "()".to_string(),
+                        Type::Unknown => "TnkValue".to_string(),
+                        _ => ret_type.to_rust_string(),
+                    };
+                    format!(" -> Result<{}, TsuchinokoError>", inner)
+                } else if let Type::Unit = ret_type {
                     "".to_string()
                 } else if let Type::Unknown = ret_type {
                     "".to_string()
@@ -2289,18 +2437,31 @@ impl std::fmt::Display for TnkValue {{
                     format!(" -> {}", ret_type.to_rust_string())
                 };
 
+                let move_prefix = if self.force_move_closure { "move " } else { "" };
                 let out = format!(
-                    "move |{}|{} {{\n{}\n}}",
+                    "{}|{}|{} {{\n{}\n}}",
+                    move_prefix,
                     params_str.join(", "),
                     ret_str,
                     body_str
                 );
+                self.current_func_may_raise = old_may_raise;
+                self.current_func_returns_result = old_returns_result;
+                self.uses_tsuchinoko_error = old_uses_error || closure_uses_error;
                 self.shadowed_vars.truncate(old_shadowed_len);
                 out
             }
             IrExprKind::BoxNew(arg) => {
-                // Use Arc::new for Callable fields (which are Arc<dyn Fn>)
-                format!("std::sync::Arc::new({})", self.emit_expr(arg))
+                // Use Rc::new for Callable fields (non-'static captures)
+                if matches!(arg.kind, IrExprKind::Closure { .. }) {
+                    let old_force = self.force_move_closure;
+                    self.force_move_closure = true;
+                    let closure = self.emit_expr(arg);
+                    self.force_move_closure = old_force;
+                    format!("std::rc::Rc::new({})", closure)
+                } else {
+                    format!("std::rc::Rc::new({})", self.emit_expr(arg))
+                }
             }
             IrExprKind::Cast { target, ty } => {
                 format!("({} as {})", self.emit_expr(target), ty)
@@ -2918,11 +3079,15 @@ impl std::fmt::Display for TnkValue {{
                     } else {
                         format!("py_bridge.call_method(&{}, {:?}, &[{}], None)", target_str, method, args_str)
                     };
-                    format!(
-                        "{} {}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?", 
-                        if self.current_func_may_raise { "" } else { "let _ = " }, 
+                    let mapped = format!(
+                        "{}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))",
                         call_code
-                    )
+                    );
+                    if self.current_func_returns_result {
+                        format!("{}?", mapped)
+                    } else {
+                        format!("{}.unwrap()", mapped)
+                    }
                 } else {
                     let mut kw_setup_code = String::new();
                     let mut kw_inserts = String::new();
@@ -2939,13 +3104,17 @@ impl std::fmt::Display for TnkValue {{
                         format!("py_bridge.call_method(&{}, {:?}, &[{}], Some(&kw))", target_str, method, args_str)
                     };
                     
-                    format!(
-                        "{} {{ let mut kw = std::collections::HashMap::new(); {}{} {} }}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
-                        if self.current_func_may_raise { "" } else { "let _ = " },
+                    let mapped = format!(
+                        "{{ let mut kw = std::collections::HashMap::new(); {}{} {} }}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))",
                         kw_setup_code,
                         kw_inserts,
                         call_code
-                    )
+                    );
+                    if self.current_func_returns_result {
+                        format!("{}?", mapped)
+                    } else {
+                        format!("{}.unwrap()", mapped)
+                    }
                 }
             }
             IrExprKind::BridgeCall {
@@ -2966,11 +3135,15 @@ impl std::fmt::Display for TnkValue {{
 
                 if keywords.is_empty() {
                     let call_code = format!("{}.call(&[{}], None)", target_str, args_str);
-                    format!(
-                        "{} {}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?", 
-                        if self.current_func_may_raise { "" } else { "let _ = " }, 
+                    let mapped = format!(
+                        "{}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))",
                         call_code
-                    )
+                    );
+                    if self.current_func_returns_result {
+                        format!("{}?", mapped)
+                    } else {
+                        format!("{}.unwrap()", mapped)
+                    }
                 } else {
                     let mut kw_setup_code = String::new();
                     let mut kw_inserts = String::new();
@@ -2979,10 +3152,15 @@ impl std::fmt::Display for TnkValue {{
                         kw_setup_code.push_str(&format!("let kw_val_{} = {}; ", i, val_expr));
                         kw_inserts.push_str(&format!("kw.insert({:?}.to_string(), kw_val_{}); ", k, i));
                     }
-                    format!(
-                        "({{ let mut kw = std::collections::HashMap::new(); {}{} {}.call(&[{}], Some(&kw)) }}).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?", 
+                    let mapped = format!(
+                        "({{ let mut kw = std::collections::HashMap::new(); {}{} {}.call(&[{}], Some(&kw)) }}).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))",
                         kw_setup_code, kw_inserts, target_str, args_str
-                    )
+                    );
+                    if self.current_func_returns_result {
+                        format!("{}?", mapped)
+                    } else {
+                        format!("{}.unwrap()", mapped)
+                    }
                 }
             }
             IrExprKind::Ref(inner) => format!("&{}", self.emit_expr(inner)),

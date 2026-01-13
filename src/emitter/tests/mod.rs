@@ -231,7 +231,7 @@ fn test_emit_box_new() {
     let mut emitter = RustEmitter::new();
     let expr = expr(IrExprKind::BoxNew(Box::new(expr(IrExprKind::IntLit(42)))));
     let result = emitter.emit_expr(&expr);
-    assert!(result.contains("Arc::new")); // BoxNewはArc::newを生成
+    assert!(result.contains("Rc::new")); // BoxNewはRc::newを生成
 }
 
 #[test]
@@ -1014,7 +1014,7 @@ fn test_emit_closure_simple() {
         ret_type: Type::Int,
     });
     let result = emitter.emit_expr(&expr);
-    assert!(result.contains("move |"));
+    assert!(result.contains("|"));
     assert!(result.contains("-> i64"));
 }
 
@@ -1027,7 +1027,7 @@ fn test_emit_closure_no_params() {
         ret_type: Type::Int,
     });
     let result = emitter.emit_expr(&expr);
-    assert!(result.contains("move ||"));
+    assert!(result.contains("||"));
 }
 
 // --- FuncDecl with default ---
@@ -2163,7 +2163,7 @@ fn test_emit_closure_unit_return() {
         ret_type: Type::Unit,
     });
     let result = emitter.emit_expr(&expr);
-    assert!(result.contains("move ||"));
+    assert!(result.contains("||"));
 }
 
 // --- Closure with Unknown return ---
@@ -2176,7 +2176,7 @@ fn test_emit_closure_unknown_return() {
         ret_type: Type::Unknown,
     });
     let result = emitter.emit_expr(&expr);
-    assert!(result.contains("move |x|"));
+    assert!(result.contains("|x|"));
 }
 
 // --- MethodCall zip ---
@@ -2316,6 +2316,7 @@ fn test_emit_call_callee_may_raise_true_in_normal_context() {
 fn test_emit_call_callee_may_raise_true_in_may_raise_context() {
     let mut emitter = RustEmitter::new();
     emitter.current_func_may_raise = true; // Simulate being inside a may_raise function
+    emitter.current_func_returns_result = true;
     let expr = expr(IrExprKind::Call{
         callee_may_raise: true,
         callee_needs_bridge: false,
