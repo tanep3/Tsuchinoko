@@ -174,7 +174,22 @@ pub trait TypeInference {
 
         // 関数名ベースの推論
         if let Expr::Ident(name) = func {
+            if name == "dict" && !args.is_empty() {
+                let arg_ty = self.infer_type(&args[0]);
+                if let Type::Dict(k, v) = arg_ty {
+                    return Type::Dict(k, v);
+                }
+                return Type::Dict(Box::new(Type::Unknown), Box::new(Type::Unknown));
+            }
+            if let Some(spec) = crate::bridge::builtin_table::get_builtin_spec(name) {
+                let arg_types: Vec<Type> = args.iter().map(|a| self.infer_type(a)).collect();
+                return (spec.ret_ty_resolver)(&arg_types);
+            }
             match name.as_str() {
+                "str" => return Type::String,
+                "int" => return Type::Int,
+                "float" => return Type::Float,
+                "bool" => return Type::Bool,
                 "tuple" | "list" => return Type::List(Box::new(Type::Unknown)),
                 "sorted" => return Type::List(Box::new(Type::Unknown)),
                 "reversed" => return Type::List(Box::new(Type::Unknown)),
@@ -184,13 +199,6 @@ pub trait TypeInference {
                 "filter" => return Type::List(Box::new(Type::Unknown)),
                 "sum" => return Type::Int,
                 "all" | "any" => return Type::Bool,
-                "dict" if !args.is_empty() => {
-                    let arg_ty = self.infer_type(&args[0]);
-                    if let Type::Dict(k, v) = arg_ty {
-                        return Type::Dict(k, v);
-                    }
-                    return Type::Dict(Box::new(Type::Unknown), Box::new(Type::Unknown));
-                }
                 _ => {
                     if let Some(info) = self.scope().lookup(name) {
                         if let Type::Func { ret, .. } = &info.ty {
@@ -608,7 +616,7 @@ mod tests {
         };
         assert_eq!(
             analyzer.infer_type(&expr),
-            Type::List(Box::new(Type::Tuple(vec![Type::Int, Type::Unknown])))
+            Type::List(Box::new(Type::Tuple(vec![Type::Int, Type::Int])))
         );
     }
 

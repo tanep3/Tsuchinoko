@@ -638,24 +638,11 @@ impl SemanticAnalyzer {
 
     /// Preprocess top-level statements to normalize main function and guard blocks
     fn preprocess_top_level(&self, stmts: &[Stmt]) -> Vec<Stmt> {
+        let has_user_main = stmts.iter().any(|stmt| {
+            matches!(stmt, Stmt::FuncDef { name, .. } if name == "main")
+        });
         let mut new_stmts = Vec::new();
-        let mut main_func_body: Option<Vec<Stmt>> = None;
-        let mut main_inlined = false;
-
-        // Pass 1: Find def main()
-        for stmt in stmts {
-            if let Stmt::FuncDef {
-                name, params, body, ..
-            } = stmt
-            {
-                if name == "main" && params.is_empty() {
-                    main_func_body = Some(body.clone());
-                    break;
-                }
-            }
-        }
-
-        // Pass 2: Flatten structure
+        // Pass: Flatten structure
         for stmt in stmts {
             // Check for if __name__ == "__main__"
             if let Stmt::If {
@@ -671,25 +658,15 @@ impl SemanticAnalyzer {
                             (left.as_ref(), op, right.as_ref())
                         {
                             if l == "__name__" && r == "__main__" {
-                                // Check if simple main() call
-                                let is_simple_main_call = then_body.len() == 1
-                                    && matches!(
-                                        &then_body[0],
-                                        Stmt::Expr(Expr::Call { func, args, .. })
-                                        if matches!(func.as_ref(), Expr::Ident(n) if n == "main") && args.is_empty()
-                                    );
-
-                                if is_simple_main_call {
-                                    if let Some(body) = main_func_body.as_ref() {
-                                        // Inline def main()'s body here
-                                        new_stmts.extend(body.clone());
-                                        main_inlined = true;
-                                    } else {
-                                        // Inline the if block's body here
-                                        new_stmts.extend(then_body.clone());
-                                    }
+                                if has_user_main {
+                                    // User defines main: move it to _main_tsuchinoko and call it.
+                                    new_stmts.push(Stmt::Expr(Expr::Call {
+                                        func: Box::new(Expr::Ident("main".to_string())),
+                                        args: vec![],
+                                        kwargs: vec![],
+                                    }));
                                 } else {
-                                    // Inline the if block's body here
+                                    // No user main: inline guard body directly (no wrapper needed).
                                     new_stmts.extend(then_body.clone());
                                 }
                                 continue;
@@ -701,13 +678,6 @@ impl SemanticAnalyzer {
             new_stmts.push(stmt.clone());
         }
 
-        // Remove def main() if it was inlined to avoid duplication
-        if main_inlined {
-            new_stmts.retain(|s| {
-                !matches!(s, Stmt::FuncDef { name, params, .. } if name == "main" && params.is_empty())
-            });
-        }
-
         new_stmts
     }
 
@@ -717,6 +687,10 @@ impl SemanticAnalyzer {
 
         // Step 1.5: Collect mutable variables (targets of AugAssign or reassignment)
         self.collect_mutable_vars(&stmts);
+
+        // Top-level hoisting setup
+        self.hoisted_var_candidates.clear();
+        self.func_base_depth = self.scope.depth();
 
         // Step 1.6: V1.5.2 - Pre-process imports to populate external_imports
         // This must be done BEFORE forward_declare_functions so that may_raise
@@ -731,6 +705,11 @@ impl SemanticAnalyzer {
         // Step 2: Unified Analysis (Pass 0 -> Pass 1)
         // Now top-level statements are treated exactly like block statements
         let ir_nodes = self.analyze_stmts(&stmts)?;
+        let top_level_hoisted_vars: Vec<HoistedVar> = self
+            .hoisted_var_candidates
+            .drain()
+            .map(|(name, (ty, _, _))| HoistedVar { name, ty })
+            .collect();
 
         // Step 3: Wrap top-level statements in a main function if they are loose statements
         // (The Emitter expects entry point. We should check if we need to wrap them or if Emitter handles it)
@@ -792,7 +771,7 @@ impl SemanticAnalyzer {
                 params: vec![],
                 ret: Type::Unit,
                 body: main_body,
-                hoisted_vars: vec![],
+                hoisted_vars: top_level_hoisted_vars,
                 may_raise: false,
                 needs_bridge: self.current_func_needs_bridge,
             });
@@ -1288,10 +1267,19 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                let ty = match type_hint {
+                let mut ty = match type_hint {
                     Some(th) => self.type_from_hint(th),
                     None => self.infer_type(value),
                 };
+                if type_hint.is_none() {
+                    if let Expr::Call { func, .. } = value {
+                        if let Expr::Ident(name) = func.as_ref() {
+                            if name == "str" {
+                                ty = Type::String;
+                            }
+                        }
+                    }
+                }
 
                 // Check if variable is already defined (re-assignment)
                 let is_reassign = self.scope.lookup(target).is_some();
@@ -1309,6 +1297,11 @@ impl SemanticAnalyzer {
 
                 if !is_reassign {
                     self.scope.define(target, ty.clone(), false);
+                    if self.scope.depth() > self.func_base_depth {
+                        self.hoisted_var_candidates
+                            .entry(target.clone())
+                            .or_insert((ty.clone(), self.scope.depth(), self.func_base_depth));
+                    }
                 }
 
                 let ir_value = self.analyze_expr(value)?;
@@ -1484,6 +1477,11 @@ impl SemanticAnalyzer {
                         for (i, target) in targets.iter().enumerate() {
                             let is_mutable = reassigned_vars.contains(target);
                             self.scope.define(target, Type::Any, is_mutable);
+                            if self.scope.depth() > self.func_base_depth {
+                                self.hoisted_var_candidates
+                                    .entry(target.clone())
+                                    .or_insert((Type::Any, self.scope.depth(), self.func_base_depth));
+                            }
 
                             let temp_var_expr = self.create_expr(IrExprKind::Var(temp_var.clone()), Type::Any);
                             let i_expr = self.create_expr(IrExprKind::IntLit(i as i64), Type::Int);
@@ -1532,6 +1530,11 @@ impl SemanticAnalyzer {
                         // Check if this target will be reassigned later
                         let is_mutable = reassigned_vars.contains(target);
                         self.scope.define(target, ty.clone(), is_mutable);
+                        if self.scope.depth() > self.func_base_depth {
+                            self.hoisted_var_candidates
+                                .entry(target.clone())
+                                .or_insert((ty.clone(), self.scope.depth(), self.func_base_depth));
+                        }
                         decl_targets.push((target.clone(), ty, is_mutable));
                     }
 

@@ -56,6 +56,10 @@ pub struct RustEmitter {
     current_func_may_raise: bool,
     /// V1.5.2: Whether we are inside try body closure (? not allowed, use .unwrap())
     in_try_body: bool,
+    /// V1.5.2: Whether we are inside except body
+    in_except_body: bool,
+    /// V1.5.2: Current except variable name (if any)
+    current_except_var: Option<String>,
     /// V1.7.0: Current function's return type (for Return in Try handling)
     current_ret_type: Option<Type>,
     /// V1.6.0: Map of struct name -> base class name (for composition)
@@ -64,6 +68,9 @@ pub struct RustEmitter {
 
 /// Convert camelCase/PascalCase to snake_case
 fn to_snake_case(s: &str) -> String {
+    if s == "_" {
+        return "__tnk_underscore".to_string();
+    }
     let mut result = String::new();
     for (i, c) in s.chars().enumerate() {
         if c.is_uppercase() {
@@ -100,12 +107,15 @@ impl RustEmitter {
             uses_tsuchinoko_error: false,
             current_func_may_raise: false,
             in_try_body: false,
+            in_except_body: false,
+            current_except_var: None,
             current_ret_type: None,
             struct_bases: HashMap::new(),
         }
     }
 
     pub fn emit_nodes(&mut self, nodes: &[IrNode]) -> String {
+        let old_shadowed_len = self.shadowed_vars.len();
         // If we're at indent 0, this is a top-level call
         let is_top_level = self.indent == 0;
 
@@ -139,6 +149,7 @@ impl RustEmitter {
             .collect();
 
         let body = code.join("\n");
+        self.shadowed_vars.truncate(old_shadowed_len);
 
         // Only add wrapper at top level
         if is_top_level {
@@ -371,7 +382,10 @@ impl std::fmt::Display for TnkValue {{
                 let snake_name = to_snake_case(name);
 
                 // Check if this variable is hoisted (already declared as Option<T>)
-                let is_hoisted = self.current_hoisted_vars.iter().any(|v| v.name == *name);
+                let is_hoisted = self
+                    .current_hoisted_vars
+                    .iter()
+                    .any(|v| to_snake_case(&v.name) == snake_name);
 
                 if is_hoisted {
                     // Hoisted variable: emit assignment with Some()
@@ -501,6 +515,16 @@ impl std::fmt::Display for TnkValue {{
                 format!("{}({}) = {};", indent, targets_str, self.emit_expr(value))
             }
             IrNode::MultiVarDecl { targets, value } => {
+                for (name, _, _) in targets {
+                    let snake_name = to_snake_case(name);
+                    let is_hoisted = self
+                        .current_hoisted_vars
+                        .iter()
+                        .any(|v| to_snake_case(&v.name) == snake_name);
+                    if is_hoisted {
+                        self.shadowed_vars.push(snake_name);
+                    }
+                }
                 let vars_str: Vec<_> = targets
                     .iter()
                     .map(|(n, _, m)| {
@@ -552,10 +576,34 @@ impl std::fmt::Display for TnkValue {{
                     let old_may_raise = self.current_func_may_raise;
                     self.current_func_may_raise = false;
 
+                    // Set current hoisted variables for top-level scope
+                    let old_hoisted =
+                        std::mem::replace(&mut self.current_hoisted_vars, hoisted_vars.clone());
+
+                    // Generate Option<T> declarations for hoisted variables
+                    let hoisted_decls = if !hoisted_vars.is_empty() {
+                        let inner_indent = "    ".repeat(self.indent);
+                        hoisted_vars
+                            .iter()
+                            .map(|v| {
+                                format!(
+                                    "{}let mut {}: Option<{}> = None;",
+                                    inner_indent,
+                                    to_snake_case(&v.name),
+                                    v.ty.to_rust_string()
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    } else {
+                        String::new()
+                    };
+
                     let body_str = self.emit_nodes(body);
 
                     // Restore may_raise state
                     self.current_func_may_raise = old_may_raise;
+                    self.current_hoisted_vars = old_hoisted;
 
                     // 関数内で resident 機能が使われたか
                     let func_needs_resident = self.needs_resident;
@@ -564,6 +612,12 @@ impl std::fmt::Display for TnkValue {{
                     self.needs_resident = needs_resident_backup || func_needs_resident;
 
                     self.indent -= 1;
+
+                    let body_str = if hoisted_decls.is_empty() {
+                        body_str
+                    } else {
+                        format!("{hoisted_decls}\n{body_str}")
+                    };
 
                     if func_needs_resident || self.needs_resident {
                         // self.needs_resident is global state (might be set by previous nodes)
@@ -595,8 +649,8 @@ impl std::fmt::Display for TnkValue {{
                     }
                 } else {
                     let snake_name = if name == "main" {
-                        // Rename user's 'main' to 'main_py' to avoid conflict with Rust's entry point
-                        "main_py".to_string()
+                        // Rename user's 'main' to _main_tsuchinoko to avoid conflict with Rust's entry point
+                        "_main_tsuchinoko".to_string()
                     } else {
                         to_snake_case(name)
                     };
@@ -672,6 +726,8 @@ impl std::fmt::Display for TnkValue {{
                         // Re-emit with flag set
                         self.indent += 1;
                         let backup_flag = self.is_inside_resident_func;
+                        let backup_hoisted =
+                            std::mem::replace(&mut self.current_hoisted_vars, hoisted_vars.clone());
                         // ONLY set this if we are NOT in the special __top_level__ (fn main)
                         // Actually, this block is the "else" (non-__top_level__) path, so it's always true.
                         self.is_inside_resident_func = true;
@@ -686,6 +742,7 @@ impl std::fmt::Display for TnkValue {{
                         let s = self.emit_nodes(body);
 
                         self.is_inside_resident_func = backup_flag;
+                        self.current_hoisted_vars = backup_hoisted;
                         self.current_func_may_raise = backup_may_raise;
                         self.indent -= 1;
                         s
@@ -1090,6 +1147,10 @@ impl std::fmt::Display for TnkValue {{
                 }
                 // Emit Except Body
                 if !except_body.is_empty() {
+                     let old_in_except_body = self.in_except_body;
+                     let old_except_var = self.current_except_var.clone();
+                     self.in_except_body = true;
+                     self.current_except_var = except_var.clone();
                      self.indent += 2;
                      let old_try_hoisted_except = std::mem::replace(
                         &mut self.try_hoisted_vars,
@@ -1101,6 +1162,8 @@ impl std::fmt::Display for TnkValue {{
                      }
                      self.try_hoisted_vars = old_try_hoisted_except;
                      self.indent -= 2;
+                     self.in_except_body = old_in_except_body;
+                     self.current_except_var = old_except_var;
                 }
                 result.push_str(&format!("{indent}    }}\n"));
 
@@ -1117,7 +1180,7 @@ impl std::fmt::Display for TnkValue {{
                      // If TsuchinokoError is needed
                      if self.current_func_may_raise {
                          result.push_str(&format!(
-                             "{}let {} = TsuchinokoError::new(\"RuntimeError\", {}, None);\n",
+                             "{}let {} = TsuchinokoError::new(\"InternalError\", {}, None);\n",
                              indent_str, to_snake_case(var_name), to_snake_case(var_name)
                          ));
                      }
@@ -1125,6 +1188,10 @@ impl std::fmt::Display for TnkValue {{
                 }
                  // Emit Except Body (Duplicate) - Ideally functionize this, but copy-paste is safer for now to ensure context
                 if !except_body.is_empty() {
+                     let old_in_except_body = self.in_except_body;
+                     let old_except_var = self.current_except_var.clone();
+                     self.in_except_body = true;
+                     self.current_except_var = except_var.clone();
                      self.indent += 2;
                      let old_try_hoisted_except = std::mem::replace(
                         &mut self.try_hoisted_vars,
@@ -1136,6 +1203,8 @@ impl std::fmt::Display for TnkValue {{
                      }
                      self.try_hoisted_vars = old_try_hoisted_except;
                      self.indent -= 2;
+                     self.in_except_body = old_in_except_body;
+                     self.current_except_var = old_except_var;
                 }
                 result.push_str(&format!("{indent}    }}\n"));
                 
@@ -1272,6 +1341,19 @@ impl std::fmt::Display for TnkValue {{
                 cause,
                 line,
             } => {
+                if exc_type.is_empty() {
+                    if self.in_except_body {
+                        if let Some(var) = &self.current_except_var {
+                            let var_name = to_snake_case(var);
+                            if self.current_func_may_raise {
+                                return format!("{indent}return Err({var_name}.into());");
+                            }
+                            return format!("{indent}panic!(\"{{}}\", {var_name});");
+                        }
+                        return format!("{indent}panic!(\"Invalid bare raise\");");
+                    }
+                    return format!("{indent}panic!(\"Invalid bare raise\");");
+                }
                 let msg_str = self.emit_expr(message);
 
                 // V1.5.2: Inside try body, use panic! so catch_unwind can catch it
@@ -1730,7 +1812,7 @@ impl std::fmt::Display for TnkValue {{
                             {
                                 name.clone()
                             } else if name == "main" {
-                                "main_py".to_string()
+                                "_main_tsuchinoko".to_string()
                             } else {
                                 to_snake_case(&name)
                             };
@@ -1964,9 +2046,9 @@ impl std::fmt::Display for TnkValue {{
                 iter,
                 condition,
             } => {
+                let old_shadowed_len = self.shadowed_vars.len();
                 // Use .iter().cloned() to avoid ownership transfer
                 // This allows the same collection to be used multiple times
-                let elt_str = self.emit_expr_internal(elt);
 
                 let target_has_comma = target.contains(',');
                 let target_snake = if target_has_comma {
@@ -1976,6 +2058,15 @@ impl std::fmt::Display for TnkValue {{
                 } else {
                     to_snake_case(target)
                 };
+                if target_has_comma {
+                    for part in target.split(',') {
+                        self.shadowed_vars.push(to_snake_case(part.trim()));
+                    }
+                } else {
+                    self.shadowed_vars.push(target_snake.clone());
+                }
+
+                let elt_str = self.emit_expr_internal(elt);
 
                 // For tuple unpacking, always use the target name to avoid partial usage check complexity
                 let closure_var = if target_has_comma || elt_str.contains(&target_snake) {
@@ -2005,7 +2096,7 @@ impl std::fmt::Display for TnkValue {{
                     _ => format!("{iter_str}.iter().cloned()"),
                 };
 
-                if let Some(cond) = condition {
+                let out = if let Some(cond) = condition {
                     let cond_str = self.emit_expr_internal(cond);
                     // Use pattern without & for filter - references are handled by the condition
                     format!(
@@ -2014,7 +2105,9 @@ impl std::fmt::Display for TnkValue {{
                     )
                 } else {
                     format!("{iter_chain}.map(|{closure_var}| {elt_str}).collect::<Vec<_>>()")
-                }
+                };
+                self.shadowed_vars.truncate(old_shadowed_len);
+                out
             }
             // V1.3.0: Dict comprehension {k: v for target in iter if condition}
             IrExprKind::DictComp {
@@ -2024,8 +2117,7 @@ impl std::fmt::Display for TnkValue {{
                 iter,
                 condition,
             } => {
-                let key_str = self.emit_expr_internal(key);
-                let value_str = self.emit_expr_internal(value);
+                let old_shadowed_len = self.shadowed_vars.len();
 
                 let target_has_comma = target.contains(',');
                 let target_snake = if target_has_comma {
@@ -2035,6 +2127,16 @@ impl std::fmt::Display for TnkValue {{
                 } else {
                     to_snake_case(target)
                 };
+                if target_has_comma {
+                    for part in target.split(',') {
+                        self.shadowed_vars.push(to_snake_case(part.trim()));
+                    }
+                } else {
+                    self.shadowed_vars.push(target_snake.clone());
+                }
+
+                let key_str = self.emit_expr_internal(key);
+                let value_str = self.emit_expr_internal(value);
 
                 let iter_str = self.emit_expr_internal(iter);
 
@@ -2053,7 +2155,7 @@ impl std::fmt::Display for TnkValue {{
                     _ => format!("{iter_str}.iter().cloned()"),
                 };
 
-                if let Some(cond) = condition {
+                let out = if let Some(cond) = condition {
                     let cond_str = self.emit_expr_internal(cond);
                     format!(
                         "{}.filter(|&{}| {}).map(|{}| ({}, {})).collect::<std::collections::HashMap<_, _>>()",
@@ -2064,7 +2166,9 @@ impl std::fmt::Display for TnkValue {{
                         "{}.map(|{}| ({}, {})).collect::<std::collections::HashMap<_, _>>()",
                         iter_chain, &target_snake, key_str, value_str
                     )
-                }
+                };
+                self.shadowed_vars.truncate(old_shadowed_len);
+                out
             }
             // V1.6.0: Set comprehension {x for target in iter if condition}
             IrExprKind::SetComp {
@@ -2073,7 +2177,7 @@ impl std::fmt::Display for TnkValue {{
                 iter,
                 condition,
             } => {
-                let elt_str = self.emit_expr_internal(elt);
+                let old_shadowed_len = self.shadowed_vars.len();
 
                 let target_has_comma = target.contains(',');
                 let target_snake = if target_has_comma {
@@ -2083,6 +2187,15 @@ impl std::fmt::Display for TnkValue {{
                 } else {
                     to_snake_case(target)
                 };
+                if target_has_comma {
+                    for part in target.split(',') {
+                        self.shadowed_vars.push(to_snake_case(part.trim()));
+                    }
+                } else {
+                    self.shadowed_vars.push(target_snake.clone());
+                }
+
+                let elt_str = self.emit_expr_internal(elt);
 
                 let closure_var = if target_has_comma || elt_str.contains(&target_snake) {
                     target_snake.clone()
@@ -2104,7 +2217,7 @@ impl std::fmt::Display for TnkValue {{
                     _ => format!("{iter_str}.iter().cloned()"),
                 };
 
-                if let Some(cond) = condition {
+                let out = if let Some(cond) = condition {
                     let cond_str = self.emit_expr_internal(cond);
                     format!(
                         "{}.filter(|{}| {}).map(|{}| {}).collect::<std::collections::HashSet<_>>()",
@@ -2114,7 +2227,9 @@ impl std::fmt::Display for TnkValue {{
                     format!(
                         "{iter_chain}.map(|{closure_var}| {elt_str}).collect::<std::collections::HashSet<_>>()"
                     )
-                }
+                };
+                self.shadowed_vars.truncate(old_shadowed_len);
+                out
             }
             IrExprKind::Closure {
                 params,
@@ -2131,6 +2246,10 @@ impl std::fmt::Display for TnkValue {{
                         }
                     })
                     .collect();
+                let old_shadowed_len = self.shadowed_vars.len();
+                for p in &params_str {
+                    self.shadowed_vars.push(p.clone());
+                }
 
                 // Increase indent for closure body is tricky because emit_expr_internal doesn't mutate state?
                 // But emit_node uses self.indent_level.
@@ -2170,12 +2289,14 @@ impl std::fmt::Display for TnkValue {{
                     format!(" -> {}", ret_type.to_rust_string())
                 };
 
-                format!(
+                let out = format!(
                     "move |{}|{} {{\n{}\n}}",
                     params_str.join(", "),
                     ret_str,
                     body_str
-                )
+                );
+                self.shadowed_vars.truncate(old_shadowed_len);
+                out
             }
             IrExprKind::BoxNew(arg) => {
                 // Use Arc::new for Callable fields (which are Arc<dyn Fn>)
@@ -2387,57 +2508,75 @@ impl std::fmt::Display for TnkValue {{
                     }
                 }
 
+                let target_str = if let IrExprKind::Var(name) = &target.kind {
+                    let var_name = to_snake_case(name);
+                    let is_shadowed = self.shadowed_vars.contains(&var_name);
+                    let is_try_hoisted = !is_shadowed && self.try_hoisted_vars.contains(&var_name);
+                    let is_func_hoisted = !is_shadowed
+                        && self
+                            .current_hoisted_vars
+                            .iter()
+                            .any(|v| to_snake_case(&v.name) == var_name);
+                    if is_try_hoisted || is_func_hoisted {
+                        format!("{}.as_ref().unwrap()", var_name)
+                    } else {
+                        self.emit_expr_internal(target)
+                    }
+                } else {
+                    self.emit_expr_internal(target)
+                };
+
                 if args.is_empty() {
                     if method == "len" {
-                        format!("({}.{}() as i64)", self.emit_expr_internal(target), method)
+                        format!("({}.{}() as i64)", target_str, method)
                     } else if method == "copy" {
                         // Python list.copy() -> Rust .to_vec()
-                        format!("{}.to_vec()", self.emit_expr_internal(target))
+                        format!("{}.to_vec()", target_str)
                     } else if method == "collect_hashset" {
                         // V1.5.0: set() constructor -> .collect::<HashSet<_>>()
                         format!(
                             "{}.collect::<std::collections::HashSet<_>>()",
-                            self.emit_expr_internal(target)
+                            target_str
                         )
                     } else if method == "pop" {
                         // V1.5.0: Python list.pop() -> Rust list.pop().unwrap()
-                        format!("{}.pop().unwrap()", self.emit_expr_internal(target))
+                        format!("{}.pop().unwrap()", target_str)
                     } else if method == "clear" {
                         // V1.5.0: Python list.clear() -> Rust list.clear()
-                        format!("{}.clear()", self.emit_expr_internal(target))
+                        format!("{}.clear()", target_str)
                     // V1.5.0: String is* methods (no args)
                     } else if method == "isdigit" {
                         format!(
                             "!{}.is_empty() && {}.chars().all(|c| c.is_ascii_digit())",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(target)
+                            target_str,
+                            target_str
                         )
                     } else if method == "isalpha" {
                         format!(
                             "!{}.is_empty() && {}.chars().all(|c| c.is_alphabetic())",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(target)
+                            target_str,
+                            target_str
                         )
                     } else if method == "isalnum" {
                         format!(
                             "!{}.is_empty() && {}.chars().all(|c| c.is_alphanumeric())",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(target)
+                            target_str,
+                            target_str
                         )
                     } else if method == "isupper" {
                         format!(
                             "{}.chars().any(|c| c.is_alphabetic()) && {}.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(target)
+                            target_str,
+                            target_str
                         )
                     } else if method == "islower" {
                         format!(
                             "{}.chars().any(|c| c.is_alphabetic()) && {}.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_lowercase())",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(target)
+                            target_str,
+                            target_str
                         )
                     } else {
-                        format!("{}.{}()", self.emit_expr_internal(target), method)
+                        format!("{}.{}()", target_str, method)
                     }
                 } else {
                     // V1.5.0: Set method translations
@@ -2446,62 +2585,38 @@ impl std::fmt::Display for TnkValue {{
                         // Python set.add(x) -> Rust set.insert(x)
                         let args_str: Vec<_> =
                             args.iter().map(|a| self.emit_expr_internal(a)).collect();
-                        format!(
-                            "{}.insert({})",
-                            self.emit_expr_internal(target),
-                            args_str.join(", ")
-                        )
+                        format!("{}.insert({})", target_str, args_str.join(", "))
                     } else if method == "discard" {
                         // Python set.discard(x) -> Rust set.remove(&x)
                         // Note: set.remove is also &x, but list.remove is handled differently
                         // in semantic analysis (via try_handle_special_method)
                         let arg = &args[0];
-                        format!(
-                            "{}.remove(&{})",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(arg)
-                        )
+                        format!("{}.remove(&{})", target_str, self.emit_expr_internal(arg))
                     } else if method == "pop" && args.len() == 1 {
                         // Python list.pop(i) -> Rust list.remove(i as usize)
                         let idx = &args[0];
-                        format!(
-                            "{}.remove({} as usize)",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(idx)
-                        )
+                        format!("{}.remove({} as usize)", target_str, self.emit_expr_internal(idx))
                     // Note: list.insert is handled in semantic analysis to distinguish from dict.insert
                     } else if method == "extend" {
                         // Python list.extend(iter) -> Rust list.extend(iter)
                         let iter = &args[0];
-                        format!(
-                            "{}.extend({})",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(iter)
-                        )
+                        format!("{}.extend({})", target_str, self.emit_expr_internal(iter))
                     // V1.5.0: String method translations
                     } else if method == "startswith" {
                         // Python s.startswith("x") -> Rust s.starts_with("x")
                         let arg = &args[0];
-                        format!(
-                            "{}.starts_with(&{})",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(arg)
-                        )
+                        format!("{}.starts_with(&{})", target_str, self.emit_expr_internal(arg))
                     } else if method == "endswith" {
                         // Python s.endswith("x") -> Rust s.ends_with("x")
                         let arg = &args[0];
-                        format!(
-                            "{}.ends_with(&{})",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(arg)
-                        )
+                        format!("{}.ends_with(&{})", target_str, self.emit_expr_internal(arg))
                     } else if method == "replace" && args.len() >= 2 {
                         // Python s.replace(old, new) -> Rust s.replace(&old, &new)
                         let old = &args[0];
                         let new = &args[1];
                         format!(
                             "{}.replace(&{}, &{})",
-                            self.emit_expr_internal(target),
+                            target_str,
                             self.emit_expr_internal(old),
                             self.emit_expr_internal(new)
                         )
@@ -2510,7 +2625,7 @@ impl std::fmt::Display for TnkValue {{
                         let sub = &args[0];
                         format!(
                             "{}.find(&{}).map(|i| i as i64).unwrap_or(-1i64)",
-                            self.emit_expr_internal(target),
+                            target_str,
                             self.emit_expr_internal(sub)
                         )
                     } else if method == "rfind" && args.len() == 1 {
@@ -2518,50 +2633,50 @@ impl std::fmt::Display for TnkValue {{
                         let sub = &args[0];
                         format!(
                             "{}.rfind(&{}).map(|i| i as i64).unwrap_or(-1i64)",
-                            self.emit_expr_internal(target),
+                            target_str,
                             self.emit_expr_internal(sub)
                         )
                     } else if method == "isdigit" {
                         // Python s.isdigit() -> Rust s.chars().all(|c| c.is_ascii_digit())
                         format!(
                             "!{}.is_empty() && {}.chars().all(|c| c.is_ascii_digit())",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(target)
+                            target_str,
+                            target_str
                         )
                     } else if method == "isalpha" {
                         // Python s.isalpha() -> Rust s.chars().all(|c| c.is_alphabetic())
                         format!(
                             "!{}.is_empty() && {}.chars().all(|c| c.is_alphabetic())",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(target)
+                            target_str,
+                            target_str
                         )
                     } else if method == "isalnum" {
                         // Python s.isalnum() -> Rust s.chars().all(|c| c.is_alphanumeric())
                         format!(
                             "!{}.is_empty() && {}.chars().all(|c| c.is_alphanumeric())",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(target)
+                            target_str,
+                            target_str
                         )
                     } else if method == "isupper" {
                         // Python s.isupper() -> Rust s.chars().any(|c| c.is_alphabetic()) && s.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())
                         format!(
                             "{}.chars().any(|c| c.is_alphabetic()) && {}.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(target)
+                            target_str,
+                            target_str
                         )
                     } else if method == "islower" {
                         // Python s.islower() -> Rust similar logic
                         format!(
                             "{}.chars().any(|c| c.is_alphabetic()) && {}.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_lowercase())",
-                            self.emit_expr_internal(target),
-                            self.emit_expr_internal(target)
+                            target_str,
+                            target_str
                         )
                     } else if method == "count" && args.len() == 1 {
                         // Python s.count(sub) -> Rust s.matches(&sub).count() as i64
                         let sub = &args[0];
                         format!(
                             "{}.matches(&{}).count() as i64",
-                            self.emit_expr_internal(target),
+                            target_str,
                             self.emit_expr_internal(sub)
                         )
                     } else if method == "zfill" && args.len() == 1 {
@@ -2569,7 +2684,7 @@ impl std::fmt::Display for TnkValue {{
                         let width = &args[0];
                         format!(
                             "format!(\"{{:0>width$}}\", {}, width = {} as usize)",
-                            self.emit_expr_internal(target),
+                            target_str,
                             self.emit_expr_internal(width)
                         )
                     } else if method == "ljust" && !args.is_empty() {
@@ -2577,7 +2692,7 @@ impl std::fmt::Display for TnkValue {{
                         let width = &args[0];
                         format!(
                             "format!(\"{{:<width$}}\", {}, width = {} as usize)",
-                            self.emit_expr_internal(target),
+                            target_str,
                             self.emit_expr_internal(width)
                         )
                     } else if method == "rjust" && !args.is_empty() {
@@ -2585,7 +2700,7 @@ impl std::fmt::Display for TnkValue {{
                         let width = &args[0];
                         format!(
                             "format!(\"{{:>width$}}\", {}, width = {} as usize)",
-                            self.emit_expr_internal(target),
+                            target_str,
                             self.emit_expr_internal(width)
                         )
                     } else if method == "center" && !args.is_empty() {
@@ -2593,7 +2708,7 @@ impl std::fmt::Display for TnkValue {{
                         let width = &args[0];
                         format!(
                             "format!(\"{{:^width$}}\", {}, width = {} as usize)",
-                            self.emit_expr_internal(target),
+                            target_str,
                             self.emit_expr_internal(width)
                         )
                     } else {
@@ -2601,7 +2716,7 @@ impl std::fmt::Display for TnkValue {{
                             args.iter().map(|a| self.emit_expr_internal(a)).collect();
                         format!(
                             "{}.{}({})",
-                            self.emit_expr_internal(target),
+                            target_str,
                             method,
                             args_str.join(", ")
                         )
@@ -2648,10 +2763,42 @@ impl std::fmt::Display for TnkValue {{
                 )
             }
             IrExprKind::Reference { target } => {
-                format!("&{}", self.emit_expr_internal(target))
+                if let IrExprKind::Var(name) = &target.kind {
+                    let var_name = to_snake_case(name);
+                    let is_shadowed = self.shadowed_vars.contains(&var_name);
+                    let is_try_hoisted = !is_shadowed && self.try_hoisted_vars.contains(&var_name);
+                    let is_func_hoisted = !is_shadowed
+                        && self
+                            .current_hoisted_vars
+                            .iter()
+                            .any(|v| to_snake_case(&v.name) == var_name);
+                    if is_try_hoisted || is_func_hoisted {
+                        format!("{}.as_ref().unwrap()", var_name)
+                    } else {
+                        format!("&{}", self.emit_expr_internal(target))
+                    }
+                } else {
+                    format!("&{}", self.emit_expr_internal(target))
+                }
             }
             IrExprKind::MutReference { target } => {
-                format!("&mut {}", self.emit_expr_internal(target))
+                if let IrExprKind::Var(name) = &target.kind {
+                    let var_name = to_snake_case(name);
+                    let is_shadowed = self.shadowed_vars.contains(&var_name);
+                    let is_try_hoisted = !is_shadowed && self.try_hoisted_vars.contains(&var_name);
+                    let is_func_hoisted = !is_shadowed
+                        && self
+                            .current_hoisted_vars
+                            .iter()
+                            .any(|v| to_snake_case(&v.name) == var_name);
+                    if is_try_hoisted || is_func_hoisted {
+                        format!("{}.as_mut().unwrap()", var_name)
+                    } else {
+                        format!("&mut {}", self.emit_expr_internal(target))
+                    }
+                } else {
+                    format!("&mut {}", self.emit_expr_internal(target))
+                }
             }
             IrExprKind::Print { args } => {
                 // Generate println! with type-aware formatting

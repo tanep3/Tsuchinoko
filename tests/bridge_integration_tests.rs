@@ -1,4 +1,4 @@
-use tsuchinoko::bridge::{PythonBridge, protocol::{TnkValue, JsonPrimitive}};
+use tsuchinoko::bridge::{PythonBridge, bridge_error::BridgeError, protocol::{TnkValue, JsonPrimitive}};
 
 #[test]
 fn test_bridge_call_function_str() {
@@ -90,5 +90,35 @@ fn test_bridge_list_slice() {
             // Handle is acceptable for some worker configurations
         },
         _ => panic!("Expected List, got {:?}", slice_result),
+    }
+}
+
+#[test]
+fn test_bridge_security_blocks_eval_function() {
+    let bridge = PythonBridge::new().expect("Failed to start bridge");
+
+    let arg = TnkValue::Value { value: Some(JsonPrimitive::String("1+1".into())) };
+    let args = [&arg];
+    let err = bridge.call_function("builtins.eval", &args, None).expect_err("Expected SecurityViolation");
+    match err {
+        BridgeError::Security(message) => {
+            assert!(message.contains("eval"));
+        }
+        other => panic!("Expected SecurityViolation, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_bridge_security_blocks_private_attribute() {
+    let bridge = PythonBridge::new().expect("Failed to start bridge");
+
+    bridge.import("builtins", "b");
+    let module = bridge.get("b");
+    let err = module.get_attribute("__dict__").expect_err("Expected SecurityViolation");
+    match err {
+        BridgeError::Security(message) => {
+            assert!(message.contains("__dict__") || message.contains("private"));
+        }
+        other => panic!("Expected SecurityViolation, got {:?}", other),
     }
 }

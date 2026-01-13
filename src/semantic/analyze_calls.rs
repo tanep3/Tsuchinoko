@@ -1151,6 +1151,9 @@ impl SemanticAnalyzer {
     }
 
     pub(crate) fn to_snake_case(&self, s: &str) -> String {
+        if s == "_" {
+            return "__tnk_underscore".to_string();
+        }
         let mut res = String::new();
         for (i, c) in s.chars().enumerate() {
             if c.is_uppercase() && i > 0 {

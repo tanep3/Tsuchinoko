@@ -63,6 +63,13 @@ impl SemanticAnalyzer {
 
                 if !is_reassign {
                     self.scope.define(target, ty.clone(), false);
+                    // Python variables are function-scoped; if defined in a nested block,
+                    // hoist to function scope so other blocks can assign/read it.
+                    if self.scope.depth() > self.func_base_depth {
+                        self.hoisted_var_candidates
+                            .entry(target.clone())
+                            .or_insert((ty.clone(), self.scope.depth(), self.func_base_depth));
+                    }
                 }
 
                 let ir_value = self.analyze_expr(value)?;
@@ -691,6 +698,11 @@ impl SemanticAnalyzer {
                 // Check if nested function (Closure conversion)
                 if self.scope.depth() > 0 {
                     self.scope.push();
+                    // Isolate hoisted candidates inside closure scope
+                    let outer_hoisted_var_candidates =
+                        std::mem::take(&mut self.hoisted_var_candidates);
+                    let old_func_base_depth = self.func_base_depth;
+                    self.func_base_depth = self.scope.depth();
 
                     // Add parameters to scope
                     let mut param_names = Vec::new();
@@ -703,6 +715,8 @@ impl SemanticAnalyzer {
 
                     let ir_body = self.analyze_stmts(body)?;
                     self.scope.pop_without_promotion();
+                    self.hoisted_var_candidates = outer_hoisted_var_candidates;
+                    self.func_base_depth = old_func_base_depth;
 
                     // Warn about closures if capturing variables?
                     // Currently implicit capture via 'move' in Rust.
@@ -741,8 +755,9 @@ impl SemanticAnalyzer {
 
                 self.scope.push();
 
-                // Clear hoisted_var_candidates for this function scope
-                self.hoisted_var_candidates.clear();
+                // Isolate hoisted_var_candidates for this function scope
+                let outer_hoisted_var_candidates = std::mem::take(&mut self.hoisted_var_candidates);
+                let old_func_base_depth = self.func_base_depth;
                 self.func_base_depth = self.scope.depth();
 
                 // V1.5.2: Save and reset may_raise flag for this function scope
@@ -777,6 +792,8 @@ impl SemanticAnalyzer {
                     .drain()
                     .map(|(name, (ty, _, _))| HoistedVar { name, ty })
                     .collect();
+                self.hoisted_var_candidates = outer_hoisted_var_candidates;
+                self.func_base_depth = old_func_base_depth;
 
                 // V1.5.2: Capture may_raise from this function, then restore parent's flag
                 let func_may_raise = self.current_func_may_raise;
@@ -813,32 +830,6 @@ impl SemanticAnalyzer {
                 elif_clauses,
                 else_body,
             } => {
-                // Check for main block
-                if let Expr::BinOp { left, op, right } = condition {
-                    if let (Expr::Ident(l), AstBinOp::Eq, Expr::StringLiteral(r)) =
-                        (left.as_ref(), op, right.as_ref())
-                    {
-                        if l == "__name__" && r == "__main__" {
-                            self.scope.push();
-                            let mut ir_body = Vec::new();
-                            for s in then_body {
-                                ir_body.push(self.analyze_stmt(s)?);
-                            }
-                            self.scope.pop();
-
-                            return Ok(IrNode::FuncDecl {
-                                name: "main".to_string(),
-                                params: vec![],
-                                ret: Type::Unit,
-                                body: ir_body,
-                                hoisted_vars: vec![],
-                                may_raise: false,
-                                needs_bridge: false,
-                            });
-                        }
-                    }
-                }
-
                 // V1.6.0 FT-005: Check for isinstance pattern: if isinstance(x, T): ...
                 if let Some((var_name, checked_type)) = self.extract_isinstance_check(condition) {
                     // Collect all isinstance arms from if-elif-else chain

@@ -951,7 +951,7 @@ impl SemanticAnalyzer {
                         )?;
 
                         let final_func = if name == "main" {
-                            Box::new(self.create_expr(IrExprKind::Var("main_py".to_string()), Type::Unknown))
+                            Box::new(self.create_expr(IrExprKind::Var("_main_tsuchinoko".to_string()), Type::Unknown))
                         } else {
                             Box::new(self.create_expr(IrExprKind::Var(name.clone()), Type::Unknown))
                         };

@@ -1492,7 +1492,7 @@ fn test_emit_call_main() {
         args: vec![],
     });
     let result = emitter.emit_expr(&expr);
-    assert!(result.contains("main_py()"));
+    assert!(result.contains("_main_tsuchinoko()"));
 }
 
 // --- MethodCall to_string special ---

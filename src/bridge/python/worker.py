@@ -24,6 +24,18 @@ except Exception as e:
 # _SESSIONS[session_id] = { "objects": {id: obj}, "modules": {name: module} }
 _SESSIONS = {}
 
+# --- Security Policy (V1.7.0) ---
+FORBIDDEN_CALLS = {"eval", "exec", "globals", "locals"}
+
+def is_forbidden_name(name):
+    return name in FORBIDDEN_CALLS
+
+def is_forbidden_target(target_str):
+    # "builtins.eval" -> "eval"
+    parts = target_str.split(".")
+    tail = parts[-1] if parts else target_str
+    return is_forbidden_name(tail)
+
 def get_session(session_id):
     if session_id not in _SESSIONS:
         _SESSIONS[session_id] = {"objects": {}, "modules": {}}
@@ -186,6 +198,9 @@ def handle_call_function(cmd):
     target_str = cmd["target"]
     args = [decode_value(a, session_id) for a in cmd["args"]]
     kwargs = {k: decode_value(v, session_id) for k, v in (cmd.get("kwargs") or {}).items()}
+
+    if is_forbidden_target(target_str):
+        return make_response(cmd.get("req_id"), error={"code": "SecurityViolation", "message": f"Forbidden function call: {target_str}"})
     
     func = None
     try:
@@ -209,6 +224,9 @@ def handle_call_method(cmd):
     method_name = cmd["method"]
     args = [decode_value(a, session_id) for a in cmd["args"]]
     kwargs = {k: decode_value(v, session_id) for k, v in (cmd.get("kwargs") or {}).items()}
+
+    if is_forbidden_name(method_name):
+        return make_response(cmd.get("req_id"), error={"code": "SecurityViolation", "message": f"Forbidden method call: {method_name}"})
     
     try:
         obj = resolve_target(target, session_id)
@@ -234,6 +252,8 @@ def handle_get_attribute(cmd):
     
     if attr_name.startswith("_"):
         return make_response(cmd.get("req_id"), error={"code": "SecurityViolation", "message": "Access to private attributes is forbidden"})
+    if is_forbidden_name(attr_name):
+        return make_response(cmd.get("req_id"), error={"code": "SecurityViolation", "message": f"Forbidden attribute access: {attr_name}"})
 
     try:
         obj = resolve_target(target, session_id)

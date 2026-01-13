@@ -354,6 +354,18 @@ pub struct TsuchinokoError {
 }
 ```
 
+#### bare raise（再送）の扱い
+
+- `raise` 単体は **except 内でのみ有効**
+- 直前の例外を再送する（例外チェーン維持）
+- except 外での bare raise は **無効構文としてエラー扱い**
+
+#### panic → InternalError 変換
+
+- `catch_unwind` により panic を回収
+- `TsuchinokoError::new("InternalError", ...)` へ変換して返す
+- 目的は **診断のための保険**（Python例外の意味論とは独立）
+
 #### 2パス may_raise 解析
 
 関数が `may_raise=true` かどうかを2パスで解析:
@@ -693,9 +705,52 @@ pub enum TsuchinokoError {
 }
 ```
 
+### 7.2 実行時例外（生成コード）
+
+生成された Rust コードは Python 例外を `Result<T, TsuchinokoError>` で扱う。
+
+| 例 | 変換後 |
+|----|--------|
+| `raise ValueError("x")` | `return Err(TsuchinokoError::new("ValueError","x",None))` |
+| `raise RuntimeError("x") from e` | `return Err(TsuchinokoError::new("RuntimeError","x",Some(e)))` |
+| `raise`（bare） | except 内のみ再送、外ではエラー |
+
+### 7.3 外部境界の例外
+
+PyO3 / py_bridge 経由のエラーは `panic` ではなく `Err(TsuchinokoError)` へ変換し、  
+try/except による捕捉対象として扱う。
+
 ---
 
-## 8. 依存クレート
+## 8. 実行エントリとスコープ
+
+### 8.1 Python実行モデルとの対応
+
+Python には以下の2系統の実行スタイルがある。
+
+- **トップレベルのベタ書き**
+- **`if __name__ == "__main__": main()` ガード実行**
+
+Rust は `fn main()` だけのため、変換時に統一ルールを適用する。
+
+#### 変換規約
+
+| Python | Rust変換 |
+|-------|----------|
+| トップレベルのベタ書き | `fn main()` の本文に展開 |
+| `if __name__ == "__main__": main()` | `fn _main_tsuchinoko()` を生成し、`main()` から呼ぶ |
+
+### 8.2 スコープ整合
+
+Pythonではブロック内で定義した変数も関数スコープで参照できるが、  
+Rustではブロック外に漏れない。  
+そのため、変換器は **ブロック内初回定義の変数を関数スコープに hoist し `Option<T>` で宣言**する。
+
+これにより、トップレベルと `__main__` ガードのどちらでも同一のスコープ規則が保たれる。
+
+---
+
+## 9. 依存クレート
 
 | クレート | バージョン | 用途 |
 |---------|-----------|------|

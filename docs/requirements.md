@@ -213,6 +213,67 @@ flowchart LR
 - stdin/stdout で NDJSON 通信
 - 未知のライブラリも「CPython が動く限り動く」
 
+### 3.5 エラー/例外モデル（正式仕様）
+
+> [!IMPORTANT]
+> **Pythonの例外機構は Rust の `Result<T, TsuchinokoError>` に統一する。**
+> 生成コードの例外と、変換時のエラーは別レイヤとして整理する。
+
+#### 3.5.1 変換時（コンパイル時）エラー
+
+| 種別 | 例 | 振る舞い |
+|------|-----|----------|
+| 未対応構文 | eval/exec の直接使用、構文逸脱 | `UnsupportedSyntax` で停止 |
+| 型不整合 | 明示型に変換不能 | `TypeError` |
+| 参照不能 | 未定義変数 | `UndefinedVariable` |
+
+#### 3.5.2 実行時（生成コード）エラー
+
+1. **raise / raise from**
+   - `raise E("msg")` → `Err(TsuchinokoError::new("E", "msg", None))`
+   - `raise E("msg") from e` → `Err(TsuchinokoError::new("E","msg", Some(e)))`
+
+2. **bare raise（再送）**
+   - `except` 内のみ有効  
+   - 直前の例外を再送 (`Err(e)` または `panic!` 相当の再送)  
+   - **except 外での bare raise はエラー扱い**
+
+3. **try/except/else/finally**
+   - `Result` と `match` により再現  
+   - `catch_unwind` で panic を回収し **InternalError** へ変換（診断レイヤ）
+
+4. **外部境界エラー（PyO3 / py_bridge）**
+   - `unwrap()` では落とさず `Err(TsuchinokoError)` へ変換  
+   - Python側の例外情報は欠損させない
+
+#### 3.5.3 エラー種別の整理
+
+| 種類 | 例 | Result統一 | 外部境界 | panic回収 |
+|------|-----|:---:|:---:|:---:|
+| Python例外 | ValueError, TypeError | ◎ | ◎ | △ |
+| raise / raise from | 例外チェーン | ◎ | ◎ | × |
+| try/except/else/finally | 制御構造 | ◎ | △ | △ |
+| 外部呼び出し失敗 | import失敗/属性なし | ◎ | ◎ | △ |
+| 生成物のバグpanic | unwrap/OOB/todo | × | × | ◎ |
+
+### 3.6 実行エントリとスコープの仕様
+
+Python の実行モデルは「トップレベル実行」と「`__main__` ガード実行」の2系統がある。
+Rust は `fn main()` だけのため、変換規約を明示する。
+
+#### 3.6.1 エントリ変換規約
+
+| Python | Rust変換 |
+|-------|----------|
+| トップレベルのベタ書き | `fn main()` の本文に展開 |
+| `if __name__ == "__main__": main()` | `fn _main_tsuchinoko()` を生成し、`main()` から呼ぶ |
+
+#### 3.6.2 スコープ規約（Python互換）
+
+- Pythonでは `if/try/for/while` ブロック内で定義した変数も関数スコープで有効  
+- Rustではブロックスコープになるため、**ブロック内で初めて定義された変数は hoist して `Option<T>` として宣言**する  
+- これにより **トップレベル/`__main__` ガード内での変数参照が破綻しない**
+
 ---
 
 ## 4. 非機能要件
