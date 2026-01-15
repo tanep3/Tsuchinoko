@@ -133,10 +133,7 @@ pub enum IrExprKind {
         callee_needs_bridge: bool,
     },
     /// 静的メソッド呼び出し (e.g., Type::method(...))
-    StaticCall {
-        path: String,
-        args: Vec<IrExpr>,
-    },
+    StaticCall { path: String, args: Vec<IrExpr> },
     /// メソッド呼び出し (e.g., arr.len())
     MethodCall {
         target: Box<IrExpr>,
@@ -190,10 +187,7 @@ pub enum IrExprKind {
         step: Box<IrExpr>,
     },
     /// V1.7.0: 構造化された組み込み関数呼び出し
-    BuiltinCall {
-        id: BuiltinId,
-        args: Vec<IrExpr>,
-    },
+    BuiltinCall { id: BuiltinId, args: Vec<IrExpr> },
     /// V1.7.0: sorted の構造化表現
     Sorted {
         iter: Box<IrExpr>,
@@ -209,10 +203,7 @@ pub enum IrExprKind {
     /// V1.7.0: ブリッジ経由のモジュール取得 (bridge.get("alias"))
     BridgeGet { alias: String },
     /// V1.7.0: ブリッジの戻り値 (TnkValue) から期待型への標準変換
-    FromTnkValue {
-        value: Box<IrExpr>,
-        to_type: Type,
-    },
+    FromTnkValue { value: Box<IrExpr>, to_type: Type },
 
     // --- コレクション ---
     /// リスト/Vec リテラル
@@ -344,7 +335,10 @@ mod tests {
 
     #[test]
     fn test_ir_expr_int_lit() {
-        let expr = IrExpr { id: ExprId(0), kind: IrExprKind::IntLit(42) };
+        let expr = IrExpr {
+            id: ExprId(0),
+            kind: IrExprKind::IntLit(42),
+        };
         if let IrExprKind::IntLit(n) = expr.kind {
             assert_eq!(n, 42);
         }
@@ -352,7 +346,10 @@ mod tests {
 
     #[test]
     fn test_ir_expr_var() {
-        let expr = IrExpr { id: ExprId(1), kind: IrExprKind::Var("x".to_string()) };
+        let expr = IrExpr {
+            id: ExprId(1),
+            kind: IrExprKind::Var("x".to_string()),
+        };
         if let IrExprKind::Var(name) = expr.kind {
             assert_eq!(name, "x");
         }

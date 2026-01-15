@@ -1,4 +1,4 @@
-use crate::ir::{IrNode, IrExprKind};
+use crate::ir::{IrExprKind, IrNode};
 use crate::parser::parse;
 use crate::semantic::analyze;
 
@@ -16,7 +16,13 @@ def test(x: Any):
         // x.foo returns Any -> IrExpr inside
         // body[0] is Expr stmt
         if let IrNode::Expr(expr) = &body[0] {
-            if let IrExprKind::BridgeMethodCall { target: _, method, args, keywords: _ } = &expr.kind {
+            if let IrExprKind::BridgeMethodCall {
+                target: _,
+                method,
+                args,
+                keywords: _,
+            } = &expr.kind
+            {
                 assert_eq!(method, "foo");
                 assert_eq!(args.len(), 2);
                 return;
@@ -36,8 +42,15 @@ def test(x: Any):
     let ir = analyze(&program).unwrap();
 
     if let IrNode::FuncDecl { body, .. } = &ir[0] {
-        if let IrNode::VarDecl { init: Some(expr), .. } = &body[0] {
-            if let IrExprKind::BridgeAttributeAccess { target: _, attribute } = &expr.kind {
+        if let IrNode::VarDecl {
+            init: Some(expr), ..
+        } = &body[0]
+        {
+            if let IrExprKind::BridgeAttributeAccess {
+                target: _,
+                attribute,
+            } = &expr.kind
+            {
                 assert_eq!(attribute, "attr");
                 return;
             }
@@ -56,8 +69,15 @@ def test(x: Any):
     let ir = analyze(&program).unwrap();
 
     if let IrNode::FuncDecl { body, .. } = &ir[0] {
-        if let IrNode::VarDecl { init: Some(expr), .. } = &body[0] {
-            if let IrExprKind::BridgeItemAccess { target: _, index: _ } = &expr.kind {
+        if let IrNode::VarDecl {
+            init: Some(expr), ..
+        } = &body[0]
+        {
+            if let IrExprKind::BridgeItemAccess {
+                target: _,
+                index: _,
+            } = &expr.kind
+            {
                 return;
             }
         }
@@ -75,13 +95,22 @@ def test(x: Any):
     let ir = analyze(&program).unwrap();
 
     if let IrNode::FuncDecl { body, .. } = &ir[0] {
-        if let IrNode::VarDecl { init: Some(expr), .. } = &body[0] {
+        if let IrNode::VarDecl {
+            init: Some(expr), ..
+        } = &body[0]
+        {
             let inner = match &expr.kind {
                 IrExprKind::BridgeSlice { .. } => expr.as_ref(),
                 IrExprKind::TnkValueFrom(inner) => inner.as_ref(),
                 _ => expr.as_ref(),
             };
-            if let IrExprKind::BridgeSlice { target: _, start, stop, step } = &inner.kind {
+            if let IrExprKind::BridgeSlice {
+                target: _,
+                start,
+                stop,
+                step,
+            } = &inner.kind
+            {
                 assert!(matches!(start.kind, IrExprKind::IntLit(1)));
                 assert!(matches!(stop.kind, IrExprKind::IntLit(10)));
                 assert!(matches!(step.kind, IrExprKind::IntLit(2)));
@@ -102,13 +131,22 @@ def test(x: Any):
     let ir = analyze(&program).unwrap();
 
     if let IrNode::FuncDecl { body, .. } = &ir[0] {
-        if let IrNode::VarDecl { init: Some(expr), .. } = &body[0] {
+        if let IrNode::VarDecl {
+            init: Some(expr), ..
+        } = &body[0]
+        {
             let inner = match &expr.kind {
                 IrExprKind::BridgeSlice { .. } => expr.as_ref(),
                 IrExprKind::TnkValueFrom(inner) => inner.as_ref(),
                 _ => expr.as_ref(),
             };
-            if let IrExprKind::BridgeSlice { target: _, start, stop, step } = &inner.kind {
+            if let IrExprKind::BridgeSlice {
+                target: _,
+                start,
+                stop,
+                step,
+            } = &inner.kind
+            {
                 // Using matches! pattern
                 assert!(matches!(start.kind, IrExprKind::NoneLit));
                 assert!(matches!(stop.kind, IrExprKind::NoneLit));

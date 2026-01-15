@@ -5,7 +5,10 @@ use tsuchinoko::ir::{ExprId, IrBinOp, IrExpr, IrExprKind, IrNode};
 use tsuchinoko::semantic::{build_emit_plan, Type};
 
 fn expr(kind: IrExprKind) -> IrExpr {
-    IrExpr { id: ExprId(0), kind }
+    IrExpr {
+        id: ExprId(0),
+        kind,
+    }
 }
 
 fn emit_with_plan(ir: &[IrNode]) -> String {

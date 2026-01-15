@@ -932,7 +932,9 @@ if __name__ == "__main__":
     let program = parse(code).unwrap();
     let ir = analyze(&program).unwrap();
     // ユーザー main が無い場合はラップせず、そのまま展開される
-    assert!(!ir.iter().any(|n| matches!(n, IrNode::FuncDecl { name, .. } if name == "_main_tsuchinoko")));
+    assert!(!ir
+        .iter()
+        .any(|n| matches!(n, IrNode::FuncDecl { name, .. } if name == "_main_tsuchinoko")));
 }
 
 // --- staticmethod ---

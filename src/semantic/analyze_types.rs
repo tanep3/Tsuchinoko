@@ -128,7 +128,12 @@ impl SemanticAnalyzer {
                         return Type::Struct(name.clone());
                     }
                     // Fallback for capitalized names (assumed to be structs even if defined elsewhere)
-                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    if name
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
+                    {
                         return Type::Struct(name.clone());
                     }
                 } else if let Expr::Attribute { value, attr } = func.as_ref() {
@@ -337,7 +342,9 @@ mod tests {
     #[test]
     fn test_infer_type_external_module_call_any() {
         let mut analyzer = SemanticAnalyzer::new();
-        analyzer.external_imports.push(("numpy".to_string(), "np".to_string()));
+        analyzer
+            .external_imports
+            .push(("numpy".to_string(), "np".to_string()));
         let expr = Expr::Call {
             func: Box::new(Expr::Attribute {
                 value: Box::new(Expr::Ident("np".to_string())),
@@ -352,7 +359,9 @@ mod tests {
     #[test]
     fn test_infer_type_native_module_call_float() {
         let mut analyzer = SemanticAnalyzer::new();
-        analyzer.module_global_aliases.insert("math".to_string(), "math".to_string());
+        analyzer
+            .module_global_aliases
+            .insert("math".to_string(), "math".to_string());
         let expr = Expr::Call {
             func: Box::new(Expr::Attribute {
                 value: Box::new(Expr::Ident("math".to_string())),
@@ -387,7 +396,10 @@ mod tests {
     fn test_infer_type_list_empty_is_list_unknown() {
         let analyzer = SemanticAnalyzer::new();
         let expr = Expr::List(vec![]);
-        assert_eq!(analyzer.infer_type(&expr), Type::List(Box::new(Type::Unknown)));
+        assert_eq!(
+            analyzer.infer_type(&expr),
+            Type::List(Box::new(Type::Unknown))
+        );
     }
 
     #[test]
@@ -437,7 +449,10 @@ mod tests {
             args: vec![Expr::List(vec![Expr::IntLiteral(1)])],
             kwargs: vec![],
         };
-        assert_eq!(analyzer.infer_type(&expr), Type::List(Box::new(Type::Unknown)));
+        assert_eq!(
+            analyzer.infer_type(&expr),
+            Type::List(Box::new(Type::Unknown))
+        );
     }
 
     #[test]
@@ -454,7 +469,10 @@ mod tests {
             ],
             kwargs: vec![],
         };
-        assert_eq!(analyzer.infer_type(&expr), Type::List(Box::new(Type::Unknown)));
+        assert_eq!(
+            analyzer.infer_type(&expr),
+            Type::List(Box::new(Type::Unknown))
+        );
     }
 
     #[test]
@@ -471,13 +489,18 @@ mod tests {
             ],
             kwargs: vec![],
         };
-        assert_eq!(analyzer.infer_type(&expr), Type::List(Box::new(Type::Unknown)));
+        assert_eq!(
+            analyzer.infer_type(&expr),
+            Type::List(Box::new(Type::Unknown))
+        );
     }
 
     #[test]
     fn test_infer_type_index_list_returns_elem() {
         let mut analyzer = SemanticAnalyzer::new();
-        analyzer.scope.define("xs", Type::List(Box::new(Type::Int)), false);
+        analyzer
+            .scope
+            .define("xs", Type::List(Box::new(Type::Int)), false);
         let expr = Expr::Index {
             target: Box::new(Expr::Ident("xs".to_string())),
             index: Box::new(Expr::IntLiteral(0)),

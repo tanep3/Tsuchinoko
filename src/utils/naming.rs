@@ -23,8 +23,7 @@ pub fn to_snake_case(s: &str) -> String {
 fn is_rust_keyword(name: &str) -> bool {
     matches!(
         name,
-        "as"
-            | "break"
+        "as" | "break"
             | "const"
             | "continue"
             | "crate"

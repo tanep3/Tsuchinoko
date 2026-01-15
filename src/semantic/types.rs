@@ -163,11 +163,7 @@ impl Type {
                 };
                 if *is_boxed {
                     // Use Rc<dyn Fn(...)> for boxed callables (type aliases, fields)
-                    format!(
-                        "std::rc::Rc<dyn Fn({}) -> {}>",
-                        p.join(", "),
-                        ret_str
-                    )
+                    format!("std::rc::Rc<dyn Fn({}) -> {}>", p.join(", "), ret_str)
                 } else {
                     // Use fn(...) -> ... for raw function pointers (items)
                     format!("fn({}) -> {}", p.join(", "), ret_str)
@@ -346,11 +342,14 @@ mod tests {
 
     #[test]
     fn test_type_from_python_hint_callable_list_params() {
-        let ty = Type::from_python_hint(
-            "Callable",
-            &[Type::List(Box::new(Type::Int)), Type::Bool],
-        );
-        if let Type::Func { params, ret, is_boxed, .. } = ty {
+        let ty = Type::from_python_hint("Callable", &[Type::List(Box::new(Type::Int)), Type::Bool]);
+        if let Type::Func {
+            params,
+            ret,
+            is_boxed,
+            ..
+        } = ty
+        {
             assert_eq!(params, vec![Type::Int]);
             assert_eq!(*ret, Type::Bool);
             assert!(is_boxed);
@@ -365,7 +364,13 @@ mod tests {
             "Callable",
             &[Type::Tuple(vec![Type::Int, Type::String]), Type::Float],
         );
-        if let Type::Func { params, ret, is_boxed, .. } = ty {
+        if let Type::Func {
+            params,
+            ret,
+            is_boxed,
+            ..
+        } = ty
+        {
             assert_eq!(params, vec![Type::Int, Type::String]);
             assert_eq!(*ret, Type::Float);
             assert!(is_boxed);
@@ -389,7 +394,10 @@ mod tests {
     #[test]
     fn test_type_to_rust_string_dict() {
         let ty = Type::Dict(Box::new(Type::Int), Box::new(Type::String));
-        assert_eq!(ty.to_rust_string(), "std::collections::HashMap<i64, String>");
+        assert_eq!(
+            ty.to_rust_string(),
+            "std::collections::HashMap<i64, String>"
+        );
     }
 
     #[test]

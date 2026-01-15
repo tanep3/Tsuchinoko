@@ -2,7 +2,7 @@
 
 > **著者**: Tane Channel Technology  
 > **バージョン**: 1.7.0  
-> **最終更新**: 2026-01-12
+> **最終更新**: 2026-01-15
 
 ---
 
@@ -829,3 +829,72 @@ Rustではブロック外に漏れない。
 - 旧Python実装: `src_v0.5/`
 - 旧ドキュメント: `docs_old/`
 - pest公式: https://pest.rs/
+### 3.7 V1.7.0 Remote Object Handle パターン
+
+V1.7.0 では、Python Worker との双方向通信により、Rust から Python オブジェクトを透過的に操作可能にする。
+
+#### アーキテクチャ
+
+```mermaid
+flowchart TB
+    subgraph Rust[\"Rust Runtime\"]
+        HANDLE[PyObjectHandle\u003cbr\u003e{id: String}]
+        BRIDGE[PythonBridge]
+        MODULE[ModuleTable]
+    end
+    
+    subgraph Worker[\"Python Worker\"]
+        STORE[_OBJECT_STORE\u003cbr\u003eDict[str, Any]]
+        DISPATCH[Command Dispatcher]
+    end
+    
+    HANDLE --> BRIDGE
+    MODULE --> BRIDGE
+    BRIDGE <--> |NDJSON| DISPATCH
+    DISPATCH <--> STORE
+```
+
+#### Handle管理
+
+- **Rust側**: `PyObjectHandle { id: String }` のみ保持（Opaque Handle）
+- **Python Worker側**: `_OBJECT_STORE: Dict[str, Any]` で実体管理
+- **ライフサイクル**: Rust の `Drop` トレイトで自動的に `delete` コマンド送信
+
+#### ModuleTable
+
+トップレベル import を `ModuleTable` で一元管理し、スコープ問題を解決。
+
+```python
+# Python
+import pandas as pd
+df = pd.read_csv("data.csv")
+```
+
+↓
+
+```rust
+// Rust（概念）
+bridge.import("pandas", "pd");  // ModuleTable に登録
+let df = bridge.get("pd").call_method("read_csv", &[...]);  // 取得して操作
+```
+
+#### RPC コマンドセット
+
+| コマンド | 用途 | 例 |
+|---------|------|----|
+| `call_method` | メソッド呼び出し | `df.head(10)` |
+| `get_attribute` | 属性アクセス | `df.shape` |
+| `get_item` | 要素アクセス | `df["A"]` |
+| `slice` | スライス | `arr[start:stop:step]` |
+| `iter` / `iter_next_batch` | バッチ型イテレータ | `for x in obj` |
+| `delete` | Handle解放 | 自動（Drop時） |
+
+#### エラーハンドリング
+
+- 統一レスポンス形式: `ok` / `error` Tagged Union
+- エラーコード体系: `ProtocolError`, `StaleHandle`, `PythonException` 等
+- `error.op` フィールド: 失敗したコマンド情報を保持
+
+詳細は `docs/old_versions/v1.7.0_requirements.md` および `docs/old_versions/v1.7.0_system_design.md` を参照。
+
+---

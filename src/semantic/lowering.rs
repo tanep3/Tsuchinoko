@@ -3,14 +3,14 @@
 //! Semantic Analysis (型推論) の後、Emitter (コード生成) の前に行う
 //! IR正規化・最適化パス。
 
-use crate::ir::exprs::{IrExpr, IrExprKind, BuiltinId, ExprId};
-use crate::ir::ops::{IrBinOp, IrUnaryOp};
-use crate::ir::nodes::IrNode;
-use crate::semantic::Type;
 use crate::bridge::builtin_table::BuiltinKind;
-use std::collections::HashMap;
+use crate::ir::exprs::{BuiltinId, ExprId, IrExpr, IrExprKind};
+use crate::ir::nodes::IrNode;
+use crate::ir::ops::{IrBinOp, IrUnaryOp};
+use crate::semantic::Type;
 use std::cell::Cell;
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 pub struct LoweringPass {
     module_aliases: HashMap<String, String>,
@@ -20,10 +20,14 @@ pub struct LoweringPass {
 }
 
 impl LoweringPass {
-    pub fn new(module_aliases: HashMap<String, String>, type_table: HashMap<ExprId, Type>, next_id_start: u32) -> Self {
-        Self { 
-            module_aliases, 
-            type_table, 
+    pub fn new(
+        module_aliases: HashMap<String, String>,
+        type_table: HashMap<ExprId, Type>,
+        next_id_start: u32,
+    ) -> Self {
+        Self {
+            module_aliases,
+            type_table,
             next_id: Cell::new(next_id_start),
             bridge_batch_vars: RefCell::new(Vec::new()),
         }
@@ -43,37 +47,86 @@ impl LoweringPass {
     fn lower_node(&self, node: IrNode) -> IrNode {
         match node {
             IrNode::FuncDecl {
-                name, params, body, ret, hoisted_vars, may_raise, needs_bridge,
+                name,
+                params,
+                body,
+                ret,
+                hoisted_vars,
+                may_raise,
+                needs_bridge,
             } => {
                 let new_body = body.into_iter().map(|n| self.lower_node(n)).collect();
                 IrNode::FuncDecl {
-                    name, params, body: new_body, ret, hoisted_vars, may_raise, needs_bridge,
+                    name,
+                    params,
+                    body: new_body,
+                    ret,
+                    hoisted_vars,
+                    may_raise,
+                    needs_bridge,
                 }
             }
             IrNode::MethodDecl {
-                name, params, body, ret, takes_self, takes_mut_self, may_raise, needs_bridge,
+                name,
+                params,
+                body,
+                ret,
+                takes_self,
+                takes_mut_self,
+                may_raise,
+                needs_bridge,
             } => {
                 let new_body = body.into_iter().map(|n| self.lower_node(n)).collect();
                 IrNode::MethodDecl {
-                    name, params, body: new_body, ret, takes_self, takes_mut_self, may_raise, needs_bridge,
+                    name,
+                    params,
+                    body: new_body,
+                    ret,
+                    takes_self,
+                    takes_mut_self,
+                    may_raise,
+                    needs_bridge,
                 }
             }
-            IrNode::ImplBlock { struct_name, methods } => {
+            IrNode::ImplBlock {
+                struct_name,
+                methods,
+            } => {
                 let new_methods = methods.into_iter().map(|m| self.lower_node(m)).collect();
-                IrNode::ImplBlock { struct_name, methods: new_methods }
+                IrNode::ImplBlock {
+                    struct_name,
+                    methods: new_methods,
+                }
             }
-            IrNode::Assign { target, value } => {
-                 IrNode::Assign { target, value: Box::new(self.lower_expr(*value)) }
-            }
-            IrNode::IndexAssign { target, index, value } => IrNode::IndexAssign {
+            IrNode::Assign { target, value } => IrNode::Assign {
+                target,
+                value: Box::new(self.lower_expr(*value)),
+            },
+            IrNode::IndexAssign {
+                target,
+                index,
+                value,
+            } => IrNode::IndexAssign {
                 target: Box::new(self.lower_expr(*target)),
                 index: Box::new(self.lower_expr(*index)),
                 value: Box::new(self.lower_expr(*value)),
             },
-            IrNode::VarDecl { name, ty, mutable, init } => IrNode::VarDecl {
-                name, ty, mutable, init: init.map(|e| Box::new(self.lower_expr(*e))),
+            IrNode::VarDecl {
+                name,
+                ty,
+                mutable,
+                init,
+            } => IrNode::VarDecl {
+                name,
+                ty,
+                mutable,
+                init: init.map(|e| Box::new(self.lower_expr(*e))),
             },
-            IrNode::FieldAssign { target, field, value } => IrNode::FieldAssign {
+            IrNode::FieldAssign {
+                target,
+                field,
+                value,
+            } => IrNode::FieldAssign {
                 target: Box::new(self.lower_expr(*target)),
                 field,
                 value: Box::new(self.lower_expr(*value)),
@@ -93,22 +146,33 @@ impl LoweringPass {
             },
             IrNode::Expr(expr) => IrNode::Expr(self.lower_expr(expr)),
             IrNode::Return(Some(expr)) => IrNode::Return(Some(Box::new(self.lower_expr(*expr)))),
-            IrNode::If { cond, then_block, else_block } => IrNode::If {
+            IrNode::If {
+                cond,
+                then_block,
+                else_block,
+            } => IrNode::If {
                 cond: Box::new(self.lower_expr(*cond)),
                 then_block: then_block.into_iter().map(|n| self.lower_node(n)).collect(),
-                else_block: else_block.map(|block| block.into_iter().map(|n| self.lower_node(n)).collect()),
+                else_block: else_block
+                    .map(|block| block.into_iter().map(|n| self.lower_node(n)).collect()),
             },
             IrNode::While { cond, body } => IrNode::While {
                 cond: Box::new(self.lower_expr(*cond)),
                 body: body.into_iter().map(|n| self.lower_node(n)).collect(),
             },
-            IrNode::For { var, var_type, iter, body } => {
+            IrNode::For {
+                var,
+                var_type,
+                iter,
+                body,
+            } => {
                 let lowered_iter = self.lower_expr(*iter);
-                let use_bridge_batch = !var.contains(',')
-                    && self.iter_expr_uses_bridge(&lowered_iter);
+                let use_bridge_batch =
+                    !var.contains(',') && self.iter_expr_uses_bridge(&lowered_iter);
                 if use_bridge_batch {
                     self.bridge_batch_vars.borrow_mut().push(var.clone());
-                    let lowered_body: Vec<IrNode> = body.into_iter().map(|n| self.lower_node(n)).collect();
+                    let lowered_body: Vec<IrNode> =
+                        body.into_iter().map(|n| self.lower_node(n)).collect();
                     self.bridge_batch_vars.borrow_mut().pop();
                     IrNode::BridgeBatchFor {
                         var,
@@ -117,7 +181,8 @@ impl LoweringPass {
                         body: lowered_body,
                     }
                 } else {
-                    let lowered_body: Vec<IrNode> = body.into_iter().map(|n| self.lower_node(n)).collect();
+                    let lowered_body: Vec<IrNode> =
+                        body.into_iter().map(|n| self.lower_node(n)).collect();
                     IrNode::For {
                         var,
                         var_type,
@@ -126,26 +191,41 @@ impl LoweringPass {
                     }
                 }
             }
-            IrNode::TryBlock { try_body, except_body, except_var, else_body, finally_body } => IrNode::TryBlock {
+            IrNode::TryBlock {
+                try_body,
+                except_body,
+                except_var,
+                else_body,
+                finally_body,
+            } => IrNode::TryBlock {
                 try_body: try_body.into_iter().map(|n| self.lower_node(n)).collect(),
-                except_body: except_body.into_iter().map(|n| self.lower_node(n)).collect(),
+                except_body: except_body
+                    .into_iter()
+                    .map(|n| self.lower_node(n))
+                    .collect(),
                 except_var,
                 else_body: else_body.map(|b| b.into_iter().map(|n| self.lower_node(n)).collect()),
-                finally_body: finally_body.map(|b| b.into_iter().map(|n| self.lower_node(n)).collect()),
+                finally_body: finally_body
+                    .map(|b| b.into_iter().map(|n| self.lower_node(n)).collect()),
             },
             IrNode::Assert { test, msg } => IrNode::Assert {
                 test: Box::new(self.lower_expr(*test)),
                 msg: msg.map(|e| Box::new(self.lower_expr(*e))),
             },
-            IrNode::Raise { exc_type, message, cause, line } => IrNode::Raise {
+            IrNode::Raise {
+                exc_type,
+                message,
+                cause,
+                line,
+            } => IrNode::Raise {
                 exc_type,
                 message: Box::new(self.lower_expr(*message)),
                 cause: cause.map(|e| Box::new(self.lower_expr(*e))),
                 line,
             },
-            IrNode::Sequence(nodes) => IrNode::Sequence(
-                nodes.into_iter().map(|n| self.lower_node(n)).collect(),
-            ),
+            IrNode::Sequence(nodes) => {
+                IrNode::Sequence(nodes.into_iter().map(|n| self.lower_node(n)).collect())
+            }
             IrNode::Block { stmts } => IrNode::Block {
                 stmts: stmts.into_iter().map(|n| self.lower_node(n)).collect(),
             },
@@ -160,7 +240,7 @@ impl LoweringPass {
                     })
                     .collect(),
             },
-            _ => node, 
+            _ => node,
         }
     }
 
@@ -172,7 +252,9 @@ impl LoweringPass {
             | IrExprKind::BridgeItemAccess { .. }
             | IrExprKind::BridgeSlice { .. }
             | IrExprKind::BridgeGet { .. } => true,
-            IrExprKind::Ref(inner) | IrExprKind::TnkValueFrom(inner) => self.iter_expr_uses_bridge(inner),
+            IrExprKind::Ref(inner) | IrExprKind::TnkValueFrom(inner) => {
+                self.iter_expr_uses_bridge(inner)
+            }
             _ => false,
         }
     }
@@ -184,7 +266,10 @@ impl LoweringPass {
     fn lower_expr(&self, expr: IrExpr) -> IrExpr {
         let id = expr.id;
         let kind = match expr.kind {
-            IrExprKind::BuiltinCall { id: builtin_id, args } => {
+            IrExprKind::BuiltinCall {
+                id: builtin_id,
+                args,
+            } => {
                 return self.lower_builtin_call(id, builtin_id, args);
             }
             IrExprKind::Var(name) => {
@@ -198,57 +283,72 @@ impl LoweringPass {
                     IrExprKind::Var(name)
                 }
             }
-            IrExprKind::MethodCall { target, method, args, target_type, callee_needs_bridge } => {
-                IrExprKind::MethodCall {
-                    target: Box::new(self.lower_expr_as_target(*target)),
-                    method,
-                    args: args.into_iter().map(|a| self.lower_expr(a)).collect(),
-                    target_type,
-                    callee_needs_bridge,
-                }
-            }
-            IrExprKind::BridgeMethodCall { target, method, args, keywords } => {
-                IrExprKind::BridgeMethodCall {
-                    target: Box::new(self.lower_expr_as_target(*target)),
-                    method,
-                    args: args.into_iter().map(|a| self.lower_expr(a)).collect(),
-                    keywords: keywords.into_iter().map(|(k, v)| (k, self.lower_expr(v))).collect(),
-                }
-            }
+            IrExprKind::MethodCall {
+                target,
+                method,
+                args,
+                target_type,
+                callee_needs_bridge,
+            } => IrExprKind::MethodCall {
+                target: Box::new(self.lower_expr_as_target(*target)),
+                method,
+                args: args.into_iter().map(|a| self.lower_expr(a)).collect(),
+                target_type,
+                callee_needs_bridge,
+            },
+            IrExprKind::BridgeMethodCall {
+                target,
+                method,
+                args,
+                keywords,
+            } => IrExprKind::BridgeMethodCall {
+                target: Box::new(self.lower_expr_as_target(*target)),
+                method,
+                args: args.into_iter().map(|a| self.lower_expr(a)).collect(),
+                keywords: keywords
+                    .into_iter()
+                    .map(|(k, v)| (k, self.lower_expr(v)))
+                    .collect(),
+            },
             IrExprKind::BridgeAttributeAccess { target, attribute } => {
                 IrExprKind::BridgeAttributeAccess {
                     target: Box::new(self.lower_expr_as_target(*target)),
                     attribute,
                 }
             }
-            IrExprKind::BridgeItemAccess { target, index } => {
-                IrExprKind::BridgeItemAccess {
-                    target: Box::new(self.lower_expr_as_target(*target)),
-                    index: Box::new(self.lower_expr(*index)),
-                }
-            }
-            IrExprKind::BridgeSlice { target, start, stop, step } => {
-                IrExprKind::BridgeSlice {
-                    target: Box::new(self.lower_expr_as_target(*target)),
-                    start: Box::new(self.lower_expr(*start)),
-                    stop: Box::new(self.lower_expr(*stop)),
-                    step: Box::new(self.lower_expr(*step)),
-                }
-            }
-            IrExprKind::PyO3MethodCall { target, method, args } => {
-                IrExprKind::PyO3MethodCall {
-                    target: Box::new(self.lower_expr_as_target(*target)),
-                    method,
-                    args: args.into_iter().map(|a| self.lower_expr(a)).collect(),
-                }
-            }
-            IrExprKind::PyO3Call { module, method, args } => {
-                IrExprKind::PyO3Call {
-                    module,
-                    method,
-                    args: args.into_iter().map(|a| self.lower_expr(a)).collect(),
-                }
-            }
+            IrExprKind::BridgeItemAccess { target, index } => IrExprKind::BridgeItemAccess {
+                target: Box::new(self.lower_expr_as_target(*target)),
+                index: Box::new(self.lower_expr(*index)),
+            },
+            IrExprKind::BridgeSlice {
+                target,
+                start,
+                stop,
+                step,
+            } => IrExprKind::BridgeSlice {
+                target: Box::new(self.lower_expr_as_target(*target)),
+                start: Box::new(self.lower_expr(*start)),
+                stop: Box::new(self.lower_expr(*stop)),
+                step: Box::new(self.lower_expr(*step)),
+            },
+            IrExprKind::PyO3MethodCall {
+                target,
+                method,
+                args,
+            } => IrExprKind::PyO3MethodCall {
+                target: Box::new(self.lower_expr_as_target(*target)),
+                method,
+                args: args.into_iter().map(|a| self.lower_expr(a)).collect(),
+            },
+            IrExprKind::PyO3Call {
+                module,
+                method,
+                args,
+            } => IrExprKind::PyO3Call {
+                module,
+                method,
+                args: args.into_iter().map(|a| self.lower_expr(a)).collect(),
+            },
             IrExprKind::TnkValueFrom(inner) => {
                 IrExprKind::TnkValueFrom(Box::new(self.lower_expr_as_target(*inner)))
             }
@@ -257,23 +357,31 @@ impl LoweringPass {
                 op,
                 right: Box::new(self.lower_expr(*right)),
             },
-            IrExprKind::Call { func, args, callee_may_raise, callee_needs_bridge } => {
+            IrExprKind::Call {
+                func,
+                args,
+                callee_may_raise,
+                callee_needs_bridge,
+            } => {
                 let lowered_func = self.lower_expr_as_target(*func);
                 if matches!(lowered_func.kind, IrExprKind::BridgeGet { .. }) {
                     let bridge_call = IrExpr {
                         id,
                         kind: IrExprKind::BridgeCall {
                             target: Box::new(lowered_func),
-                            args: args.into_iter().map(|a| {
-                                let lowered_arg = self.lower_expr(a);
-                                IrExpr {
-                                    id: self.next_id(),
-                                    kind: IrExprKind::Ref(Box::new(IrExpr {
+                            args: args
+                                .into_iter()
+                                .map(|a| {
+                                    let lowered_arg = self.lower_expr(a);
+                                    IrExpr {
                                         id: self.next_id(),
-                                        kind: IrExprKind::TnkValueFrom(Box::new(lowered_arg)),
-                                    })),
-                                }
-                            }).collect(),
+                                        kind: IrExprKind::Ref(Box::new(IrExpr {
+                                            id: self.next_id(),
+                                            kind: IrExprKind::TnkValueFrom(Box::new(lowered_arg)),
+                                        })),
+                                    }
+                                })
+                                .collect(),
                             keywords: vec![],
                         },
                     };
@@ -290,31 +398,57 @@ impl LoweringPass {
                 path,
                 args: args.into_iter().map(|a| self.lower_expr(a)).collect(),
             },
-            IrExprKind::FieldAccess { target, field } => IrExprKind::FieldAccess { 
-                target: Box::new(self.lower_expr(*target)), field 
+            IrExprKind::FieldAccess { target, field } => IrExprKind::FieldAccess {
+                target: Box::new(self.lower_expr(*target)),
+                field,
             },
-            IrExprKind::UnaryOp { op, operand } => IrExprKind::UnaryOp { 
-                op, operand: Box::new(self.lower_expr(*operand)) 
+            IrExprKind::UnaryOp { op, operand } => IrExprKind::UnaryOp {
+                op,
+                operand: Box::new(self.lower_expr(*operand)),
             },
-            IrExprKind::List { elem_type, elements } => IrExprKind::List { 
-                elem_type, elements: elements.into_iter().map(|e| self.lower_expr(e)).collect() 
+            IrExprKind::List {
+                elem_type,
+                elements,
+            } => IrExprKind::List {
+                elem_type,
+                elements: elements.into_iter().map(|e| self.lower_expr(e)).collect(),
             },
-            IrExprKind::Set { elem_type, elements } => IrExprKind::Set {
-                elem_type, elements: elements.into_iter().map(|e| self.lower_expr(e)).collect()
+            IrExprKind::Set {
+                elem_type,
+                elements,
+            } => IrExprKind::Set {
+                elem_type,
+                elements: elements.into_iter().map(|e| self.lower_expr(e)).collect(),
             },
-            IrExprKind::ListComp { elt, target, iter, condition } => IrExprKind::ListComp {
+            IrExprKind::ListComp {
+                elt,
+                target,
+                iter,
+                condition,
+            } => IrExprKind::ListComp {
                 elt: Box::new(self.lower_expr(*elt)),
                 target,
                 iter: Box::new(self.lower_expr(*iter)),
                 condition: condition.map(|c| Box::new(self.lower_expr(*c))),
             },
-            IrExprKind::SetComp { elt, target, iter, condition } => IrExprKind::SetComp {
+            IrExprKind::SetComp {
+                elt,
+                target,
+                iter,
+                condition,
+            } => IrExprKind::SetComp {
                 elt: Box::new(self.lower_expr(*elt)),
                 target,
                 iter: Box::new(self.lower_expr(*iter)),
                 condition: condition.map(|c| Box::new(self.lower_expr(*c))),
             },
-            IrExprKind::DictComp { key, value, target, iter, condition } => IrExprKind::DictComp {
+            IrExprKind::DictComp {
+                key,
+                value,
+                target,
+                iter,
+                condition,
+            } => IrExprKind::DictComp {
                 key: Box::new(self.lower_expr(*key)),
                 value: Box::new(self.lower_expr(*value)),
                 target,
@@ -322,32 +456,59 @@ impl LoweringPass {
                 condition: condition.map(|c| Box::new(self.lower_expr(*c))),
             },
             IrExprKind::Ref(inner) => IrExprKind::Ref(Box::new(self.lower_expr(*inner))),
-            IrExprKind::Dict { key_type, value_type, entries } => IrExprKind::Dict {
-                key_type, value_type,
-                entries: entries.into_iter().map(|(k, v)| (self.lower_expr(k), self.lower_expr(v))).collect(),
+            IrExprKind::Dict {
+                key_type,
+                value_type,
+                entries,
+            } => IrExprKind::Dict {
+                key_type,
+                value_type,
+                entries: entries
+                    .into_iter()
+                    .map(|(k, v)| (self.lower_expr(k), self.lower_expr(v)))
+                    .collect(),
             },
-            IrExprKind::Tuple(elements) => IrExprKind::Tuple(elements.into_iter().map(|e| self.lower_expr(e)).collect()),
-            IrExprKind::Index { target, index } => IrExprKind::Index { 
-                target: Box::new(self.lower_expr(*target)), index: Box::new(self.lower_expr(*index)) 
+            IrExprKind::Tuple(elements) => {
+                IrExprKind::Tuple(elements.into_iter().map(|e| self.lower_expr(e)).collect())
+            }
+            IrExprKind::Index { target, index } => IrExprKind::Index {
+                target: Box::new(self.lower_expr(*target)),
+                index: Box::new(self.lower_expr(*index)),
             },
-            IrExprKind::Slice { target, start, end, step } => IrExprKind::Slice {
+            IrExprKind::Slice {
+                target,
+                start,
+                end,
+                step,
+            } => IrExprKind::Slice {
                 target: Box::new(self.lower_expr(*target)),
                 start: start.map(|s| Box::new(self.lower_expr(*s))),
                 end: end.map(|e| Box::new(self.lower_expr(*e))),
                 step: step.map(|s| Box::new(self.lower_expr(*s))),
             },
             IrExprKind::FString { parts, values } => IrExprKind::FString {
-                parts, values: values.into_iter().map(|(v, ty)| (self.lower_expr(v), ty)).collect(),
+                parts,
+                values: values
+                    .into_iter()
+                    .map(|(v, ty)| (self.lower_expr(v), ty))
+                    .collect(),
             },
             IrExprKind::Print { args } => IrExprKind::Print {
-                args: args.into_iter().map(|(v, ty)| (self.lower_expr(v), ty)).collect(),
+                args: args
+                    .into_iter()
+                    .map(|(v, ty)| (self.lower_expr(v), ty))
+                    .collect(),
             },
             IrExprKind::IfExp { test, body, orelse } => IrExprKind::IfExp {
                 test: Box::new(self.lower_expr(*test)),
                 body: Box::new(self.lower_expr(*body)),
                 orelse: Box::new(self.lower_expr(*orelse)),
             },
-            IrExprKind::Closure { params, body, ret_type } => IrExprKind::Closure {
+            IrExprKind::Closure {
+                params,
+                body,
+                ret_type,
+            } => IrExprKind::Closure {
                 params,
                 body: body.into_iter().map(|n| self.lower_node(n)).collect(),
                 ret_type,
@@ -369,11 +530,21 @@ impl LoweringPass {
                 target: Box::new(self.lower_expr(*target)),
                 convert_to,
             },
-            IrExprKind::BridgeGet { alias } => IrExprKind::TnkValueFrom(Box::new(IrExpr { id: self.next_id(), kind: IrExprKind::BridgeGet { alias } })),
-            IrExprKind::BridgeCall { target, args, keywords } => IrExprKind::BridgeCall {
+            IrExprKind::BridgeGet { alias } => IrExprKind::TnkValueFrom(Box::new(IrExpr {
+                id: self.next_id(),
+                kind: IrExprKind::BridgeGet { alias },
+            })),
+            IrExprKind::BridgeCall {
+                target,
+                args,
+                keywords,
+            } => IrExprKind::BridgeCall {
                 target: Box::new(self.lower_expr_as_target(*target)),
                 args: args.into_iter().map(|a| self.lower_expr(a)).collect(),
-                keywords: keywords.into_iter().map(|(k, v)| (k, self.lower_expr(v))).collect(),
+                keywords: keywords
+                    .into_iter()
+                    .map(|(k, v)| (k, self.lower_expr(v)))
+                    .collect(),
             },
             _ => expr.kind,
         };
@@ -432,6 +603,7 @@ impl LoweringPass {
         }
     }
 
+    #[allow(dead_code)]
     fn format_simple_expr(&self, expr: &IrExpr) -> String {
         match &expr.kind {
             IrExprKind::IntLit(n) => format!("{n}i64"),
@@ -439,13 +611,13 @@ impl LoweringPass {
             IrExprKind::BoolLit(b) => b.to_string(),
             IrExprKind::StringLit(s) => format!("\"{s}\""),
             IrExprKind::Var(name) => name.clone(),
-            IrExprKind::Cast { target, ty } => format!("({} as {})", self.format_simple_expr(target), ty),
-            IrExprKind::UnaryOp { op, operand } => {
-                match op {
-                    crate::ir::ops::IrUnaryOp::Neg => format!("-{}", self.format_simple_expr(operand)),
-                    _ => self.format_simple_expr(operand),
-                }
+            IrExprKind::Cast { target, ty } => {
+                format!("({} as {})", self.format_simple_expr(target), ty)
             }
+            IrExprKind::UnaryOp { op, operand } => match op {
+                crate::ir::ops::IrUnaryOp::Neg => format!("-{}", self.format_simple_expr(operand)),
+                _ => self.format_simple_expr(operand),
+            },
             IrExprKind::BinOp { left, op, right } => {
                 let op_str = match op {
                     IrBinOp::Add => "+",
@@ -463,20 +635,33 @@ impl LoweringPass {
                     IrBinOp::Or => "||",
                     _ => "+",
                 };
-                format!("{} {} {}", self.format_simple_expr(left), op_str, self.format_simple_expr(right))
+                format!(
+                    "{} {} {}",
+                    self.format_simple_expr(left),
+                    op_str,
+                    self.format_simple_expr(right)
+                )
             }
             _ => "0".to_string(),
         }
     }
 
-    fn lower_builtin_call(&self, original_id: ExprId, builtin_id: BuiltinId, args: Vec<IrExpr>) -> IrExpr {
+    fn lower_builtin_call(
+        &self,
+        original_id: ExprId,
+        builtin_id: BuiltinId,
+        args: Vec<IrExpr>,
+    ) -> IrExpr {
         let expected_ty = self.type_table.get(&original_id).cloned();
         let lowered_args: Vec<IrExpr> = args.into_iter().map(|a| self.lower_expr(a)).collect();
 
         match builtin_id {
             BuiltinId::Sum => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::IntLit(0) };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::IntLit(0),
+                    };
                 }
 
                 let sum_method = match expected_ty {
@@ -484,13 +669,15 @@ impl LoweringPass {
                     Some(Type::Int) => "sum::<i64>",
                     _ => {
                         let arg_ty = lowered_args
-                            .get(0)
+                            .first()
                             .and_then(|arg| self.type_table.get(&arg.id));
                         match arg_ty {
-                            Some(Type::List(inner)) | Some(Type::Set(inner)) => match inner.as_ref() {
-                                Type::Float => "sum::<f64>",
-                                _ => "sum::<i64>",
-                            },
+                            Some(Type::List(inner)) | Some(Type::Set(inner)) => {
+                                match inner.as_ref() {
+                                    Type::Float => "sum::<f64>",
+                                    _ => "sum::<i64>",
+                                }
+                            }
                             _ => "sum::<i64>",
                         }
                     }
@@ -522,11 +709,17 @@ impl LoweringPass {
                     let start = match expected_ty {
                         Some(Type::Float) => IrExpr {
                             id: self.next_id(),
-                            kind: IrExprKind::Cast { target: Box::new(start), ty: "f64".to_string() },
+                            kind: IrExprKind::Cast {
+                                target: Box::new(start),
+                                ty: "f64".to_string(),
+                            },
                         },
                         Some(Type::Int) => IrExpr {
                             id: self.next_id(),
-                            kind: IrExprKind::Cast { target: Box::new(start), ty: "i64".to_string() },
+                            kind: IrExprKind::Cast {
+                                target: Box::new(start),
+                                ty: "i64".to_string(),
+                            },
                         },
                         _ => start,
                     };
@@ -539,11 +732,17 @@ impl LoweringPass {
                         },
                     };
                 }
-                return IrExpr { id: original_id, kind: sum_call.kind };
+                return IrExpr {
+                    id: original_id,
+                    kind: sum_call.kind,
+                };
             }
             BuiltinId::Int => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::IntLit(0) };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::IntLit(0),
+                    };
                 }
                 if let IrExprKind::Var(name) = &lowered_args[0].kind {
                     if self.is_bridge_batch_var(name) {
@@ -557,7 +756,7 @@ impl LoweringPass {
                     }
                 }
                 let arg_ty = lowered_args
-                    .get(0)
+                    .first()
                     .and_then(|arg| self.type_table.get(&arg.id));
                 if matches!(arg_ty, Some(Type::Any | Type::Unknown)) {
                     return IrExpr {
@@ -578,7 +777,10 @@ impl LoweringPass {
             }
             BuiltinId::Float => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::FloatLit(0.0) };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::FloatLit(0.0),
+                    };
                 }
                 if let IrExprKind::Var(name) = &lowered_args[0].kind {
                     if self.is_bridge_batch_var(name) {
@@ -592,7 +794,7 @@ impl LoweringPass {
                     }
                 }
                 let arg_ty = lowered_args
-                    .get(0)
+                    .first()
                     .and_then(|arg| self.type_table.get(&arg.id));
                 if matches!(arg_ty, Some(Type::Any | Type::Unknown)) {
                     return IrExpr {
@@ -613,7 +815,10 @@ impl LoweringPass {
             }
             BuiltinId::Str => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::StringLit(String::new()) };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::StringLit(String::new()),
+                    };
                 }
                 return IrExpr {
                     id: original_id,
@@ -630,7 +835,11 @@ impl LoweringPass {
                 let typed_args: Vec<(IrExpr, Type)> = lowered_args
                     .into_iter()
                     .map(|arg| {
-                        let ty = self.type_table.get(&arg.id).cloned().unwrap_or(Type::Unknown);
+                        let ty = self
+                            .type_table
+                            .get(&arg.id)
+                            .cloned()
+                            .unwrap_or(Type::Unknown);
                         (arg, ty)
                     })
                     .collect();
@@ -641,7 +850,13 @@ impl LoweringPass {
             }
             BuiltinId::Sorted => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::List { elem_type: Type::Unknown, elements: vec![] } };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::List {
+                            elem_type: Type::Unknown,
+                            elements: vec![],
+                        },
+                    };
                 }
                 let iter = lowered_args[0].clone();
                 let key = if lowered_args.len() >= 2 {
@@ -671,7 +886,10 @@ impl LoweringPass {
                 if lowered_args.is_empty() {
                     return IrExpr {
                         id: original_id,
-                        kind: IrExprKind::Set { elem_type: Type::Unknown, elements: vec![] },
+                        kind: IrExprKind::Set {
+                            elem_type: Type::Unknown,
+                            elements: vec![],
+                        },
                     };
                 }
                 let arg = lowered_args[0].clone();
@@ -710,11 +928,19 @@ impl LoweringPass {
                 if lowered_args.is_empty() {
                     return IrExpr {
                         id: original_id,
-                        kind: IrExprKind::List { elem_type: Type::Unknown, elements: vec![] },
+                        kind: IrExprKind::List {
+                            elem_type: Type::Unknown,
+                            elements: vec![],
+                        },
                     };
                 }
                 let arg = lowered_args[0].clone();
-                if let IrExprKind::Call { func, args: call_args, .. } = &arg.kind {
+                if let IrExprKind::Call {
+                    func,
+                    args: call_args,
+                    ..
+                } = &arg.kind
+                {
                     if let IrExprKind::Var(func_name) = &func.kind {
                         if func_name == "map" && call_args.len() == 2 {
                             let mut lambda = call_args[0].clone();
@@ -768,7 +994,12 @@ impl LoweringPass {
                             if let IrExprKind::BoxNew(inner) = lambda.kind {
                                 lambda = *inner;
                             }
-                            let filter_closure = if let IrExprKind::Closure { params, body, ret_type } = &lambda.kind {
+                            let filter_closure = if let IrExprKind::Closure {
+                                params,
+                                body,
+                                ret_type,
+                            } = &lambda.kind
+                            {
                                 if params.len() == 1 {
                                     let param = &params[0];
                                     if !param.starts_with('&') && !param.contains('(') {
@@ -833,7 +1064,13 @@ impl LoweringPass {
                         }
                     }
                 }
-                if let IrExprKind::MethodCall { target, method, target_type, .. } = &arg.kind {
+                if let IrExprKind::MethodCall {
+                    target,
+                    method,
+                    target_type,
+                    ..
+                } = &arg.kind
+                {
                     let target_ty = self.type_table.get(&target.id);
                     let is_dict = matches!(target_ty, Some(Type::Dict(_, _)))
                         || matches!(target_type, Type::Dict(_, _));
@@ -923,7 +1160,10 @@ impl LoweringPass {
                         },
                     };
                 }
-                if matches!(arg.kind, IrExprKind::MethodCall { .. } | IrExprKind::ListComp { .. }) {
+                if matches!(
+                    arg.kind,
+                    IrExprKind::MethodCall { .. } | IrExprKind::ListComp { .. }
+                ) {
                     return IrExpr {
                         id: original_id,
                         kind: IrExprKind::MethodCall {
@@ -948,11 +1188,20 @@ impl LoweringPass {
             }
             BuiltinId::Tuple => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::Tuple(vec![]) };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::Tuple(vec![]),
+                    };
                 }
                 let arg = lowered_args[0].clone();
-                if matches!(arg.kind, IrExprKind::ListComp { .. } | IrExprKind::MethodCall { .. }) {
-                    return IrExpr { id: original_id, kind: arg.kind };
+                if matches!(
+                    arg.kind,
+                    IrExprKind::ListComp { .. } | IrExprKind::MethodCall { .. }
+                ) {
+                    return IrExpr {
+                        id: original_id,
+                        kind: arg.kind,
+                    };
                 }
                 return IrExpr {
                     id: original_id,
@@ -969,7 +1218,11 @@ impl LoweringPass {
                 if lowered_args.is_empty() {
                     return IrExpr {
                         id: original_id,
-                        kind: IrExprKind::Dict { key_type: Type::Unknown, value_type: Type::Unknown, entries: vec![] },
+                        kind: IrExprKind::Dict {
+                            key_type: Type::Unknown,
+                            value_type: Type::Unknown,
+                            entries: vec![],
+                        },
                     };
                 }
                 let arg = lowered_args[0].clone();
@@ -986,7 +1239,12 @@ impl LoweringPass {
                         },
                     };
                 }
-                if matches!(arg.kind, IrExprKind::MethodCall { .. } | IrExprKind::ListComp { .. } | IrExprKind::DictComp { .. }) {
+                if matches!(
+                    arg.kind,
+                    IrExprKind::MethodCall { .. }
+                        | IrExprKind::ListComp { .. }
+                        | IrExprKind::DictComp { .. }
+                ) {
                     return IrExpr {
                         id: original_id,
                         kind: IrExprKind::MethodCall {
@@ -1071,7 +1329,13 @@ impl LoweringPass {
             }
             BuiltinId::Enumerate => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::BuiltinCall { id: builtin_id, args: lowered_args } };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::BuiltinCall {
+                            id: builtin_id,
+                            args: lowered_args,
+                        },
+                    };
                 }
                 let iter_call = IrExpr {
                     id: self.next_id(),
@@ -1155,7 +1419,13 @@ impl LoweringPass {
             }
             BuiltinId::Zip => {
                 if lowered_args.len() < 2 {
-                    return IrExpr { id: original_id, kind: IrExprKind::List { elem_type: Type::Unknown, elements: vec![] } };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::List {
+                            elem_type: Type::Unknown,
+                            elements: vec![],
+                        },
+                    };
                 }
                 let mut target = IrExpr {
                     id: self.next_id(),
@@ -1313,7 +1583,10 @@ impl LoweringPass {
             }
             BuiltinId::Any => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::BoolLit(false) };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::BoolLit(false),
+                    };
                 }
                 let iter_call = IrExpr {
                     id: self.next_id(),
@@ -1357,7 +1630,10 @@ impl LoweringPass {
             }
             BuiltinId::All => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::BoolLit(true) };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::BoolLit(true),
+                    };
                 }
                 let iter_call = IrExpr {
                     id: self.next_id(),
@@ -1401,7 +1677,10 @@ impl LoweringPass {
             }
             BuiltinId::Min | BuiltinId::Max => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::NoneLit };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::NoneLit,
+                    };
                 }
                 let iter_call = IrExpr {
                     id: self.next_id(),
@@ -1413,7 +1692,11 @@ impl LoweringPass {
                         callee_needs_bridge: false,
                     },
                 };
-                let method = if builtin_id == BuiltinId::Min { "min" } else { "max" };
+                let method = if builtin_id == BuiltinId::Min {
+                    "min"
+                } else {
+                    "max"
+                };
                 let minmax_call = IrExpr {
                     id: self.next_id(),
                     kind: IrExprKind::MethodCall {
@@ -1447,7 +1730,10 @@ impl LoweringPass {
             }
             BuiltinId::Round => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::IntLit(0) };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::IntLit(0),
+                    };
                 }
 
                 if lowered_args.len() == 1 {
@@ -1470,7 +1756,10 @@ impl LoweringPass {
                             },
                         };
                     }
-                    return IrExpr { id: original_id, kind: round_call.kind };
+                    return IrExpr {
+                        id: original_id,
+                        kind: round_call.kind,
+                    };
                 }
 
                 if lowered_args.len() >= 2 {
@@ -1484,7 +1773,10 @@ impl LoweringPass {
                     let factor = IrExpr {
                         id: self.next_id(),
                         kind: IrExprKind::MethodCall {
-                            target: Box::new(IrExpr { id: self.next_id(), kind: IrExprKind::RawCode("10.0f64".to_string()) }),
+                            target: Box::new(IrExpr {
+                                id: self.next_id(),
+                                kind: IrExprKind::RawCode("10.0f64".to_string()),
+                            }),
                             method: "powi".to_string(),
                             args: vec![pow_arg],
                             target_type: Type::Unknown,
@@ -1521,16 +1813,25 @@ impl LoweringPass {
             }
             BuiltinId::Chr => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::StringLit(String::new()) };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::StringLit(String::new()),
+                    };
                 }
                 let cast_u32 = IrExpr {
                     id: self.next_id(),
-                    kind: IrExprKind::Cast { target: Box::new(lowered_args[0].clone()), ty: "u32".to_string() },
+                    kind: IrExprKind::Cast {
+                        target: Box::new(lowered_args[0].clone()),
+                        ty: "u32".to_string(),
+                    },
                 };
                 let from_u32 = IrExpr {
                     id: self.next_id(),
                     kind: IrExprKind::Call {
-                        func: Box::new(IrExpr { id: self.next_id(), kind: IrExprKind::RawCode("std::char::from_u32".to_string()) }),
+                        func: Box::new(IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::RawCode("std::char::from_u32".to_string()),
+                        }),
                         args: vec![cast_u32],
                         callee_may_raise: false,
                         callee_needs_bridge: false,
@@ -1559,7 +1860,10 @@ impl LoweringPass {
             }
             BuiltinId::Ord => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::IntLit(0) };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::IntLit(0),
+                    };
                 }
                 let chars_call = IrExpr {
                     id: self.next_id(),
@@ -1593,7 +1897,10 @@ impl LoweringPass {
                 };
                 let cast_u32 = IrExpr {
                     id: self.next_id(),
-                    kind: IrExprKind::Cast { target: Box::new(unwrap_call), ty: "u32".to_string() },
+                    kind: IrExprKind::Cast {
+                        target: Box::new(unwrap_call),
+                        ty: "u32".to_string(),
+                    },
                 };
                 return IrExpr {
                     id: original_id,
@@ -1605,7 +1912,10 @@ impl LoweringPass {
             }
             BuiltinId::Bin | BuiltinId::Hex | BuiltinId::Oct => {
                 if lowered_args.is_empty() {
-                    return IrExpr { id: original_id, kind: IrExprKind::StringLit(String::new()) };
+                    return IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::StringLit(String::new()),
+                    };
                 }
                 let fmt = match builtin_id {
                     BuiltinId::Bin => "0b{:b}",
@@ -1616,9 +1926,15 @@ impl LoweringPass {
                 return IrExpr {
                     id: original_id,
                     kind: IrExprKind::Call {
-                        func: Box::new(IrExpr { id: self.next_id(), kind: IrExprKind::RawCode("format!".to_string()) }),
+                        func: Box::new(IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::RawCode("format!".to_string()),
+                        }),
                         args: vec![
-                            IrExpr { id: self.next_id(), kind: IrExprKind::StringLit(fmt.to_string()) },
+                            IrExpr {
+                                id: self.next_id(),
+                                kind: IrExprKind::StringLit(fmt.to_string()),
+                            },
                             lowered_args[0].clone(),
                         ],
                         callee_may_raise: false,
@@ -1634,7 +1950,10 @@ impl LoweringPass {
             return match lowered_args.len() {
                 1 => {
                     // range(end) -> 0..end
-                    let start = IrExpr { id: self.next_id(), kind: IrExprKind::IntLit(0) };
+                    let start = IrExpr {
+                        id: self.next_id(),
+                        kind: IrExprKind::IntLit(0),
+                    };
                     let end = lowered_args.into_iter().next().unwrap();
                     IrExpr {
                         id: original_id,
@@ -1659,31 +1978,41 @@ impl LoweringPass {
                 }
                 _ => {
                     // range() or range(start, end, step) remains a builtin for now
-                    IrExpr { id: original_id, kind: IrExprKind::BuiltinCall { id: builtin_id, args: lowered_args } }
+                    IrExpr {
+                        id: original_id,
+                        kind: IrExprKind::BuiltinCall {
+                            id: builtin_id,
+                            args: lowered_args,
+                        },
+                    }
                 }
             };
         }
 
-        let spec = crate::bridge::builtin_table::BUILTIN_SPECS.iter().find(|s| s.id == builtin_id).unwrap();
-        
+        let spec = crate::bridge::builtin_table::BUILTIN_SPECS
+            .iter()
+            .find(|s| s.id == builtin_id)
+            .unwrap();
+
         match spec.kind {
             BuiltinKind::Bridge { target } => {
-                let lowered_args: Vec<IrExpr> = lowered_args.into_iter().map(|lowered| {
-                    IrExpr {
+                let lowered_args: Vec<IrExpr> = lowered_args
+                    .into_iter()
+                    .map(|lowered| IrExpr {
                         id: self.next_id(),
                         kind: IrExprKind::Ref(Box::new(IrExpr {
                             id: self.next_id(),
                             kind: IrExprKind::TnkValueFrom(Box::new(lowered)),
                         })),
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 let bridge_call = IrExpr {
                     id: self.next_id(),
                     kind: IrExprKind::BridgeCall {
-                        target: Box::new(IrExpr { 
-                            id: self.next_id(), 
-                            kind: IrExprKind::RawCode(format!("\"{}\"", target))
+                        target: Box::new(IrExpr {
+                            id: self.next_id(),
+                            kind: IrExprKind::RawCode(format!("\"{}\"", target)),
                         }),
                         args: lowered_args,
                         keywords: vec![],
@@ -1701,12 +2030,17 @@ impl LoweringPass {
                         };
                     }
                 }
-                IrExpr { id: original_id, kind: bridge_call.kind }
+                IrExpr {
+                    id: original_id,
+                    kind: bridge_call.kind,
+                }
             }
             BuiltinKind::NativeMethod { method } => {
                 let mut lowered_args = lowered_args.into_iter();
-                let receiver = lowered_args.next().expect("NativeMethod requires at least one argument");
-                
+                let receiver = lowered_args
+                    .next()
+                    .expect("NativeMethod requires at least one argument");
+
                 IrExpr {
                     id: original_id,
                     kind: IrExprKind::MethodCall {
@@ -1718,9 +2052,13 @@ impl LoweringPass {
                     },
                 }
             }
-            BuiltinKind::Intrinsic { op: _ } => {
-                IrExpr { id: original_id, kind: IrExprKind::BuiltinCall { id: builtin_id, args: lowered_args } }
-            }
+            BuiltinKind::Intrinsic { op: _ } => IrExpr {
+                id: original_id,
+                kind: IrExprKind::BuiltinCall {
+                    id: builtin_id,
+                    args: lowered_args,
+                },
+            },
         }
     }
 }
@@ -1734,7 +2072,10 @@ mod tests {
         let mut type_table = HashMap::new();
         let arg_id = ExprId(0);
         let call_id = ExprId(1);
-        type_table.insert(arg_id, Type::Dict(Box::new(Type::Int), Box::new(Type::String)));
+        type_table.insert(
+            arg_id,
+            Type::Dict(Box::new(Type::Int), Box::new(Type::String)),
+        );
 
         let lowering = LoweringPass::new(HashMap::new(), type_table, 100);
         let node = IrNode::Sequence(vec![IrNode::VarDecl {
@@ -1745,7 +2086,10 @@ mod tests {
                 id: call_id,
                 kind: IrExprKind::BuiltinCall {
                     id: BuiltinId::Dict,
-                    args: vec![IrExpr { id: arg_id, kind: IrExprKind::Var("src".to_string()) }],
+                    args: vec![IrExpr {
+                        id: arg_id,
+                        kind: IrExprKind::Var("src".to_string()),
+                    }],
                 },
             })),
         }]);
@@ -1753,7 +2097,9 @@ mod tests {
         let lowered = lowering.apply(vec![node]);
         match &lowered[0] {
             IrNode::Sequence(nodes) => match &nodes[0] {
-                IrNode::VarDecl { init: Some(expr), .. } => match &expr.kind {
+                IrNode::VarDecl {
+                    init: Some(expr), ..
+                } => match &expr.kind {
                     IrExprKind::MethodCall { method, .. } => assert_eq!(method, "clone"),
                     _ => panic!("Expected MethodCall clone"),
                 },
@@ -1772,7 +2118,10 @@ mod tests {
             id: call_id,
             kind: IrExprKind::BuiltinCall {
                 id: BuiltinId::Dict,
-                args: vec![IrExpr { id: arg_id, kind: IrExprKind::Var("pairs".to_string()) }],
+                args: vec![IrExpr {
+                    id: arg_id,
+                    kind: IrExprKind::Var("pairs".to_string()),
+                }],
             },
         };
         let lowered = lowering.lower_expr(expr);
@@ -1780,7 +2129,10 @@ mod tests {
             IrExprKind::MethodCall { method, target, .. } => {
                 assert_eq!(method, "collect::<std::collections::HashMap<_, _>>");
                 match target.kind {
-                    IrExprKind::MethodCall { method: inner_method, .. } => {
+                    IrExprKind::MethodCall {
+                        method: inner_method,
+                        ..
+                    } => {
                         assert_eq!(inner_method, "map");
                     }
                     _ => panic!("Expected map() call before collect"),
@@ -1799,7 +2151,10 @@ mod tests {
         let expr = IrExpr {
             id: expr_id,
             kind: IrExprKind::BridgeCall {
-                target: Box::new(IrExpr { id: ExprId(11), kind: IrExprKind::Var("f".to_string()) }),
+                target: Box::new(IrExpr {
+                    id: ExprId(11),
+                    kind: IrExprKind::Var("f".to_string()),
+                }),
                 args: vec![],
                 keywords: vec![],
             },
@@ -1820,7 +2175,10 @@ mod tests {
         let expr = IrExpr {
             id: expr_id,
             kind: IrExprKind::BridgeCall {
-                target: Box::new(IrExpr { id: ExprId(13), kind: IrExprKind::Var("f".to_string()) }),
+                target: Box::new(IrExpr {
+                    id: ExprId(13),
+                    kind: IrExprKind::Var("f".to_string()),
+                }),
                 args: vec![],
                 keywords: vec![],
             },
@@ -1837,8 +2195,14 @@ mod tests {
             kind: IrExprKind::BuiltinCall {
                 id: BuiltinId::Enumerate,
                 args: vec![
-                    IrExpr { id: ExprId(21), kind: IrExprKind::Var("items".to_string()) },
-                    IrExpr { id: ExprId(22), kind: IrExprKind::IntLit(5) },
+                    IrExpr {
+                        id: ExprId(21),
+                        kind: IrExprKind::Var("items".to_string()),
+                    },
+                    IrExpr {
+                        id: ExprId(22),
+                        kind: IrExprKind::IntLit(5),
+                    },
                 ],
             },
         };
@@ -1860,8 +2224,14 @@ mod tests {
             kind: IrExprKind::BuiltinCall {
                 id: BuiltinId::Zip,
                 args: vec![
-                    IrExpr { id: ExprId(31), kind: IrExprKind::Var("a".to_string()) },
-                    IrExpr { id: ExprId(32), kind: IrExprKind::Var("b".to_string()) },
+                    IrExpr {
+                        id: ExprId(31),
+                        kind: IrExprKind::Var("a".to_string()),
+                    },
+                    IrExpr {
+                        id: ExprId(32),
+                        kind: IrExprKind::Var("b".to_string()),
+                    },
                 ],
             },
         };
@@ -1882,7 +2252,10 @@ mod tests {
             id: ExprId(40),
             kind: IrExprKind::BuiltinCall {
                 id: BuiltinId::Range,
-                args: vec![IrExpr { id: ExprId(41), kind: IrExprKind::IntLit(5) }],
+                args: vec![IrExpr {
+                    id: ExprId(41),
+                    kind: IrExprKind::IntLit(5),
+                }],
             },
         };
         let lowered = lowering.lower_expr(expr);
@@ -1903,8 +2276,14 @@ mod tests {
             kind: IrExprKind::BuiltinCall {
                 id: BuiltinId::Range,
                 args: vec![
-                    IrExpr { id: ExprId(51), kind: IrExprKind::IntLit(2) },
-                    IrExpr { id: ExprId(52), kind: IrExprKind::IntLit(4) },
+                    IrExpr {
+                        id: ExprId(51),
+                        kind: IrExprKind::IntLit(2),
+                    },
+                    IrExpr {
+                        id: ExprId(52),
+                        kind: IrExprKind::IntLit(4),
+                    },
                 ],
             },
         };
@@ -1926,14 +2305,29 @@ mod tests {
             kind: IrExprKind::BuiltinCall {
                 id: BuiltinId::Range,
                 args: vec![
-                    IrExpr { id: ExprId(61), kind: IrExprKind::IntLit(1) },
-                    IrExpr { id: ExprId(62), kind: IrExprKind::IntLit(5) },
-                    IrExpr { id: ExprId(63), kind: IrExprKind::IntLit(2) },
+                    IrExpr {
+                        id: ExprId(61),
+                        kind: IrExprKind::IntLit(1),
+                    },
+                    IrExpr {
+                        id: ExprId(62),
+                        kind: IrExprKind::IntLit(5),
+                    },
+                    IrExpr {
+                        id: ExprId(63),
+                        kind: IrExprKind::IntLit(2),
+                    },
                 ],
             },
         };
         let lowered = lowering.lower_expr(expr);
-        assert!(matches!(lowered.kind, IrExprKind::BuiltinCall { id: BuiltinId::Range, .. }));
+        assert!(matches!(
+            lowered.kind,
+            IrExprKind::BuiltinCall {
+                id: BuiltinId::Range,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1941,7 +2335,10 @@ mod tests {
         let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 800);
         let expr = IrExpr {
             id: ExprId(70),
-            kind: IrExprKind::BuiltinCall { id: BuiltinId::Any, args: vec![] },
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Any,
+                args: vec![],
+            },
         };
         let lowered = lowering.lower_expr(expr);
         assert!(matches!(lowered.kind, IrExprKind::BoolLit(false)));
@@ -1952,7 +2349,10 @@ mod tests {
         let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 900);
         let expr = IrExpr {
             id: ExprId(80),
-            kind: IrExprKind::BuiltinCall { id: BuiltinId::All, args: vec![] },
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::All,
+                args: vec![],
+            },
         };
         let lowered = lowering.lower_expr(expr);
         assert!(matches!(lowered.kind, IrExprKind::BoolLit(true)));
@@ -1966,13 +2366,25 @@ mod tests {
             kind: IrExprKind::BuiltinCall {
                 id: BuiltinId::Sum,
                 args: vec![
-                    IrExpr { id: ExprId(91), kind: IrExprKind::Var("xs".to_string()) },
-                    IrExpr { id: ExprId(92), kind: IrExprKind::IntLit(3) },
+                    IrExpr {
+                        id: ExprId(91),
+                        kind: IrExprKind::Var("xs".to_string()),
+                    },
+                    IrExpr {
+                        id: ExprId(92),
+                        kind: IrExprKind::IntLit(3),
+                    },
                 ],
             },
         };
         let lowered = lowering.lower_expr(expr);
-        assert!(matches!(lowered.kind, IrExprKind::BinOp { op: IrBinOp::Add, .. }));
+        assert!(matches!(
+            lowered.kind,
+            IrExprKind::BinOp {
+                op: IrBinOp::Add,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1984,7 +2396,10 @@ mod tests {
             id: ExprId(100),
             kind: IrExprKind::BuiltinCall {
                 id: BuiltinId::Int,
-                args: vec![IrExpr { id: ExprId(101), kind: IrExprKind::Var("v".to_string()) }],
+                args: vec![IrExpr {
+                    id: ExprId(101),
+                    kind: IrExprKind::Var("v".to_string()),
+                }],
             },
         };
         let lowered = lowering.lower_expr(expr);
@@ -2000,7 +2415,10 @@ mod tests {
             id: ExprId(110),
             kind: IrExprKind::BuiltinCall {
                 id: BuiltinId::Float,
-                args: vec![IrExpr { id: ExprId(111), kind: IrExprKind::Var("v".to_string()) }],
+                args: vec![IrExpr {
+                    id: ExprId(111),
+                    kind: IrExprKind::Var("v".to_string()),
+                }],
             },
         };
         let lowered = lowering.lower_expr(expr);
@@ -2012,7 +2430,10 @@ mod tests {
         let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 1300);
         let expr = IrExpr {
             id: ExprId(120),
-            kind: IrExprKind::BuiltinCall { id: BuiltinId::List, args: vec![] },
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::List,
+                args: vec![],
+            },
         };
         let lowered = lowering.lower_expr(expr);
         assert!(matches!(lowered.kind, IrExprKind::List { .. }));
@@ -2021,9 +2442,36 @@ mod tests {
     #[test]
     fn test_lower_bin_hex_oct_format() {
         let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 1500);
-        let bin_expr = IrExpr { id: ExprId(140), kind: IrExprKind::BuiltinCall { id: BuiltinId::Bin, args: vec![IrExpr { id: ExprId(141), kind: IrExprKind::IntLit(2) }] } };
-        let hex_expr = IrExpr { id: ExprId(142), kind: IrExprKind::BuiltinCall { id: BuiltinId::Hex, args: vec![IrExpr { id: ExprId(143), kind: IrExprKind::IntLit(2) }] } };
-        let oct_expr = IrExpr { id: ExprId(144), kind: IrExprKind::BuiltinCall { id: BuiltinId::Oct, args: vec![IrExpr { id: ExprId(145), kind: IrExprKind::IntLit(2) }] } };
+        let bin_expr = IrExpr {
+            id: ExprId(140),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Bin,
+                args: vec![IrExpr {
+                    id: ExprId(141),
+                    kind: IrExprKind::IntLit(2),
+                }],
+            },
+        };
+        let hex_expr = IrExpr {
+            id: ExprId(142),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Hex,
+                args: vec![IrExpr {
+                    id: ExprId(143),
+                    kind: IrExprKind::IntLit(2),
+                }],
+            },
+        };
+        let oct_expr = IrExpr {
+            id: ExprId(144),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Oct,
+                args: vec![IrExpr {
+                    id: ExprId(145),
+                    kind: IrExprKind::IntLit(2),
+                }],
+            },
+        };
         let bin_lowered = lowering.lower_expr(bin_expr);
         let hex_lowered = lowering.lower_expr(hex_expr);
         let oct_lowered = lowering.lower_expr(oct_expr);
@@ -2035,25 +2483,114 @@ mod tests {
     #[test]
     fn test_lower_chr_and_ord() {
         let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 1600);
-        let chr_expr = IrExpr { id: ExprId(150), kind: IrExprKind::BuiltinCall { id: BuiltinId::Chr, args: vec![IrExpr { id: ExprId(151), kind: IrExprKind::IntLit(65) }] } };
-        let ord_expr = IrExpr { id: ExprId(152), kind: IrExprKind::BuiltinCall { id: BuiltinId::Ord, args: vec![IrExpr { id: ExprId(153), kind: IrExprKind::StringLit("A".to_string()) }] } };
+        let chr_expr = IrExpr {
+            id: ExprId(150),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Chr,
+                args: vec![IrExpr {
+                    id: ExprId(151),
+                    kind: IrExprKind::IntLit(65),
+                }],
+            },
+        };
+        let ord_expr = IrExpr {
+            id: ExprId(152),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Ord,
+                args: vec![IrExpr {
+                    id: ExprId(153),
+                    kind: IrExprKind::StringLit("A".to_string()),
+                }],
+            },
+        };
         let chr_lowered = lowering.lower_expr(chr_expr);
         let ord_lowered = lowering.lower_expr(ord_expr);
-        assert!(matches!(chr_lowered.kind, IrExprKind::MethodCall { .. } | IrExprKind::Call { .. }));
+        assert!(matches!(
+            chr_lowered.kind,
+            IrExprKind::MethodCall { .. } | IrExprKind::Call { .. }
+        ));
         assert!(matches!(ord_lowered.kind, IrExprKind::Cast { .. }));
     }
 
     #[test]
     fn test_lower_abs_min_max_round() {
         let lowering = LoweringPass::new(HashMap::new(), HashMap::new(), 1700);
-        let abs_expr = IrExpr { id: ExprId(160), kind: IrExprKind::BuiltinCall { id: BuiltinId::Abs, args: vec![IrExpr { id: ExprId(161), kind: IrExprKind::IntLit(-1) }] } };
-        let min_expr = IrExpr { id: ExprId(162), kind: IrExprKind::BuiltinCall { id: BuiltinId::Min, args: vec![IrExpr { id: ExprId(163), kind: IrExprKind::IntLit(1) }, IrExpr { id: ExprId(164), kind: IrExprKind::IntLit(2) }] } };
-        let max_expr = IrExpr { id: ExprId(165), kind: IrExprKind::BuiltinCall { id: BuiltinId::Max, args: vec![IrExpr { id: ExprId(166), kind: IrExprKind::IntLit(1) }, IrExpr { id: ExprId(167), kind: IrExprKind::IntLit(2) }] } };
-        let round_expr = IrExpr { id: ExprId(168), kind: IrExprKind::BuiltinCall { id: BuiltinId::Round, args: vec![IrExpr { id: ExprId(169), kind: IrExprKind::FloatLit(1.2) }] } };
-        assert!(matches!(lowering.lower_expr(abs_expr).kind, IrExprKind::MethodCall { .. } | IrExprKind::Call { .. } | IrExprKind::BuiltinCall { .. }));
-        assert!(matches!(lowering.lower_expr(min_expr).kind, IrExprKind::MethodCall { .. } | IrExprKind::Call { .. } | IrExprKind::BuiltinCall { .. }));
-        assert!(matches!(lowering.lower_expr(max_expr).kind, IrExprKind::MethodCall { .. } | IrExprKind::Call { .. } | IrExprKind::BuiltinCall { .. }));
-        assert!(matches!(lowering.lower_expr(round_expr).kind, IrExprKind::MethodCall { .. } | IrExprKind::Call { .. } | IrExprKind::BuiltinCall { .. }));
+        let abs_expr = IrExpr {
+            id: ExprId(160),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Abs,
+                args: vec![IrExpr {
+                    id: ExprId(161),
+                    kind: IrExprKind::IntLit(-1),
+                }],
+            },
+        };
+        let min_expr = IrExpr {
+            id: ExprId(162),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Min,
+                args: vec![
+                    IrExpr {
+                        id: ExprId(163),
+                        kind: IrExprKind::IntLit(1),
+                    },
+                    IrExpr {
+                        id: ExprId(164),
+                        kind: IrExprKind::IntLit(2),
+                    },
+                ],
+            },
+        };
+        let max_expr = IrExpr {
+            id: ExprId(165),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Max,
+                args: vec![
+                    IrExpr {
+                        id: ExprId(166),
+                        kind: IrExprKind::IntLit(1),
+                    },
+                    IrExpr {
+                        id: ExprId(167),
+                        kind: IrExprKind::IntLit(2),
+                    },
+                ],
+            },
+        };
+        let round_expr = IrExpr {
+            id: ExprId(168),
+            kind: IrExprKind::BuiltinCall {
+                id: BuiltinId::Round,
+                args: vec![IrExpr {
+                    id: ExprId(169),
+                    kind: IrExprKind::FloatLit(1.2),
+                }],
+            },
+        };
+        assert!(matches!(
+            lowering.lower_expr(abs_expr).kind,
+            IrExprKind::MethodCall { .. }
+                | IrExprKind::Call { .. }
+                | IrExprKind::BuiltinCall { .. }
+        ));
+        assert!(matches!(
+            lowering.lower_expr(min_expr).kind,
+            IrExprKind::MethodCall { .. }
+                | IrExprKind::Call { .. }
+                | IrExprKind::BuiltinCall { .. }
+        ));
+        assert!(matches!(
+            lowering.lower_expr(max_expr).kind,
+            IrExprKind::MethodCall { .. }
+                | IrExprKind::Call { .. }
+                | IrExprKind::BuiltinCall { .. }
+        ));
+        assert!(matches!(
+            lowering.lower_expr(round_expr).kind,
+            IrExprKind::MethodCall { .. }
+                | IrExprKind::Call { .. }
+                | IrExprKind::BuiltinCall { .. }
+        ));
     }
 
     #[test]
@@ -2066,9 +2603,15 @@ mod tests {
                 args: vec![IrExpr {
                     id: ExprId(131),
                     kind: IrExprKind::ListComp {
-                        elt: Box::new(IrExpr { id: ExprId(132), kind: IrExprKind::Var("x".to_string()) }),
+                        elt: Box::new(IrExpr {
+                            id: ExprId(132),
+                            kind: IrExprKind::Var("x".to_string()),
+                        }),
                         target: "x".to_string(),
-                        iter: Box::new(IrExpr { id: ExprId(133), kind: IrExprKind::Var("xs".to_string()) }),
+                        iter: Box::new(IrExpr {
+                            id: ExprId(133),
+                            kind: IrExprKind::Var("xs".to_string()),
+                        }),
                         condition: None,
                     },
                 }],

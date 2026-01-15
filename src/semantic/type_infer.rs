@@ -84,7 +84,11 @@ pub trait TypeInference {
             Expr::Ident(name) => {
                 if let Some(info) = self.scope().lookup(name) {
                     info.ty.clone()
-                } else if self.external_imports().iter().any(|(_, alias)| alias == name) {
+                } else if self
+                    .external_imports()
+                    .iter()
+                    .any(|(_, alias)| alias == name)
+                {
                     // V1.4.0 / V1.7.0: from-import された外部ライブラリの関数等は Type::Any とする
                     Type::Any
                 } else {
@@ -193,7 +197,9 @@ pub trait TypeInference {
                 "tuple" | "list" => return Type::List(Box::new(Type::Unknown)),
                 "sorted" => return Type::List(Box::new(Type::Unknown)),
                 "reversed" => return Type::List(Box::new(Type::Unknown)),
-                "enumerate" => return Type::List(Box::new(Type::Tuple(vec![Type::Int, Type::Unknown]))),
+                "enumerate" => {
+                    return Type::List(Box::new(Type::Tuple(vec![Type::Int, Type::Unknown])))
+                }
                 "zip" => return Type::List(Box::new(Type::Tuple(vec![Type::Unknown; args.len()]))),
                 "map" => return Type::List(Box::new(Type::Unknown)),
                 "filter" => return Type::List(Box::new(Type::Unknown)),
@@ -657,9 +663,11 @@ mod tests {
     #[test]
     fn test_infer_method_dict_keys_returns_list() {
         let mut analyzer = MockAnalyzer::new();
-        analyzer
-            .scope
-            .define("d", Type::Dict(Box::new(Type::Int), Box::new(Type::String)), false);
+        analyzer.scope.define(
+            "d",
+            Type::Dict(Box::new(Type::Int), Box::new(Type::String)),
+            false,
+        );
         let expr = Expr::Call {
             func: Box::new(Expr::Attribute {
                 value: Box::new(Expr::Ident("d".to_string())),
@@ -668,18 +676,17 @@ mod tests {
             args: vec![],
             kwargs: vec![],
         };
-        assert_eq!(
-            analyzer.infer_type(&expr),
-            Type::List(Box::new(Type::Int))
-        );
+        assert_eq!(analyzer.infer_type(&expr), Type::List(Box::new(Type::Int)));
     }
 
     #[test]
     fn test_infer_method_dict_values_returns_list() {
         let mut analyzer = MockAnalyzer::new();
-        analyzer
-            .scope
-            .define("d", Type::Dict(Box::new(Type::Int), Box::new(Type::String)), false);
+        analyzer.scope.define(
+            "d",
+            Type::Dict(Box::new(Type::Int), Box::new(Type::String)),
+            false,
+        );
         let expr = Expr::Call {
             func: Box::new(Expr::Attribute {
                 value: Box::new(Expr::Ident("d".to_string())),
@@ -728,9 +735,11 @@ mod tests {
     #[test]
     fn test_infer_index_tuple_uniform_types() {
         let mut analyzer = MockAnalyzer::new();
-        analyzer
-            .scope
-            .define("t", Type::Ref(Box::new(Type::Tuple(vec![Type::Int, Type::Int]))), false);
+        analyzer.scope.define(
+            "t",
+            Type::Ref(Box::new(Type::Tuple(vec![Type::Int, Type::Int]))),
+            false,
+        );
         let expr = Expr::Index {
             target: Box::new(Expr::Ident("t".to_string())),
             index: Box::new(Expr::IntLiteral(0)),
@@ -741,9 +750,11 @@ mod tests {
     #[test]
     fn test_infer_index_tuple_mixed_types() {
         let mut analyzer = MockAnalyzer::new();
-        analyzer
-            .scope
-            .define("t", Type::Ref(Box::new(Type::Tuple(vec![Type::Int, Type::String]))), false);
+        analyzer.scope.define(
+            "t",
+            Type::Ref(Box::new(Type::Tuple(vec![Type::Int, Type::String]))),
+            false,
+        );
         let expr = Expr::Index {
             target: Box::new(Expr::Ident("t".to_string())),
             index: Box::new(Expr::IntLiteral(1)),
@@ -754,9 +765,11 @@ mod tests {
     #[test]
     fn test_infer_call_dict_returns_dict_type() {
         let mut analyzer = MockAnalyzer::new();
-        analyzer
-            .scope
-            .define("d", Type::Dict(Box::new(Type::Int), Box::new(Type::String)), false);
+        analyzer.scope.define(
+            "d",
+            Type::Dict(Box::new(Type::Int), Box::new(Type::String)),
+            false,
+        );
         let expr = Expr::Call {
             func: Box::new(Expr::Ident("dict".to_string())),
             args: vec![Expr::Ident("d".to_string())],
@@ -788,9 +801,11 @@ mod tests {
     #[test]
     fn test_infer_method_dict_iter() {
         let mut analyzer = MockAnalyzer::new();
-        analyzer
-            .scope
-            .define("d", Type::Dict(Box::new(Type::Int), Box::new(Type::String)), false);
+        analyzer.scope.define(
+            "d",
+            Type::Dict(Box::new(Type::Int), Box::new(Type::String)),
+            false,
+        );
         let expr = Expr::Call {
             func: Box::new(Expr::Attribute {
                 value: Box::new(Expr::Ident("d".to_string())),

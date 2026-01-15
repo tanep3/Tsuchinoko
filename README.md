@@ -4,8 +4,8 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.6.0-green.svg)](Cargo.toml)
-[![Coverage](https://img.shields.io/badge/Python_Syntax_Coverage-58%25-blue.svg)](#feature-documentation)
+[![Version](https://img.shields.io/badge/Version-1.7.0-green.svg)](Cargo.toml)
+[![Coverage](https://img.shields.io/badge/Python_Syntax_Coverage-57%25-blue.svg)](#feature-documentation)
 [![Changelog](https://img.shields.io/badge/History-Changelog-blue.svg)](CHANGELOG.md)
 
 [🇯🇵 日本語版はこちら](README_jp.md)
@@ -16,7 +16,7 @@ Tsuchinoko is a transpiler that converts type-hinted Python code to Rust.
 Write algorithmic logic in Python's readable syntax and gain Rust's safety and performance.  
 Tsuchinoko (ツチノコ) is a legendary snake-like cryptid from Japanese folklore. Like its namesake, this tool transforms one thing (Python) into something unexpected (Rust!).
 
-> **Coverage**: Supports 58% of Python syntax features (86 features), covering essential constructs for algorithmic programming: variables, operators, control flow, functions, classes (with inheritance), @property, data structures, collections (list/dict/set), string methods, resource management (with statement), and robust error handling with Result types.
+> **Coverage**: Supports 57% of Python syntax features (86 of 151 features), covering essential constructs for algorithmic programming: variables, operators, control flow, functions, classes (with inheritance), @property, data structures, collections (list/dict/set), string methods, resource management (with statement), and robust error handling with Result types.
 
 ## Design Philosophy
 

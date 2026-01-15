@@ -26,20 +26,25 @@ pub enum BridgeError {
 
     #[error("Type Mismatch: {0}")]
     TypeMismatch(String),
-    
+
     #[error("IO Error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Serialization Error: {0}")]
     Json(#[from] serde_json::Error),
-    
+
     #[error("Unknown Error: {0}")]
     Unknown(String),
 }
 
 impl BridgeError {
     /// Convert from API error code/message to BridgeError
-    pub fn from_api_error(code: &str, message: String, py_type: Option<String>, traceback: Option<String>) -> Self {
+    pub fn from_api_error(
+        code: &str,
+        message: String,
+        py_type: Option<String>,
+        traceback: Option<String>,
+    ) -> Self {
         match code {
             "ProtocolError" => BridgeError::Protocol(message),
             "StaleHandle" => BridgeError::StaleHandle(message),

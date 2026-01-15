@@ -76,7 +76,7 @@ pub enum Command {
         target: String,
         start: TnkValue,
         stop: TnkValue,
-        step: TnkValue,
+        step: Box<TnkValue>,
     },
     Iter {
         session_id: String,
@@ -94,7 +94,7 @@ pub enum Command {
         req_id: Option<String>,
         target: String,
     },
-    
+
     // Debug Commands
     DebugCreateString {
         session_id: String,
@@ -153,7 +153,8 @@ fn main() -> io::Result<()> {
 
         let mut line = String::new();
         reader.read_line(&mut line)?;
-        let resp: Response = serde_json::from_str(&line).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let resp: Response = serde_json::from_str(&line)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         eprintln!("Rust received: {:?}", resp); // Log to stderr
         Ok(resp)
     };
@@ -169,7 +170,10 @@ fn main() -> io::Result<()> {
     })?;
 
     let h_id = match resp {
-        Response::Ok { value: TnkValue::Handle { id, .. }, .. } => id,
+        Response::Ok {
+            value: TnkValue::Handle { id, .. },
+            ..
+        } => id,
         _ => panic!("Expected handle"),
     };
     eprintln!("Obtained Handle: {}", h_id);
@@ -183,12 +187,18 @@ fn main() -> io::Result<()> {
         method: "upper".to_string(),
         args: vec![],
     })?;
-    
+
     match resp {
-        Response::Ok { value: TnkValue::Value { value: Some(JsonPrimitive::String(s)) }, .. } => {
+        Response::Ok {
+            value:
+                TnkValue::Value {
+                    value: Some(JsonPrimitive::String(s)),
+                },
+            ..
+        } => {
             eprintln!("Result: {}", s);
             assert_eq!(s, "PYTHON FROM RUST");
-        },
+        }
         _ => panic!("Expected string value"),
     }
 
@@ -200,7 +210,10 @@ fn main() -> io::Result<()> {
         code: "[1, 2, 3]".to_string(),
     })?;
     let list_id = match resp {
-        Response::Ok { value: TnkValue::Handle { id, .. }, .. } => id,
+        Response::Ok {
+            value: TnkValue::Handle { id, .. },
+            ..
+        } => id,
         _ => panic!("Expected list handle"),
     };
 
@@ -212,7 +225,10 @@ fn main() -> io::Result<()> {
         target: list_id,
     })?;
     let iter_id = match resp {
-        Response::Ok { value: TnkValue::Handle { id, .. }, .. } => id,
+        Response::Ok {
+            value: TnkValue::Handle { id, .. },
+            ..
+        } => id,
         _ => panic!("Expected iterator handle"),
     };
 
@@ -224,15 +240,19 @@ fn main() -> io::Result<()> {
         target: iter_id,
         batch_size: 2,
     })?;
-    
+
     match resp {
-        Response::Ok { value: TnkValue::List { items }, meta, .. } => {
+        Response::Ok {
+            value: TnkValue::List { items },
+            meta,
+            ..
+        } => {
             eprintln!("Batch items: {:?}", items);
             assert_eq!(items.len(), 2);
             if let Some(m) = meta {
                 eprintln!("Done: {:?}", m.done);
             }
-        },
+        }
         _ => panic!("Expected list response"),
     }
 

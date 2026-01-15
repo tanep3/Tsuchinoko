@@ -125,9 +125,19 @@ flowchart LR
 | F-048 | Result型統一 | 例外発生関数は `Result<T, TsuchinokoError>` | 高 | 1.5.2 | ✅ V1.5.2 |
 | F-049 | 外部境界Result化 | PyO3/py_bridge 失敗を `Err` で返す | 高 | 1.5.2 | ✅ V1.5.2 |
 | F-050 | エラー行番号 | `[line 10] RuntimeError: ...` 形式 | 中 | 1.5.2 | ✅ V1.5.2 |
-| F-051 | 変換時診断の一括出力 | 変換不能を収集しEmitter前に一括で返却 | 高 | 1.7.0 | 仕様追加 |
-| F-052 | 変換時診断の複数件通知 | VSCode向けに複数エラーをまとめて通知 | 高 | 1.7.0 | 仕様追加 |
-| F-053 | CLI出力分離 | stdout=人間向けテキスト, stderr=JSON診断(失敗時のみ) | 高 | 1.7.0 | 仕様追加 |
+| F-051 | 変換時診断の一括出力 | 変換不能を収集しEmitter前に一括で返却 | 高 | 1.7.0 | ✅ V1.7.0 |
+| F-052 | 変換時診断の複数件通知 | VSCode向けに複数エラーをまとめて通知 | 高 | 1.7.0 | ✅ V1.7.0 |
+| F-053 | CLI出力分離 | stdout=人間向けテキスト, stderr=JSON診断(失敗時のみ) | 高 | 1.7.0 | ✅ V1.7.0 |
+| F-054 | Remote Object Handle | Python Worker との双方向通信 (Handle ID 管理) | 高 | 1.7.0 | ✅ V1.7.0 |
+| F-055 | Method Call | `call_method`: メソッド呼び出し (`df.head(10)`) | 高 | 1.7.0 | ✅ V1.7.0 |
+| F-056 | Attribute Access | `get_attribute`: 属性アクセス (`df.shape`, `df.columns`) | 高 | 1.7.0 | ✅ V1.7.0 |
+| F-057 | Item Access | `get_item`: 要素アクセス (`df["A"]`, `dict["key"]`) | 高 | 1.7.0 | ✅ V1.7.0 |
+| F-058 | Slice | `slice`: スライス操作 (`arr[start:stop:step]`) | 高 | 1.7.0 | ✅ V1.7.0 |
+| F-059 | Batched Iterator | `iter` / `iter_next_batch`: IPC削減のバッチ型イテレータ | 高 | 1.7.0 | ✅ V1.7.0 |
+| F-060 | ModuleTable | トップレベル import を `bridge.get("alias")` 経由で管理 | 高 | 1.7.0 | ✅ V1.7.0 |
+| F-061 | Worker Error op | `error.op` フィールド (cmd, target, key) | 中 | 1.7.0 | ✅ V1.7.0 |
+| F-062 | BuiltinTable Architecture | 組み込み関数の宣言的定義テーブル化 | 高 | 1.7.0 | ✅ V1.7.0 |
+| F-063 | 診断アーキテクチャ | 3層診断構造 (Parse/AST/IR) | 高 | 1.7.0 | ✅ V1.7.0 |
 
 ### 3.2 サポート対象外
 
@@ -294,20 +304,98 @@ Rust は `fn main()` だけのため、変換規約を明示する。
 - Rustではブロックスコープになるため、**ブロック内で初めて定義された変数は hoist して `Option<T>` として宣言**する  
 - これにより **トップレベル/`__main__` ガード内での変数参照が破綻しない**
 
-### 3.7 未対応機能ガード（UnsupportedFeatureRegistry）
+### 3.7 診断システム（未対応機能ガード）
 
 > [!IMPORTANT]
-> 未対応機能の検知は、各フェーズに散らさず **中央レジストリで一元管理** する。
+> 未対応機能の検知と診断を中央レジストリで一元管理する。
 
-**要件**
-- 未対応機能は `UnsupportedFeatureRegistry` で **ガードON/OFFを制御** する
-- 変換不能は **TnkDiagnostics** として収集・一括出力する
-- 新機能実装時は **ガードOFF** にするだけで解除可能であること
+#### 3.7.1 ガード方針（運用）
 
-**運用方針**
+**要件**:
+- 未対応機能は `UnsupportedFeatureRegistry` で **ガードON/OFFを制御**
+- 変換不能は **TnkDiagnostics** として収集・一括出力
+- 新機能実装時は **ガードOFF** にするだけで解除可能
+
+**運用方針**:
 - デフォルトは **ガードON**
 - 対応済みの項目は **ガードOFF**
 - ガードOFFの一覧は `docs/supported_features.md` / `_jp.md` に記載
+
+#### 3.7.2 診断アーキテクチャ（V1.7.0実装）
+
+> [!IMPORTANT]
+> 3層構造（Parse/AST/IR）による診断システムを導入。
+
+**3層診断構造**:
+1. **Parse Diagnostics**: 構文解析フェーズで未対応構文を検知
+2. **AST Diagnostics**: 構文木レベルで意味的制約違反を検知
+3. **IR Diagnostics**: 中間表現レベルで型エラーを検知
+
+**診断情報の構造**:
+```rust
+pub struct TnkDiagnostic {
+    code: String,           // "TNK-UNSUPPORTED-SYNTAX"
+    message: String,        // "unsupported builtin: iter()"
+    severity: Severity,     // Error/Warning/Info
+    span: DiagSpan,         // file, line, column, end_line, end_column
+    phase: Phase,           // Parse/AST/IR
+}
+```
+
+**出力形式**:
+- CLI: 人間向けテキスト (stderr)
+- JSON診断: `--diag-json` 指定時のみ (`stderr`)
+- VSCode: `--diag-json` を使用して正確な診断マーカー表示
+
+**実装場所**:
+- `src/unsupported_features.rs`: 中央レジストリ
+- `src/diagnostics.rs`: 3層診断関数（`scan_unsupported_syntax`, `scan_unsupported_ast`, `scan_unsupported_ir`）
+
+詳細は [`diagnostic_architecture.md`](diagnostic_architecture.md) を参照。
+
+### 3.8 BuiltinTable方式 (V1.7.0)
+
+> [!IMPORTANT]
+> 組み込み関数の解析ロジックを**宣言的な構造データ**に分離し、保守性を向上。
+
+**アーキテクチャ原則**:
+- **Semantic**: BuiltinIdの特定と型記録に専念
+- **BuiltinTable**: 関数名・型シグネチャ・ブリッジ連携を宣言的に保持
+- **Lowering**: BuiltinCall展開、FromTnkValue自動挿入
+- **Emitter**: 単なる出力のみ（意味解析ロジックなし）
+
+**実装場所**:
+- `src/bridge/builtin_table.rs`: 26個の組み込み関数を構造定義
+- `src/semantic/builtins.rs`: 補助的なメタデータ管理
+- `src/ir/exprs.rs`: `BuiltinId`, `IrExprKind::BuiltinCall`, `FromTnkValue`
+
+詳細は `docs/old_versions/v1.7.0_BuiltinTable方式.md` を参照。
+
+### 3.9 Remote Object Handle パターン (V1.7.0)
+
+> [!IMPORTANT]
+> Rust から Python オブジェクトを透過的に操作可能にする。
+
+**アーキテクチャ**:
+- Rust: `PyObjectHandle { id: String }` のみ保持
+- Python Worker: `_OBJECT_STORE: Dict[str, Any]` で実体管理
+- 通信: JSON RPC (stdin/stdout)
+
+**対応コマンド**:
+| コマンド | 用途 | 例 |
+|---------|------|----|
+| `call_method` | メソッド呼び出し | `df.head(10)` |
+| `get_attribute` | 属性アクセス | `df.shape`, `df.columns` |
+| `get_item` | 要素アクセス | `df["A"]`, `dict["key"]` |
+| `slice` | スライス | `arr[start:stop:step]` |
+| `iter` / `iter_next_batch` | バッチ型イテレータ | `for x in obj` |
+
+**ModuleTable**:
+- トップレベル import を `ModuleTable` で管理
+- `bridge.get("alias")` 経由でアクセス
+- スコープ問題を解決
+
+詳細は `docs/old_versions/v1.7.0_requirements.md` および `docs/old_versions/v1.7.0_system_design.md` を参照。
 
 ---
 

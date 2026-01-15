@@ -112,7 +112,13 @@ mod tests {
 
     #[test]
     fn test_native_code_generation() {
-        assert_eq!(get_native_binding("math.sqrt"), Some(NativeBinding::Method("sqrt")));
-        assert_eq!(get_native_binding("math.pow"), Some(NativeBinding::Method("powf")));
+        assert_eq!(
+            get_native_binding("math.sqrt"),
+            Some(NativeBinding::Method("sqrt"))
+        );
+        assert_eq!(
+            get_native_binding("math.pow"),
+            Some(NativeBinding::Method("powf"))
+        );
     }
 }

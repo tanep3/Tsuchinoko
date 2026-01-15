@@ -1,5 +1,5 @@
-use crate::ir::{IrExpr, IrExprKind, IrNode};
 use crate::bridge::module_table::{get_import_mode, ImportMode};
+use crate::ir::{IrExpr, IrExprKind, IrNode};
 use crate::semantic::Type;
 use std::collections::HashMap;
 
@@ -47,7 +47,13 @@ pub fn build_emit_plan(nodes: &[IrNode]) -> EmitPlan {
     let alias_map = collect_aliases(nodes);
 
     for node in nodes {
-        process_node_for_plan(node, &alias_map, &mut plan, &mut tnk_usage, &mut type_uses_error);
+        process_node_for_plan(
+            node,
+            &alias_map,
+            &mut plan,
+            &mut tnk_usage,
+            &mut type_uses_error,
+        );
     }
 
     plan.uses_tsuchinoko_error |= type_uses_error;
@@ -87,7 +93,10 @@ fn process_node_for_plan(
             *tnk_usage |= func_tnk;
             *type_uses_error |= func_type_error;
         }
-        IrNode::ImplBlock { struct_name, methods } => {
+        IrNode::ImplBlock {
+            struct_name,
+            methods,
+        } => {
             for method in methods {
                 if let IrNode::MethodDecl {
                     name,
@@ -110,10 +119,8 @@ fn process_node_for_plan(
                     );
                     plan.needs_resident |= method_plan.needs_resident;
                     plan.uses_tsuchinoko_error |= method_plan.uses_tsuchinoko_error;
-                    plan.method_plans.insert(
-                        format!("{}::{}", struct_name, name),
-                        method_plan,
-                    );
+                    plan.method_plans
+                        .insert(format!("{}::{}", struct_name, name), method_plan);
                     *tnk_usage |= method_tnk;
                     *type_uses_error |= method_type_error;
                 }
@@ -194,7 +201,11 @@ fn scan_node(node: &IrNode, flags: &mut ScanFlags, alias_map: &AliasMap) {
             }
         }
         IrNode::Assign { value, .. } => scan_expr(value, flags, alias_map),
-        IrNode::IndexAssign { target, index, value } => {
+        IrNode::IndexAssign {
+            target,
+            index,
+            value,
+        } => {
             scan_expr(target, flags, alias_map);
             scan_expr(index, flags, alias_map);
             scan_expr(value, flags, alias_map);
@@ -213,7 +224,11 @@ fn scan_node(node: &IrNode, flags: &mut ScanFlags, alias_map: &AliasMap) {
         }
         IrNode::FuncDecl { .. } => {}
         IrNode::MethodDecl { .. } => {}
-        IrNode::If { cond, then_block, else_block } => {
+        IrNode::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
             scan_expr(cond, flags, alias_map);
             for node in then_block {
                 scan_node(node, flags, alias_map);
@@ -224,8 +239,18 @@ fn scan_node(node: &IrNode, flags: &mut ScanFlags, alias_map: &AliasMap) {
                 }
             }
         }
-        IrNode::For { var_type, iter, body, .. }
-        | IrNode::BridgeBatchFor { var_type, iter, body, .. } => {
+        IrNode::For {
+            var_type,
+            iter,
+            body,
+            ..
+        }
+        | IrNode::BridgeBatchFor {
+            var_type,
+            iter,
+            body,
+            ..
+        } => {
             scan_type(var_type, flags);
             scan_expr(iter, flags, alias_map);
             for node in body {
@@ -354,7 +379,10 @@ fn scan_expr(expr: &IrExpr, flags: &mut ScanFlags, alias_map: &AliasMap) {
         }
         IrExprKind::PyO3Call { args, .. } => {
             if let IrExprKind::PyO3Call { module, method, .. } = &expr.kind {
-                let real_module = alias_map.get(module).cloned().unwrap_or_else(|| module.clone());
+                let real_module = alias_map
+                    .get(module)
+                    .cloned()
+                    .unwrap_or_else(|| module.clone());
                 let target = format!("{real_module}.{method}");
                 let import_mode = get_import_mode(&target);
                 if matches!(import_mode, ImportMode::PyO3 | ImportMode::Resident) {
@@ -372,7 +400,12 @@ fn scan_expr(expr: &IrExpr, flags: &mut ScanFlags, alias_map: &AliasMap) {
                 scan_expr(arg, flags, alias_map);
             }
         }
-        IrExprKind::BridgeMethodCall { target, args, keywords, .. } => {
+        IrExprKind::BridgeMethodCall {
+            target,
+            args,
+            keywords,
+            ..
+        } => {
             flags.uses_bridge = true;
             scan_expr(target, flags, alias_map);
             for arg in args {
@@ -382,7 +415,11 @@ fn scan_expr(expr: &IrExpr, flags: &mut ScanFlags, alias_map: &AliasMap) {
                 scan_expr(value, flags, alias_map);
             }
         }
-        IrExprKind::BridgeCall { target, args, keywords } => {
+        IrExprKind::BridgeCall {
+            target,
+            args,
+            keywords,
+        } => {
             flags.uses_bridge = true;
             scan_expr(target, flags, alias_map);
             for arg in args {
@@ -539,7 +576,10 @@ fn scan_expr(expr: &IrExpr, flags: &mut ScanFlags, alias_map: &AliasMap) {
         IrExprKind::DynamicWrap { value, .. } => {
             scan_expr(value, flags, alias_map);
         }
-        IrExprKind::List { elem_type, elements } => {
+        IrExprKind::List {
+            elem_type,
+            elements,
+        } => {
             scan_type(elem_type, flags);
             for expr in elements {
                 scan_expr(expr, flags, alias_map);
@@ -562,7 +602,10 @@ fn scan_expr(expr: &IrExpr, flags: &mut ScanFlags, alias_map: &AliasMap) {
                 scan_expr(v, flags, alias_map);
             }
         }
-        IrExprKind::Set { elem_type, elements } => {
+        IrExprKind::Set {
+            elem_type,
+            elements,
+        } => {
             scan_type(elem_type, flags);
             for expr in elements {
                 scan_expr(expr, flags, alias_map);
@@ -619,7 +662,12 @@ fn scan_type(ty: &Type, flags: &mut ScanFlags) {
             scan_type(key, flags);
             scan_type(value, flags);
         }
-        Type::Func { params, ret, may_raise, .. } => {
+        Type::Func {
+            params,
+            ret,
+            may_raise,
+            ..
+        } => {
             if *may_raise {
                 flags.type_uses_error = true;
             }
@@ -642,7 +690,11 @@ fn collect_aliases(nodes: &[IrNode]) -> AliasMap {
 
 fn collect_aliases_from_node(node: &IrNode, aliases: &mut AliasMap) {
     match node {
-        IrNode::BridgeImport { module, alias, items } => {
+        IrNode::BridgeImport {
+            module,
+            alias,
+            items,
+        } => {
             if items.is_none() {
                 let alias_name = alias.clone().unwrap_or_else(|| module.clone());
                 aliases.insert(alias_name, module.clone());
@@ -658,7 +710,11 @@ fn collect_aliases_from_node(node: &IrNode, aliases: &mut AliasMap) {
                 collect_aliases_from_node(method, aliases);
             }
         }
-        IrNode::If { then_block, else_block, .. } => {
+        IrNode::If {
+            then_block,
+            else_block,
+            ..
+        } => {
             for node in then_block {
                 collect_aliases_from_node(node, aliases);
             }

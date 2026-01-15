@@ -38,7 +38,9 @@ pub struct TnkDiagnostics {
 
 impl TnkDiagnostics {
     pub fn new() -> Self {
-        Self { diagnostics: Vec::new() }
+        Self {
+            diagnostics: Vec::new(),
+        }
     }
 
     pub fn has_errors(&self) -> bool {
@@ -72,8 +74,17 @@ impl TnkDiagnostics {
     }
 }
 
-pub fn span_for_line(file: Option<&Path>, line: usize, column: usize, len: usize) -> DiagnosticSpan {
-    let end_col = if len == 0 { column } else { column + len.saturating_sub(1) };
+pub fn span_for_line(
+    file: Option<&Path>,
+    line: usize,
+    column: usize,
+    len: usize,
+) -> DiagnosticSpan {
+    let end_col = if len == 0 {
+        column
+    } else {
+        column + len.saturating_sub(1)
+    };
     DiagnosticSpan {
         file: file.map(|p| p.display().to_string()),
         line,
@@ -83,12 +94,7 @@ pub fn span_for_line(file: Option<&Path>, line: usize, column: usize, len: usize
     }
 }
 
-pub fn error_diag(
-    code: &str,
-    message: String,
-    span: DiagnosticSpan,
-    phase: &str,
-) -> TnkDiagnostic {
+pub fn error_diag(code: &str, message: String, span: DiagnosticSpan, phase: &str) -> TnkDiagnostic {
     TnkDiagnostic {
         code: code.to_string(),
         message,
@@ -108,21 +114,25 @@ pub fn from_error(err: &crate::error::TsuchinokoError, file: Option<&Path>) -> T
         crate::error::TsuchinokoError::TypeError { line, message } => {
             ("TNK-TYPE-ERROR", message.clone(), *line, "semantic")
         }
-        crate::error::TsuchinokoError::UndefinedVariable { name, line } => {
-            ("TNK-UNDEFINED-VARIABLE", format!("Undefined variable '{name}'"), *line, "semantic")
-        }
-        crate::error::TsuchinokoError::UnsupportedSyntax { syntax, line } => {
-            ("TNK-UNSUPPORTED-SYNTAX", format!("Unsupported syntax: {syntax}"), *line, "semantic")
-        }
+        crate::error::TsuchinokoError::UndefinedVariable { name, line } => (
+            "TNK-UNDEFINED-VARIABLE",
+            format!("Undefined variable '{name}'"),
+            *line,
+            "semantic",
+        ),
+        crate::error::TsuchinokoError::UnsupportedSyntax { syntax, line } => (
+            "TNK-UNSUPPORTED-SYNTAX",
+            format!("Unsupported syntax: {syntax}"),
+            *line,
+            "semantic",
+        ),
         crate::error::TsuchinokoError::SemanticError { message } => {
             ("TNK-SEMANTIC-ERROR", message.clone(), 1, "semantic")
         }
         crate::error::TsuchinokoError::CompileError(message) => {
             ("TNK-COMPILE-ERROR", message.clone(), 1, "lowering")
         }
-        crate::error::TsuchinokoError::IoError(_) => {
-            ("TNK-IO-ERROR", format!("{err}"), 1, "parse")
-        }
+        crate::error::TsuchinokoError::IoError(_) => ("TNK-IO-ERROR", format!("{err}"), 1, "parse"),
     };
     let span = span_for_line(file, line, 1, 1);
     diags.add(error_diag(code, message, span, phase));
@@ -170,9 +180,8 @@ fn find_keyword(line: &str, keyword: &str) -> Option<usize> {
     let mut i = 0usize;
     while i + k.len() <= bytes.len() {
         if &bytes[i..i + k.len()] == k {
-            let left_ok = i == 0
-                || !((bytes[i - 1] as char).is_ascii_alphanumeric()
-                    || bytes[i - 1] == b'_');
+            let left_ok =
+                i == 0 || !((bytes[i - 1] as char).is_ascii_alphanumeric() || bytes[i - 1] == b'_');
             let right_ok = i + k.len() == bytes.len()
                 || !((bytes[i + k.len()] as char).is_ascii_alphanumeric()
                     || bytes[i + k.len()] == b'_');
@@ -194,9 +203,8 @@ fn find_builtin_call(line: &str, name: &str) -> Option<usize> {
     let mut i = 0usize;
     while i + k.len() <= bytes.len() {
         if &bytes[i..i + k.len()] == k {
-            let left_ok = i == 0
-                || !((bytes[i - 1] as char).is_ascii_alphanumeric()
-                    || bytes[i - 1] == b'_');
+            let left_ok =
+                i == 0 || !((bytes[i - 1] as char).is_ascii_alphanumeric() || bytes[i - 1] == b'_');
             let right_ok = i + k.len() == bytes.len()
                 || !((bytes[i + k.len()] as char).is_ascii_alphanumeric()
                     || bytes[i + k.len()] == b'_');
@@ -270,28 +278,84 @@ pub fn scan_unsupported_syntax(
         }
 
         let checks: [(&str, UF, &str); 22] = [
-            ("match", UF::MatchStatement, "match statement is unsupported"),
+            (
+                "match",
+                UF::MatchStatement,
+                "match statement is unsupported",
+            ),
             ("async", UF::AsyncDef, "async is unsupported"),
             ("await", UF::AwaitExpr, "await is unsupported"),
             ("yield from", UF::YieldFrom, "yield from is unsupported"),
             ("yield", UF::YieldStatement, "yield is unsupported"),
             ("del", UF::DelStatement, "del statement is unsupported"),
-            ("global", UF::GlobalStatement, "global statement is unsupported"),
-            ("nonlocal", UF::NonlocalStatement, "nonlocal statement is unsupported"),
+            (
+                "global",
+                UF::GlobalStatement,
+                "global statement is unsupported",
+            ),
+            (
+                "nonlocal",
+                UF::NonlocalStatement,
+                "nonlocal statement is unsupported",
+            ),
             (":=", UF::WalrusOperator, "walrus operator is unsupported"),
             ("async for", UF::AsyncFor, "async for is unsupported"),
             ("async with", UF::AsyncWith, "async with is unsupported"),
-            ("def __iter__", UF::MagicMethodIter, "unsupported magic method: __iter__"),
-            ("def __next__", UF::MagicMethodNext, "unsupported magic method: __next__"),
-            ("def __slots__", UF::MagicMethodSlots, "unsupported magic method: __slots__"),
-            ("def __call__", UF::MagicMethodCall, "unsupported magic method: __call__"),
-            ("def __repr__", UF::MagicMethodRepr, "unsupported magic method: __repr__"),
-            ("def __str__", UF::MagicMethodStr, "unsupported magic method: __str__"),
-            ("def __getitem__", UF::MagicMethodGetItem, "unsupported magic method: __getitem__"),
-            ("def __setitem__", UF::MagicMethodSetItem, "unsupported magic method: __setitem__"),
-            ("def __delitem__", UF::MagicMethodDelItem, "unsupported magic method: __delitem__"),
-            ("def __len__", UF::MagicMethodLen, "unsupported magic method: __len__"),
-            ("def __contains__", UF::MagicMethodContains, "unsupported magic method: __contains__"),
+            (
+                "def __iter__",
+                UF::MagicMethodIter,
+                "unsupported magic method: __iter__",
+            ),
+            (
+                "def __next__",
+                UF::MagicMethodNext,
+                "unsupported magic method: __next__",
+            ),
+            (
+                "def __slots__",
+                UF::MagicMethodSlots,
+                "unsupported magic method: __slots__",
+            ),
+            (
+                "def __call__",
+                UF::MagicMethodCall,
+                "unsupported magic method: __call__",
+            ),
+            (
+                "def __repr__",
+                UF::MagicMethodRepr,
+                "unsupported magic method: __repr__",
+            ),
+            (
+                "def __str__",
+                UF::MagicMethodStr,
+                "unsupported magic method: __str__",
+            ),
+            (
+                "def __getitem__",
+                UF::MagicMethodGetItem,
+                "unsupported magic method: __getitem__",
+            ),
+            (
+                "def __setitem__",
+                UF::MagicMethodSetItem,
+                "unsupported magic method: __setitem__",
+            ),
+            (
+                "def __delitem__",
+                UF::MagicMethodDelItem,
+                "unsupported magic method: __delitem__",
+            ),
+            (
+                "def __len__",
+                UF::MagicMethodLen,
+                "unsupported magic method: __len__",
+            ),
+            (
+                "def __contains__",
+                UF::MagicMethodContains,
+                "unsupported magic method: __contains__",
+            ),
         ];
 
         for (kw, feat, msg) in checks {
@@ -590,7 +654,13 @@ pub fn scan_unsupported_ast(
     let mut diags = TnkDiagnostics::new();
     let span = span_for_line(file, 1, 1, 1);
 
-    fn scan_expr(expr: &Expr, diags: &mut TnkDiagnostics, span: &DiagnosticSpan, registry: &crate::unsupported_features::UnsupportedFeatureRegistry) {
+    #[allow(clippy::only_used_in_recursion)]
+    fn scan_expr(
+        expr: &Expr,
+        diags: &mut TnkDiagnostics,
+        span: &DiagnosticSpan,
+        registry: &crate::unsupported_features::UnsupportedFeatureRegistry,
+    ) {
         match expr {
             Expr::GenExpr { .. } => {}
             Expr::BinOp { left, right, .. } => {
@@ -607,9 +677,7 @@ pub fn scan_unsupported_ast(
                     scan_expr(arg, diags, span, registry);
                 }
             }
-            Expr::List(items)
-            | Expr::Tuple(items)
-            | Expr::Set(items) => {
+            Expr::List(items) | Expr::Tuple(items) | Expr::Set(items) => {
                 for item in items {
                     scan_expr(item, diags, span, registry);
                 }
@@ -620,15 +688,31 @@ pub fn scan_unsupported_ast(
                     scan_expr(v, diags, span, registry);
                 }
             }
-            Expr::ListComp { elt, iter, condition, .. }
-            | Expr::SetComp { elt, iter, condition, .. } => {
+            Expr::ListComp {
+                elt,
+                iter,
+                condition,
+                ..
+            }
+            | Expr::SetComp {
+                elt,
+                iter,
+                condition,
+                ..
+            } => {
                 scan_expr(elt, diags, span, registry);
                 scan_expr(iter, diags, span, registry);
                 if let Some(cond) = condition {
                     scan_expr(cond, diags, span, registry);
                 }
             }
-            Expr::DictComp { key, value, iter, condition, .. } => {
+            Expr::DictComp {
+                key,
+                value,
+                iter,
+                condition,
+                ..
+            } => {
                 scan_expr(key, diags, span, registry);
                 scan_expr(value, diags, span, registry);
                 scan_expr(iter, diags, span, registry);
@@ -645,7 +729,12 @@ pub fn scan_unsupported_ast(
                 scan_expr(target, diags, span, registry);
                 scan_expr(index, diags, span, registry);
             }
-            Expr::Slice { target, start, end, step } => {
+            Expr::Slice {
+                target,
+                start,
+                end,
+                step,
+            } => {
                 scan_expr(target, diags, span, registry);
                 if let Some(v) = start {
                     scan_expr(v, diags, span, registry);
@@ -683,17 +772,29 @@ pub fn scan_unsupported_ast(
         false
     }
 
-    fn scan_stmt(stmt: &Stmt, diags: &mut TnkDiagnostics, span: &DiagnosticSpan, registry: &crate::unsupported_features::UnsupportedFeatureRegistry) {
+    fn scan_stmt(
+        stmt: &Stmt,
+        diags: &mut TnkDiagnostics,
+        span: &DiagnosticSpan,
+        registry: &crate::unsupported_features::UnsupportedFeatureRegistry,
+    ) {
         match stmt {
             Stmt::Assign { value, .. } => scan_expr(value, diags, span, registry),
-            Stmt::IndexAssign { target, index, value } => {
+            Stmt::IndexAssign {
+                target,
+                index,
+                value,
+            } => {
                 scan_expr(target, diags, span, registry);
                 scan_expr(index, diags, span, registry);
                 scan_expr(value, diags, span, registry);
             }
             Stmt::AugAssign { value, .. } => scan_expr(value, diags, span, registry),
             Stmt::TupleAssign { value, .. } => scan_expr(value, diags, span, registry),
-            Stmt::IndexSwap { left_targets, right_values } => {
+            Stmt::IndexSwap {
+                left_targets,
+                right_values,
+            } => {
                 for expr in left_targets {
                     scan_expr(expr, diags, span, registry);
                 }
@@ -706,7 +807,12 @@ pub fn scan_unsupported_ast(
                     scan_stmt(s, diags, span, registry);
                 }
             }
-            Stmt::If { condition, then_body, elif_clauses, else_body } => {
+            Stmt::If {
+                condition,
+                then_body,
+                elif_clauses,
+                else_body,
+            } => {
                 scan_expr(condition, diags, span, registry);
                 for s in then_body {
                     scan_stmt(s, diags, span, registry);
@@ -756,7 +862,12 @@ pub fn scan_unsupported_ast(
                     }
                 }
             }
-            Stmt::TryExcept { try_body, except_clauses, else_body, finally_body } => {
+            Stmt::TryExcept {
+                try_body,
+                except_clauses,
+                else_body,
+                finally_body,
+            } => {
                 for s in try_body {
                     scan_stmt(s, diags, span, registry);
                 }
@@ -788,7 +899,9 @@ pub fn scan_unsupported_ast(
                     scan_expr(expr, diags, span, registry);
                 }
             }
-            Stmt::With { context_expr, body, .. } => {
+            Stmt::With {
+                context_expr, body, ..
+            } => {
                 if !is_open_call(context_expr) && registry.is_enabled(UF::CustomContextManager) {
                     diags.add(error_diag(
                         "TNK-UNSUPPORTED-SYNTAX",
@@ -802,9 +915,7 @@ pub fn scan_unsupported_ast(
                     scan_stmt(s, diags, span, registry);
                 }
             }
-            Stmt::Import { .. }
-            | Stmt::Break
-            | Stmt::Continue => {}
+            Stmt::Import { .. } | Stmt::Break | Stmt::Continue => {}
         }
     }
 
@@ -826,17 +937,39 @@ pub fn scan_unsupported_ir(
     let mut diags = TnkDiagnostics::new();
     let span = span_for_line(file, 1, 1, 1);
 
-    fn scan_expr(expr: &IrExpr, diags: &mut TnkDiagnostics, span: &DiagnosticSpan, registry: &crate::unsupported_features::UnsupportedFeatureRegistry) {
+    #[allow(clippy::only_used_in_recursion)]
+    fn scan_expr(
+        expr: &IrExpr,
+        diags: &mut TnkDiagnostics,
+        span: &DiagnosticSpan,
+        registry: &crate::unsupported_features::UnsupportedFeatureRegistry,
+    ) {
         match &expr.kind {
-            IrExprKind::ListComp { elt, iter, condition, .. }
-            | IrExprKind::SetComp { elt, iter, condition, .. } => {
+            IrExprKind::ListComp {
+                elt,
+                iter,
+                condition,
+                ..
+            }
+            | IrExprKind::SetComp {
+                elt,
+                iter,
+                condition,
+                ..
+            } => {
                 scan_expr(elt, diags, span, registry);
                 scan_expr(iter, diags, span, registry);
                 if let Some(cond) = condition {
                     scan_expr(cond, diags, span, registry);
                 }
             }
-            IrExprKind::DictComp { key, value, iter, condition, .. } => {
+            IrExprKind::DictComp {
+                key,
+                value,
+                iter,
+                condition,
+                ..
+            } => {
                 scan_expr(key, diags, span, registry);
                 scan_expr(value, diags, span, registry);
                 scan_expr(iter, diags, span, registry);
@@ -872,7 +1005,12 @@ pub fn scan_unsupported_ir(
                 scan_expr(body, diags, span, registry);
                 scan_expr(orelse, diags, span, registry);
             }
-            IrExprKind::BridgeMethodCall { target, args, keywords, .. } => {
+            IrExprKind::BridgeMethodCall {
+                target,
+                args,
+                keywords,
+                ..
+            } => {
                 scan_expr(target, diags, span, registry);
                 for arg in args {
                     scan_expr(arg, diags, span, registry);
@@ -881,7 +1019,11 @@ pub fn scan_unsupported_ir(
                     scan_expr(arg, diags, span, registry);
                 }
             }
-            IrExprKind::BridgeCall { target, args, keywords } => {
+            IrExprKind::BridgeCall {
+                target,
+                args,
+                keywords,
+            } => {
                 scan_expr(target, diags, span, registry);
                 for arg in args {
                     scan_expr(arg, diags, span, registry);
@@ -904,7 +1046,12 @@ pub fn scan_unsupported_ir(
                 scan_expr(target, diags, span, registry);
                 scan_expr(index, diags, span, registry);
             }
-            IrExprKind::Slice { target, start, end, step } => {
+            IrExprKind::Slice {
+                target,
+                start,
+                end,
+                step,
+            } => {
                 scan_expr(target, diags, span, registry);
                 if let Some(v) = start {
                     scan_expr(v, diags, span, registry);
@@ -991,7 +1138,12 @@ pub fn scan_unsupported_ir(
         }
     }
 
-    fn scan_magic_method(name: &str, diags: &mut TnkDiagnostics, span: &DiagnosticSpan, registry: &crate::unsupported_features::UnsupportedFeatureRegistry) {
+    fn scan_magic_method(
+        name: &str,
+        diags: &mut TnkDiagnostics,
+        span: &DiagnosticSpan,
+        registry: &crate::unsupported_features::UnsupportedFeatureRegistry,
+    ) {
         let feature = match name {
             "__iter__" => Some(UF::MagicMethodIter),
             "__next__" => Some(UF::MagicMethodNext),
@@ -1018,7 +1170,12 @@ pub fn scan_unsupported_ir(
         }
     }
 
-    fn scan_node(node: &IrNode, diags: &mut TnkDiagnostics, span: &DiagnosticSpan, registry: &crate::unsupported_features::UnsupportedFeatureRegistry) {
+    fn scan_node(
+        node: &IrNode,
+        diags: &mut TnkDiagnostics,
+        span: &DiagnosticSpan,
+        registry: &crate::unsupported_features::UnsupportedFeatureRegistry,
+    ) {
         match node {
             IrNode::Match { .. } => {
                 if registry.is_enabled(UF::MatchStatement) {
@@ -1041,13 +1198,21 @@ pub fn scan_unsupported_ir(
             | IrNode::FieldAssign { value, .. } => {
                 scan_expr(value, diags, span, registry);
             }
-            IrNode::IndexAssign { target, index, value } => {
+            IrNode::IndexAssign {
+                target,
+                index,
+                value,
+            } => {
                 scan_expr(target, diags, span, registry);
                 scan_expr(index, diags, span, registry);
                 scan_expr(value, diags, span, registry);
             }
             IrNode::MultiVarDecl { value, .. } => scan_expr(value, diags, span, registry),
-            IrNode::If { cond, then_block, else_block } => {
+            IrNode::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
                 scan_expr(cond, diags, span, registry);
                 for node in then_block {
                     scan_node(node, diags, span, registry);
@@ -1058,8 +1223,7 @@ pub fn scan_unsupported_ir(
                     }
                 }
             }
-            IrNode::For { iter, body, .. }
-            | IrNode::BridgeBatchFor { iter, body, .. } => {
+            IrNode::For { iter, body, .. } | IrNode::BridgeBatchFor { iter, body, .. } => {
                 scan_expr(iter, diags, span, registry);
                 for node in body {
                     scan_node(node, diags, span, registry);
@@ -1076,7 +1240,13 @@ pub fn scan_unsupported_ir(
                     scan_expr(expr, diags, span, registry);
                 }
             }
-            IrNode::TryBlock { try_body, except_body, else_body, finally_body, .. } => {
+            IrNode::TryBlock {
+                try_body,
+                except_body,
+                else_body,
+                finally_body,
+                ..
+            } => {
                 for node in try_body {
                     scan_node(node, diags, span, registry);
                 }

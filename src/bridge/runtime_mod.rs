@@ -212,7 +212,7 @@ impl PythonBridge {
             target: target_json,
             start: start.unwrap_or_else(none_val),
             stop: stop.unwrap_or_else(none_val),
-            step: step.unwrap_or_else(none_val),
+            step: Box::new(step.unwrap_or_else(none_val)),
         })
     }
 
@@ -249,7 +249,7 @@ impl PythonBridge {
     }
 
     pub fn shutdown(&self) -> Result<(), BridgeError> {
-        self.process.borrow_mut().kill().map_err(|e| BridgeError::Io(e))?;
+        self.process.borrow_mut().kill().map_err(BridgeError::Io)?;
         Ok(())
     }
 

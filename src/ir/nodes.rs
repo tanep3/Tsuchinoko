@@ -197,7 +197,10 @@ mod tests {
             name: "x".to_string(),
             ty: Type::Int,
             mutable: false,
-            init: Some(Box::new(IrExpr { id: ExprId(0), kind: IrExprKind::IntLit(42) })),
+            init: Some(Box::new(IrExpr {
+                id: ExprId(0),
+                kind: IrExprKind::IntLit(42),
+            })),
         };
         if let IrNode::VarDecl { name, .. } = node {
             assert_eq!(name, "x");

@@ -1,12 +1,12 @@
 //! 組み込み関数の宣言的定義テーブル
-//! 
+//!
 //! このファイルでは、Python の組み込み関数がどのように Rust へ変換されるか、
 //! およびどのような型を返すかを宣言的に定義する。
 
 use crate::ir::exprs::{BuiltinId, IntrinsicOp};
 use crate::semantic::Type;
-use std::collections::HashMap;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 
 /// 組み込み関数の展開形式
 pub enum BuiltinKind {
@@ -41,9 +41,13 @@ pub const BUILTIN_SPECS: &[BuiltinSpec] = &[
     BuiltinSpec {
         id: BuiltinId::Sum,
         name: "sum",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |args| {
-            if args.is_empty() { return Type::Int; }
+            if args.is_empty() {
+                return Type::Int;
+            }
             match &args[0] {
                 Type::List(inner) | Type::Set(inner) => (**inner).clone(),
                 _ => Type::Int,
@@ -53,13 +57,17 @@ pub const BUILTIN_SPECS: &[BuiltinSpec] = &[
     BuiltinSpec {
         id: BuiltinId::Any,
         name: "any",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::Bool,
     },
     BuiltinSpec {
         id: BuiltinId::All,
         name: "all",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::Bool,
     },
     BuiltinSpec {
@@ -67,34 +75,50 @@ pub const BUILTIN_SPECS: &[BuiltinSpec] = &[
         name: "abs",
         kind: BuiltinKind::NativeMethod { method: "abs" },
         ret_ty_resolver: |args| {
-            if args.is_empty() { return Type::Int; }
+            if args.is_empty() {
+                return Type::Int;
+            }
             args[0].clone()
         },
     },
     BuiltinSpec {
         id: BuiltinId::Min,
         name: "min",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |args| {
-            if args.is_empty() { return Type::Unknown; }
+            if args.is_empty() {
+                return Type::Unknown;
+            }
             args[0].clone()
         },
     },
     BuiltinSpec {
         id: BuiltinId::Max,
         name: "max",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |args| {
-            if args.is_empty() { return Type::Unknown; }
+            if args.is_empty() {
+                return Type::Unknown;
+            }
             args[0].clone()
         },
     },
     BuiltinSpec {
         id: BuiltinId::Round,
         name: "round",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |args| {
-            if args.len() >= 2 { Type::Float } else { Type::Int }
+            if args.len() >= 2 {
+                Type::Float
+            } else {
+                Type::Int
+            }
         },
     },
     BuiltinSpec {
@@ -106,55 +130,73 @@ pub const BUILTIN_SPECS: &[BuiltinSpec] = &[
     BuiltinSpec {
         id: BuiltinId::Chr,
         name: "chr",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::String,
     },
     BuiltinSpec {
         id: BuiltinId::Ord,
         name: "ord",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::Int,
     },
     BuiltinSpec {
         id: BuiltinId::Bin,
         name: "bin",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::String,
     },
     BuiltinSpec {
         id: BuiltinId::Hex,
         name: "hex",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::String,
     },
     BuiltinSpec {
         id: BuiltinId::Oct,
         name: "oct",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::String,
     },
     BuiltinSpec {
         id: BuiltinId::Print,
         name: "print",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::Unit,
     },
     BuiltinSpec {
         id: BuiltinId::Range,
         name: "range",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::Unknown, // Range type not yet defined
     },
     BuiltinSpec {
         id: BuiltinId::Enumerate,
         name: "enumerate",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |args| {
-            if args.is_empty() { return Type::Unknown; }
+            if args.is_empty() {
+                return Type::Unknown;
+            }
             let inner = match &args[0] {
                 Type::List(e) | Type::Set(e) => *e.clone(),
                 Type::Dict(k, _) => *k.clone(),
-                 _ => Type::Unknown,
+                _ => Type::Unknown,
             };
             Type::List(Box::new(Type::Tuple(vec![Type::Int, inner])))
         },
@@ -162,7 +204,9 @@ pub const BUILTIN_SPECS: &[BuiltinSpec] = &[
     BuiltinSpec {
         id: BuiltinId::Zip,
         name: "zip",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |args| {
             let mut elem_types = Vec::new();
             for arg in args {
@@ -179,27 +223,37 @@ pub const BUILTIN_SPECS: &[BuiltinSpec] = &[
     BuiltinSpec {
         id: BuiltinId::Int,
         name: "int",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::Int,
     },
     BuiltinSpec {
         id: BuiltinId::Float,
         name: "float",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::Float,
     },
     BuiltinSpec {
         id: BuiltinId::Str,
         name: "str",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::String,
     },
     BuiltinSpec {
         id: BuiltinId::List,
         name: "list",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |args| {
-            if args.is_empty() { return Type::List(Box::new(Type::Unknown)); }
+            if args.is_empty() {
+                return Type::List(Box::new(Type::Unknown));
+            }
             match &args[0] {
                 Type::List(inner) | Type::Set(inner) => Type::List(inner.clone()),
                 Type::Dict(k, _) => Type::List(Box::new((**k).clone())),
@@ -210,31 +264,41 @@ pub const BUILTIN_SPECS: &[BuiltinSpec] = &[
     BuiltinSpec {
         id: BuiltinId::Tuple,
         name: "tuple",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::Any,
     },
     BuiltinSpec {
         id: BuiltinId::Dict,
         name: "dict",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::Dict(Box::new(Type::Unknown), Box::new(Type::Unknown)),
     },
     BuiltinSpec {
         id: BuiltinId::IsInstance,
         name: "isinstance",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::Bool,
     },
     BuiltinSpec {
         id: BuiltinId::Open,
         name: "open",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |_| Type::Unknown, // TODO: File type
     },
     BuiltinSpec {
         id: BuiltinId::Sorted,
         name: "sorted",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |args| {
             if args.is_empty() {
                 return Type::List(Box::new(Type::Unknown));
@@ -249,7 +313,9 @@ pub const BUILTIN_SPECS: &[BuiltinSpec] = &[
     BuiltinSpec {
         id: BuiltinId::Set,
         name: "set",
-        kind: BuiltinKind::Intrinsic { op: IntrinsicOp::Basic },
+        kind: BuiltinKind::Intrinsic {
+            op: IntrinsicOp::Basic,
+        },
         ret_ty_resolver: |args| {
             if args.is_empty() {
                 return Type::Set(Box::new(Type::Unknown));

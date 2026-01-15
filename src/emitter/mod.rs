@@ -47,7 +47,7 @@ pub struct RustEmitter {
     try_hoisted_vars: Vec<String>,
     /// V1.5.2: Variables that shadow hoisted variables in current scope (e.g., for loop vars)
     shadowed_vars: Vec<String>,
-    /// Return type is Result<..> (signature basis for Ok()/?) 
+    /// Return type is Result<..> (signature basis for Ok()/?)
     current_func_returns_result: bool,
     /// V1.5.2: Whether we are inside try body closure (? not allowed, use .unwrap())
     in_try_body: bool,
@@ -168,12 +168,13 @@ impl RustEmitter {
                 {
                     // Bridge imports are now handled dynamically
                     if !self.external_imports.iter().any(|(m, _)| m == module) {
-                         // We don't emit anything in pre-pass for BridgeImport
-                         // Logic is handled in emit_node
-                         // But we might want to track them.
-                         // For now, just ensure the module is in external_imports for resident_wrapped
-                         let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
-                         self.external_imports.push((module.clone(), effective_alias));
+                        // We don't emit anything in pre-pass for BridgeImport
+                        // Logic is handled in emit_node
+                        // But we might want to track them.
+                        // For now, just ensure the module is in external_imports for resident_wrapped
+                        let effective_alias = alias.clone().unwrap_or_else(|| module.clone());
+                        self.external_imports
+                            .push((module.clone(), effective_alias));
                     }
                 }
             }
@@ -319,22 +320,32 @@ impl std::fmt::Display for TnkValue {{
     /// V1.7.0: helper to emit expression as TnkValue, handling recursive Dicts (Moved to inherent impl)
     fn emit_as_tnk_value(&mut self, expr: &IrExpr) -> String {
         match &expr.kind {
-             IrExprKind::Dict { entries, .. } => {
-                let items_str = entries.iter().map(|(k, v)| {
-                    format!(
-                        "DictItem {{ key: {}, value: {} }}",
-                        self.emit_as_tnk_value(k),
-                        self.emit_as_tnk_value(v)
-                    )
-                }).collect::<Vec<_>>().join(", ");
+            IrExprKind::Dict { entries, .. } => {
+                let items_str = entries
+                    .iter()
+                    .map(|(k, v)| {
+                        format!(
+                            "DictItem {{ key: {}, value: {} }}",
+                            self.emit_as_tnk_value(k),
+                            self.emit_as_tnk_value(v)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 format!("TnkValue::Dict {{ items: vec![{}] }}", items_str)
             }
-             IrExprKind::List { elements, .. } => {
-                 let elems_str = elements.iter().map(|e| self.emit_as_tnk_value(e)).collect::<Vec<_>>().join(", ");
-                 format!("TnkValue::List {{ items: vec![{}] }}", elems_str)
-             }
+            IrExprKind::List { elements, .. } => {
+                let elems_str = elements
+                    .iter()
+                    .map(|e| self.emit_as_tnk_value(e))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("TnkValue::List {{ items: vec![{}] }}", elems_str)
+            }
             IrExprKind::Ref(inner) => self.emit_as_tnk_value(inner),
-            IrExprKind::Var(_) | IrExprKind::BridgeGet { .. } => format!("TnkValue::from({}.clone())", self.emit_expr(expr)),
+            IrExprKind::Var(_) | IrExprKind::BridgeGet { .. } => {
+                format!("TnkValue::from({}.clone())", self.emit_expr(expr))
+            }
             _ => format!("TnkValue::from({})", self.emit_expr(expr)),
         }
     }
@@ -600,7 +611,8 @@ impl std::fmt::Display for TnkValue {{
                 may_raise,
                 needs_bridge,
             } => {
-                let func_plan = self.func_plan_for(name, *may_raise, *needs_bridge, name == "__top_level__");
+                let func_plan =
+                    self.func_plan_for(name, *may_raise, *needs_bridge, name == "__top_level__");
                 // Check if this is the auto-generated top-level function -> "fn main"
                 if name == "__top_level__" {
                     self.indent += 1;
@@ -725,7 +737,13 @@ impl std::fmt::Display for TnkValue {{
                     // 通常のパラメータ
                     let mut params_str: Vec<_> = params
                         .iter()
-                        .map(|(n, t)| format!("{}: {}", to_snake_case(n), self.format_param_type_for_sig(t)))
+                        .map(|(n, t)| {
+                            format!(
+                                "{}: {}",
+                                to_snake_case(n),
+                                self.format_param_type_for_sig(t)
+                            )
+                        })
                         .collect();
 
                     // Hack: If return type is Unit but body has Return with value, force return type to Value
@@ -786,13 +804,13 @@ impl std::fmt::Display for TnkValue {{
                     }
 
                     // V1.5.2: Add implicit Ok(()) for may_raise functions that return Unit
-                    let final_body_with_ok = if func_plan.returns_result && *effective_ret == Type::Unit
-                    {
-                        let inner_indent = "    ".repeat(self.indent + 1);
-                        format!("{}\n{}Ok(())", final_body_str, inner_indent)
-                    } else {
-                        final_body_str
-                    };
+                    let final_body_with_ok =
+                        if func_plan.returns_result && *effective_ret == Type::Unit {
+                            let inner_indent = "    ".repeat(self.indent + 1);
+                            format!("{}\n{}Ok(())", final_body_str, inner_indent)
+                        } else {
+                            final_body_str
+                        };
 
                     format!(
                         "{}fn {}({}) -> {} {{\n{}\n{}}}",
@@ -1010,7 +1028,10 @@ impl std::fmt::Display for TnkValue {{
                 let while_indent = "    ".repeat(base_indent + 1);
                 let mut block = String::new();
                 block.push_str(&format!("{indent}let __iter_target = {};\n", iter_target));
-                block.push_str(&format!("{indent}let __iter_handle = {};\n", iter_handle_expr));
+                block.push_str(&format!(
+                    "{indent}let __iter_handle = {};\n",
+                    iter_handle_expr
+                ));
                 block.push_str(&format!("{indent}let mut __iter_done = false;\n"));
                 block.push_str(&format!("{indent}while !__iter_done {{\n"));
                 block.push_str(&format!("{while_indent}let __batch = {};\n", batch_expr));
@@ -1045,10 +1066,13 @@ impl std::fmt::Display for TnkValue {{
                             // If we have a return value, we MUST store it somewhere.
                             // The specialized TryBlock IR would have already detected this?
                             // For now, let's assume __ret_val is available if needed.
-                            return format!("{}__ret_val = Some({}); return Ok(());", indent, expr_str);
+                            return format!(
+                                "{}__ret_val = Some({}); return Ok(());",
+                                indent, expr_str
+                            );
                         }
                         None => {
-                             return format!("{}return Ok(());", indent);
+                            return format!("{}return Ok(());", indent);
                         }
                     }
                 }
@@ -1137,19 +1161,46 @@ impl std::fmt::Display for TnkValue {{
                 fn has_return(nodes: &[IrNode]) -> bool {
                     nodes.iter().any(|n| match n {
                         IrNode::Return(_) => true,
-                        IrNode::If { then_block, else_block, .. } => has_return(then_block) || else_block.as_ref().map(|b| has_return(b)).unwrap_or(false),
-                        IrNode::TryBlock { try_body, except_body, else_body, finally_body, .. } => 
-                            has_return(try_body) || has_return(except_body) || 
-                            else_body.as_ref().map(|b| has_return(b)).unwrap_or(false) ||
-                            finally_body.as_ref().map(|b| has_return(b)).unwrap_or(false),
+                        IrNode::If {
+                            then_block,
+                            else_block,
+                            ..
+                        } => {
+                            has_return(then_block)
+                                || else_block.as_ref().map(|b| has_return(b)).unwrap_or(false)
+                        }
+                        IrNode::TryBlock {
+                            try_body,
+                            except_body,
+                            else_body,
+                            finally_body,
+                            ..
+                        } => {
+                            has_return(try_body)
+                                || has_return(except_body)
+                                || else_body.as_ref().map(|b| has_return(b)).unwrap_or(false)
+                                || finally_body
+                                    .as_ref()
+                                    .map(|b| has_return(b))
+                                    .unwrap_or(false)
+                        }
                         _ => false,
                     })
                 }
-                
-                let try_has_return = has_return(try_body) || has_return(except_body) || else_body.as_ref().map(|b| has_return(&b)).unwrap_or(false);
+
+                let try_has_return = has_return(try_body)
+                    || has_return(except_body)
+                    || else_body.as_ref().map(|b| has_return(b)).unwrap_or(false);
                 if try_has_return {
-                    let ret_ty_str = self.current_ret_type.as_ref().map(|t: &crate::semantic::Type| t.to_rust_string()).unwrap_or_else(|| "TnkValue".to_string());
-                    result.push_str(&format!("{indent}let mut __ret_val: Option<{}> = None;\n", ret_ty_str));
+                    let ret_ty_str = self
+                        .current_ret_type
+                        .as_ref()
+                        .map(|t: &crate::semantic::Type| t.to_rust_string())
+                        .unwrap_or_else(|| "TnkValue".to_string());
+                    result.push_str(&format!(
+                        "{indent}let mut __ret_val: Option<{}> = None;\n",
+                        ret_ty_str
+                    ));
                 }
 
                 // Emit hoisted variable declarations as Option<T>
@@ -1206,11 +1257,11 @@ impl std::fmt::Display for TnkValue {{
                     result.push_str(&self.emit_node(node));
                     result.push('\n');
                 }
-                
+
                 self.indent -= 1;
                 self.in_try_body = old_in_try_body;
                 self.try_hoisted_vars = old_try_hoisted_vars;
-                
+
                 // End closure with Ok(())
                 result.push_str(&format!("{indent}    Ok(())\n"));
                 result.push_str(&format!("{indent}}}));\n"));
@@ -1225,114 +1276,121 @@ impl std::fmt::Display for TnkValue {{
                 if try_has_return {
                     let inner_indent = "    ".repeat(self.indent + 1);
                     if self.current_func_returns_result {
-                         result.push_str(&format!("{}if let Some(val) = __ret_val {{ return Ok(val); }}\n", inner_indent));
+                        result.push_str(&format!(
+                            "{}if let Some(val) = __ret_val {{ return Ok(val); }}\n",
+                            inner_indent
+                        ));
                     } else {
-                         result.push_str(&format!("{}if let Some(val) = __ret_val {{ return val; }}\n", inner_indent));
+                        result.push_str(&format!(
+                            "{}if let Some(val) = __ret_val {{ return val; }}\n",
+                            inner_indent
+                        ));
                     }
                 }
-                
+
                 // Else block logic
                 if let Some(else_nodes) = else_body {
                     self.indent += 2;
                     let old_try_hoisted = std::mem::replace(
                         &mut self.try_hoisted_vars,
-                        hoisted_vars.iter().map(|(n,_)| to_snake_case(n)).collect()
+                        hoisted_vars.iter().map(|(n, _)| to_snake_case(n)).collect(),
                     );
                     for node in else_nodes {
-                         result.push_str(&self.emit_node(node));
-                         result.push('\n');
+                        result.push_str(&self.emit_node(node));
+                        result.push('\n');
                     }
                     self.try_hoisted_vars = old_try_hoisted;
                     self.indent -= 2;
                 }
-                result.push_str(&format!("{indent}    }}\n")); 
-                
-                // Error handling logic (Exception OR Panic) 
+                result.push_str(&format!("{indent}    }}\n"));
+
+                // Error handling logic (Exception OR Panic)
                 // We combine both cases to run except_block
                 result.push_str(&format!("{indent}    Ok(Err(__exc)) => {{\n")); // Python Exception
                 if let Some(var_name) = except_var {
-                     self.indent += 2;
-                     // Bind exception
-                     if self.current_func_returns_result {
-                         result.push_str(&format!(
+                    self.indent += 2;
+                    // Bind exception
+                    if self.current_func_returns_result {
+                        result.push_str(&format!(
                              "{}let {} = TsuchinokoError::new(\"Exception\", &format!(\"{{}}\", __exc), None);\n",
                              "    ".repeat(self.indent), to_snake_case(var_name)
                          ));
-                     } else {
-                         // Fallback string binding
-                         result.push_str(&format!(
+                    } else {
+                        // Fallback string binding
+                        result.push_str(&format!(
                             "{}let {} = format!(\"{{}}\", __exc);\n",
-                             "    ".repeat(self.indent), to_snake_case(var_name)
-                         ));
-                     }
-                     self.indent -= 2;
+                            "    ".repeat(self.indent),
+                            to_snake_case(var_name)
+                        ));
+                    }
+                    self.indent -= 2;
                 }
                 // Emit Except Body
                 if !except_body.is_empty() {
-                     let old_in_except_body = self.in_except_body;
-                     let old_except_var = self.current_except_var.clone();
-                     self.in_except_body = true;
-                     self.current_except_var = except_var.clone();
-                     self.indent += 2;
-                     let old_try_hoisted_except = std::mem::replace(
+                    let old_in_except_body = self.in_except_body;
+                    let old_except_var = self.current_except_var.clone();
+                    self.in_except_body = true;
+                    self.current_except_var = except_var.clone();
+                    self.indent += 2;
+                    let old_try_hoisted_except = std::mem::replace(
                         &mut self.try_hoisted_vars,
-                        hoisted_vars.iter().map(|(n,_)| to_snake_case(n)).collect()
+                        hoisted_vars.iter().map(|(n, _)| to_snake_case(n)).collect(),
                     );
-                     for node in except_body {
-                         result.push_str(&self.emit_node(node));
-                         result.push('\n');
-                     }
-                     self.try_hoisted_vars = old_try_hoisted_except;
-                     self.indent -= 2;
-                     self.in_except_body = old_in_except_body;
-                     self.current_except_var = old_except_var;
+                    for node in except_body {
+                        result.push_str(&self.emit_node(node));
+                        result.push('\n');
+                    }
+                    self.try_hoisted_vars = old_try_hoisted_except;
+                    self.indent -= 2;
+                    self.in_except_body = old_in_except_body;
+                    self.current_except_var = old_except_var;
                 }
                 result.push_str(&format!("{indent}    }}\n"));
 
                 // Panic case
                 result.push_str(&format!("{indent}    Err(__panic) => {{\n"));
                 if let Some(var_name) = except_var {
-                     self.indent += 2;
-                     let indent_str = "    ".repeat(self.indent);
-                     // Bind panic
-                     result.push_str(&format!(
+                    self.indent += 2;
+                    let indent_str = "    ".repeat(self.indent);
+                    // Bind panic
+                    result.push_str(&format!(
                          "{}let {}: String = if let Some(s) = __panic.downcast_ref::<&str>() {{ s.to_string() }} else if let Some(s) = __panic.downcast_ref::<String>() {{ s.clone() }} else {{ \"Unknown panic\".to_string() }};\n",
                          indent_str, to_snake_case(var_name)
                      ));
-                     // If TsuchinokoError is needed
-                     if self.current_func_returns_result {
-                         result.push_str(&format!(
-                             "{}let {} = TsuchinokoError::new(\"InternalError\", {}, None);\n",
-                             indent_str, to_snake_case(var_name), to_snake_case(var_name)
-                         ));
-                     }
-                     self.indent -= 2;
+                    // If TsuchinokoError is needed
+                    if self.current_func_returns_result {
+                        result.push_str(&format!(
+                            "{}let {} = TsuchinokoError::new(\"InternalError\", {}, None);\n",
+                            indent_str,
+                            to_snake_case(var_name),
+                            to_snake_case(var_name)
+                        ));
+                    }
+                    self.indent -= 2;
                 }
-                 // Emit Except Body (Duplicate) - Ideally functionize this, but copy-paste is safer for now to ensure context
+                // Emit Except Body (Duplicate) - Ideally functionize this, but copy-paste is safer for now to ensure context
                 if !except_body.is_empty() {
-                     let old_in_except_body = self.in_except_body;
-                     let old_except_var = self.current_except_var.clone();
-                     self.in_except_body = true;
-                     self.current_except_var = except_var.clone();
-                     self.indent += 2;
-                     let old_try_hoisted_except = std::mem::replace(
+                    let old_in_except_body = self.in_except_body;
+                    let old_except_var = self.current_except_var.clone();
+                    self.in_except_body = true;
+                    self.current_except_var = except_var.clone();
+                    self.indent += 2;
+                    let old_try_hoisted_except = std::mem::replace(
                         &mut self.try_hoisted_vars,
-                        hoisted_vars.iter().map(|(n,_)| to_snake_case(n)).collect()
+                        hoisted_vars.iter().map(|(n, _)| to_snake_case(n)).collect(),
                     );
-                     for node in except_body {
-                         result.push_str(&self.emit_node(node));
-                         result.push('\n');
-                     }
-                     self.try_hoisted_vars = old_try_hoisted_except;
-                     self.indent -= 2;
-                     self.in_except_body = old_in_except_body;
-                     self.current_except_var = old_except_var;
+                    for node in except_body {
+                        result.push_str(&self.emit_node(node));
+                        result.push('\n');
+                    }
+                    self.try_hoisted_vars = old_try_hoisted_except;
+                    self.indent -= 2;
+                    self.in_except_body = old_in_except_body;
+                    self.current_except_var = old_except_var;
                 }
                 result.push_str(&format!("{indent}    }}\n"));
-                
+
                 result.push_str(&format!("{indent}}};\n")); // End match
-
-
 
                 // V1.5.0: Emit finally block after the match
                 if let Some(finally_nodes) = finally_body {
@@ -1356,9 +1414,17 @@ impl std::fmt::Display for TnkValue {{
                 if let Some(ret_ty) = &self.current_ret_type {
                     if *ret_ty != Type::Unit {
                         if self.current_func_returns_result {
-                            result.push_str(&format!("{}return Ok({});\n", indent, ret_ty.to_default_value()));
+                            result.push_str(&format!(
+                                "{}return Ok({});\n",
+                                indent,
+                                ret_ty.to_default_value()
+                            ));
                         } else {
-                            result.push_str(&format!("{}return {};\n", indent, ret_ty.to_default_value()));
+                            result.push_str(&format!(
+                                "{}return {};\n",
+                                indent,
+                                ret_ty.to_default_value()
+                            ));
                         }
                     }
                 }
@@ -1404,7 +1470,13 @@ impl std::fmt::Display for TnkValue {{
 
                 let params_str: Vec<String> = params
                     .iter()
-                    .map(|(n, t)| format!("{}: {}", to_snake_case(n), self.format_param_type_for_sig(t)))
+                    .map(|(n, t)| {
+                        format!(
+                            "{}: {}",
+                            to_snake_case(n),
+                            self.format_param_type_for_sig(t)
+                        )
+                    })
                     .collect();
 
                 let ret_str = if method_plan.returns_result {
@@ -1418,7 +1490,10 @@ impl std::fmt::Display for TnkValue {{
                 // V1.7.0: Use needs_bridge to decide if py_bridge argument is needed
                 let params_str = if method_plan.needs_bridge {
                     let mut p = params_str;
-                    p.insert(0, "py_bridge: &mut tsuchinoko::bridge::PythonBridge".to_string());
+                    p.insert(
+                        0,
+                        "py_bridge: &mut tsuchinoko::bridge::PythonBridge".to_string(),
+                    );
                     p.join(", ")
                 } else {
                     params_str.join(", ")
@@ -1540,27 +1615,23 @@ impl std::fmt::Display for TnkValue {{
             } => {
                 // V1.7.0: Emit Bridge import code to bind module handle to variable
                 if let Some(ref item_list) = items {
-                     // from module import a, b
-                     let mut code = String::new();
-                     for item in item_list {
-                         code.push_str(&format!(
+                    // from module import a, b
+                    let mut code = String::new();
+                    for item in item_list {
+                        code.push_str(&format!(
                             "py_bridge.import(\"{}.{}\", \"{}\");\n",
                             module, item, item
-                         ));
-                     }
-                     code
+                        ));
+                    }
+                    code
                 } else {
                     // import module as alias
                     let import_name = module.clone();
                     let var_name = alias.clone().unwrap_or(module.clone());
-                    
-                    // V1.7.0: Register in ModuleTable
-                    format!(
-                        "py_bridge.import(\"{}\", \"{}\");\n",
-                        import_name, var_name
-                    )
-                }
 
+                    // V1.7.0: Register in ModuleTable
+                    format!("py_bridge.import(\"{}\", \"{}\");\n", import_name, var_name)
+                }
             }
             // V1.6.0: Scoped block (from with statement)
             IrNode::Block { stmts } => {
@@ -1908,7 +1979,7 @@ impl std::fmt::Display for TnkValue {{
                         // external_imports contains (module, item) tuples
                         // If name matches any item, convert to py_bridge.call_json("module.item", ...)
                         // V1.4.0: Check if this is a resident (bridge) function
-                        // Handled by IrExpr::BridgeCall now. 
+                        // Handled by IrExpr::BridgeCall now.
                         // If it fell through here, it's a regular Rust call.
 
                         // V1.3.1: int/float/str are now handled by semantic analyzer
@@ -1951,7 +2022,8 @@ impl std::fmt::Display for TnkValue {{
                             // V1.5.2: If calling a may_raise function from a non-may_raise context, add .unwrap()
                             // Use IR's callee_may_raise instead of tracking in emitter
                             // Also, in try body closure, use .unwrap() instead of ? (closure returns ())
-                            if *callee_may_raise && (!self.current_func_returns_result || self.in_try_body)
+                            if *callee_may_raise
+                                && (!self.current_func_returns_result || self.in_try_body)
                             {
                                 format!("{}.unwrap()", call_str)
                             } else if *callee_may_raise
@@ -1978,7 +2050,11 @@ impl std::fmt::Display for TnkValue {{
                         if needs_parens {
                             format!("({})({})", func_str, args_str.join(", "))
                         } else {
-                            format!("/* IrExprKind::Call */ {}({})", func_str, args_str.join(", "))
+                            format!(
+                                "/* IrExprKind::Call */ {}({})",
+                                func_str,
+                                args_str.join(", ")
+                            )
                         }
                     }
                 }
@@ -2448,7 +2524,7 @@ impl std::fmt::Display for TnkValue {{
             IrExprKind::RawCode(code) => code.clone(),
             IrExprKind::JsonConversion { target, convert_to } => {
                 let target_code = self.emit_expr_internal(target);
-                // V1.7.0: If target_code ends with '?', it's a Result. 
+                // V1.7.0: If target_code ends with '?', it's a Result.
                 // We should wrap it in a parenthesized expression before calling as_xxx().
                 let base = if target_code.ends_with('?') {
                     format!("({})", target_code)
@@ -2458,15 +2534,15 @@ impl std::fmt::Display for TnkValue {{
 
                 match convert_to.as_str() {
                     "f64" => {
-                         // TnkValue (serde_json::Value) as_f64 returns Option<f64>
-                         format!("{}.as_f64().unwrap()", base)
-                    },
+                        // TnkValue (serde_json::Value) as_f64 returns Option<f64>
+                        format!("{}.as_f64().unwrap()", base)
+                    }
                     "i64" => format!("{}.as_i64().unwrap()", base),
                     "String" => format!("{}.as_str().unwrap().to_string()", base),
                     "bool" => format!("{}.as_bool().unwrap()", base),
                     "Vec<f64>" | "Vec<i64>" | "Vec<String>" => {
                         // For vectors, we need more complex conversion if using TnkValue directly
-                        // But usually BridgeCall returns TnkValue. 
+                        // But usually BridgeCall returns TnkValue.
                         // Let's use a generic from_value if convert_to is complex.
                         format!(
                             "serde_json::from_value::<{}>({}).map_err(|e| TsuchinokoError::internal(e.to_string()))?",
@@ -2676,10 +2752,7 @@ impl std::fmt::Display for TnkValue {{
                         format!("{}.to_vec()", target_str)
                     } else if method == "collect_hashset" {
                         // V1.5.0: set() constructor -> .collect::<HashSet<_>>()
-                        format!(
-                            "{}.collect::<std::collections::HashSet<_>>()",
-                            target_str
-                        )
+                        format!("{}.collect::<std::collections::HashSet<_>>()", target_str)
                     } else if method == "pop" {
                         // V1.5.0: Python list.pop() -> Rust list.pop().unwrap()
                         format!("{}.pop().unwrap()", target_str)
@@ -2690,20 +2763,17 @@ impl std::fmt::Display for TnkValue {{
                     } else if method == "isdigit" {
                         format!(
                             "!{}.is_empty() && {}.chars().all(|c| c.is_ascii_digit())",
-                            target_str,
-                            target_str
+                            target_str, target_str
                         )
                     } else if method == "isalpha" {
                         format!(
                             "!{}.is_empty() && {}.chars().all(|c| c.is_alphabetic())",
-                            target_str,
-                            target_str
+                            target_str, target_str
                         )
                     } else if method == "isalnum" {
                         format!(
                             "!{}.is_empty() && {}.chars().all(|c| c.is_alphanumeric())",
-                            target_str,
-                            target_str
+                            target_str, target_str
                         )
                     } else if method == "isupper" {
                         format!(
@@ -2737,7 +2807,11 @@ impl std::fmt::Display for TnkValue {{
                     } else if method == "pop" && args.len() == 1 {
                         // Python list.pop(i) -> Rust list.remove(i as usize)
                         let idx = &args[0];
-                        format!("{}.remove({} as usize)", target_str, self.emit_expr_internal(idx))
+                        format!(
+                            "{}.remove({} as usize)",
+                            target_str,
+                            self.emit_expr_internal(idx)
+                        )
                     // Note: list.insert is handled in semantic analysis to distinguish from dict.insert
                     } else if method == "extend" {
                         // Python list.extend(iter) -> Rust list.extend(iter)
@@ -2747,11 +2821,19 @@ impl std::fmt::Display for TnkValue {{
                     } else if method == "startswith" {
                         // Python s.startswith("x") -> Rust s.starts_with("x")
                         let arg = &args[0];
-                        format!("{}.starts_with(&{})", target_str, self.emit_expr_internal(arg))
+                        format!(
+                            "{}.starts_with(&{})",
+                            target_str,
+                            self.emit_expr_internal(arg)
+                        )
                     } else if method == "endswith" {
                         // Python s.endswith("x") -> Rust s.ends_with("x")
                         let arg = &args[0];
-                        format!("{}.ends_with(&{})", target_str, self.emit_expr_internal(arg))
+                        format!(
+                            "{}.ends_with(&{})",
+                            target_str,
+                            self.emit_expr_internal(arg)
+                        )
                     } else if method == "replace" && args.len() >= 2 {
                         // Python s.replace(old, new) -> Rust s.replace(&old, &new)
                         let old = &args[0];
@@ -2782,22 +2864,19 @@ impl std::fmt::Display for TnkValue {{
                         // Python s.isdigit() -> Rust s.chars().all(|c| c.is_ascii_digit())
                         format!(
                             "!{}.is_empty() && {}.chars().all(|c| c.is_ascii_digit())",
-                            target_str,
-                            target_str
+                            target_str, target_str
                         )
                     } else if method == "isalpha" {
                         // Python s.isalpha() -> Rust s.chars().all(|c| c.is_alphabetic())
                         format!(
                             "!{}.is_empty() && {}.chars().all(|c| c.is_alphabetic())",
-                            target_str,
-                            target_str
+                            target_str, target_str
                         )
                     } else if method == "isalnum" {
                         // Python s.isalnum() -> Rust s.chars().all(|c| c.is_alphanumeric())
                         format!(
                             "!{}.is_empty() && {}.chars().all(|c| c.is_alphanumeric())",
-                            target_str,
-                            target_str
+                            target_str, target_str
                         )
                     } else if method == "isupper" {
                         // Python s.isupper() -> Rust s.chars().any(|c| c.is_alphabetic()) && s.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())
@@ -2856,12 +2935,7 @@ impl std::fmt::Display for TnkValue {{
                     } else {
                         let args_str: Vec<_> =
                             args.iter().map(|a| self.emit_expr_internal(a)).collect();
-                        format!(
-                            "{}.{}({})",
-                            target_str,
-                            method,
-                            args_str.join(", ")
-                        )
+                        format!("{}.{}({})", target_str, method, args_str.join(", "))
                     }
                 }
             }
@@ -2993,11 +3067,18 @@ impl std::fmt::Display for TnkValue {{
                 } else {
                     "v.sort();".to_string()
                 };
-                let reverse_line = if *reverse { "v.reverse();".to_string() } else { String::new() };
+                let reverse_line = if *reverse {
+                    "v.reverse();".to_string()
+                } else {
+                    String::new()
+                };
                 if reverse_line.is_empty() {
                     format!("{{ let mut v = {}.to_vec(); {} v }}", iter_str, sort_line)
                 } else {
-                    format!("{{ let mut v = {}.to_vec(); {} {} v }}", iter_str, sort_line, reverse_line)
+                    format!(
+                        "{{ let mut v = {}.to_vec(); {} {} v }}",
+                        iter_str, sort_line, reverse_line
+                    )
                 }
             }
             // V1.3.1: StructConstruct - semantic now provides field information
@@ -3047,9 +3128,15 @@ impl std::fmt::Display for TnkValue {{
 
                 if keywords.is_empty() {
                     let call_code = if use_method_syntax {
-                        format!("{}.call_method({:?}, &[{}], None)", target_str, method, args_str)
+                        format!(
+                            "{}.call_method({:?}, &[{}], None)",
+                            target_str, method, args_str
+                        )
                     } else {
-                        format!("py_bridge.call_method(&{}, {:?}, &[{}], None)", target_str, method, args_str)
+                        format!(
+                            "py_bridge.call_method(&{}, {:?}, &[{}], None)",
+                            target_str, method, args_str
+                        )
                     };
                     let mapped = format!(
                         "{}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))",
@@ -3063,19 +3150,26 @@ impl std::fmt::Display for TnkValue {{
                 } else {
                     let mut kw_setup_code = String::new();
                     let mut kw_inserts = String::new();
-                    
+
                     for (i, (k, v)) in keywords.iter().enumerate() {
                         let val_expr = self.emit_expr(v);
                         kw_setup_code.push_str(&format!("let kw_val_{} = {}; ", i, val_expr));
-                        kw_inserts.push_str(&format!("kw.insert({:?}.to_string(), kw_val_{}); ", k, i));
+                        kw_inserts
+                            .push_str(&format!("kw.insert({:?}.to_string(), kw_val_{}); ", k, i));
                     }
-                    
+
                     let call_code = if use_method_syntax {
-                        format!("{}.call_method({:?}, &[{}], Some(&kw))", target_str, method, args_str)
+                        format!(
+                            "{}.call_method({:?}, &[{}], Some(&kw))",
+                            target_str, method, args_str
+                        )
                     } else {
-                        format!("py_bridge.call_method(&{}, {:?}, &[{}], Some(&kw))", target_str, method, args_str)
+                        format!(
+                            "py_bridge.call_method(&{}, {:?}, &[{}], Some(&kw))",
+                            target_str, method, args_str
+                        )
                     };
-                    
+
                     let mapped = format!(
                         "{{ let mut kw = std::collections::HashMap::new(); {}{} {} }}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))",
                         kw_setup_code,
@@ -3118,7 +3212,8 @@ impl std::fmt::Display for TnkValue {{
                     for (i, (k, v)) in keywords.iter().enumerate() {
                         let val_expr = self.emit_expr(v);
                         kw_setup_code.push_str(&format!("let kw_val_{} = {}; ", i, val_expr));
-                        kw_inserts.push_str(&format!("kw.insert({:?}.to_string(), kw_val_{}); ", k, i));
+                        kw_inserts
+                            .push_str(&format!("kw.insert({:?}.to_string(), kw_val_{}); ", k, i));
                     }
                     let mapped = format!(
                         "({{ let mut kw = std::collections::HashMap::new(); {}{} {}.call(&[{}], Some(&kw)) }}).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))",
@@ -3132,21 +3227,19 @@ impl std::fmt::Display for TnkValue {{
                 }
             }
             IrExprKind::Ref(inner) => format!("&{}", self.emit_expr(inner)),
-            IrExprKind::TnkValueFrom(inner) => {
-                self.emit_as_tnk_value(inner)
-            },
+            IrExprKind::TnkValueFrom(inner) => self.emit_as_tnk_value(inner),
             IrExprKind::BridgeAttributeAccess { target, attribute } => {
                 let target_str = self.emit_expr(target);
-                
+
                 // Check if target is BridgeGet (supports fluent syntax)
                 let use_method_syntax = match &target.kind {
                     IrExprKind::BridgeGet { .. } => true,
                     IrExprKind::Ref(inner) => matches!(&inner.kind, IrExprKind::BridgeGet { .. }),
                     _ => false,
                 };
-                
+
                 if use_method_syntax {
-                     format!(
+                    format!(
                         "{}.get_attribute(\"{}\").map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))?",
                         target_str, attribute
                     )
@@ -3162,10 +3255,7 @@ impl std::fmt::Display for TnkValue {{
                 let index_str = if matches!(&index.kind, IrExprKind::NoneLit) {
                     "TnkValue::Value { value: None }".to_string()
                 } else {
-                    format!(
-                        "TnkValue::from({})",
-                        self.emit_expr(index)
-                    )
+                    format!("TnkValue::from({})", self.emit_expr(index))
                 };
 
                 format!(
@@ -3184,26 +3274,17 @@ impl std::fmt::Display for TnkValue {{
                 let start_str = if matches!(&start.kind, IrExprKind::NoneLit) {
                     "None".to_string()
                 } else {
-                    format!(
-                        "Some(TnkValue::from({}))",
-                        self.emit_expr(start)
-                    )
+                    format!("Some(TnkValue::from({}))", self.emit_expr(start))
                 };
                 let stop_str = if matches!(&stop.kind, IrExprKind::NoneLit) {
                     "None".to_string()
                 } else {
-                    format!(
-                        "Some(TnkValue::from({}))",
-                        self.emit_expr(stop)
-                    )
+                    format!("Some(TnkValue::from({}))", self.emit_expr(stop))
                 };
                 let step_str = if matches!(&step.kind, IrExprKind::NoneLit) {
                     "None".to_string()
                 } else {
-                    format!(
-                        "Some(TnkValue::from({}))",
-                        self.emit_expr(step)
-                    )
+                    format!("Some(TnkValue::from({}))", self.emit_expr(step))
                 };
 
                 format!(
@@ -3243,7 +3324,8 @@ impl std::fmt::Display for TnkValue {{
                     ));
                 }
 
-                let args_str_list: Vec<String> = (0..args.len()).map(|i| format!("_arg_{i}")).collect();
+                let args_str_list: Vec<String> =
+                    (0..args.len()).map(|i| format!("_arg_{i}")).collect();
 
                 // 方式選択テーブルを参照
                 use crate::bridge::module_table::{
@@ -3326,7 +3408,6 @@ impl std::fmt::Display for TnkValue {{
         }
         s
     }
-
 }
 
 /// Implementation of CodeEmitter trait for RustEmitter

@@ -6,6 +6,8 @@
 //! # Author
 //! Tane Channel Technology
 
+#![allow(clippy::only_used_in_recursion)]
+
 pub mod bridge;
 pub mod diagnostics;
 pub mod emitter;

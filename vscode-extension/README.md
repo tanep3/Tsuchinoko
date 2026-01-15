@@ -6,8 +6,11 @@ Transform Python to Rust directly in your editor!
 
 - **Rust Preview** (`Ctrl+Alt+P` / `Cmd+Alt+P`) - See transpiled code in real-time
 - **Status Bar Button** - Click "🚀 Rust Preview" when editing Python files
-- **Real-time Diagnostics** - Unsupported syntax highlighted with squiggly lines
-- **Auto-check on Save** - Instant feedback on compatibility
+- **Accurate Diagnostics** (V0.2.0) - Precise error markers using `--diag-json`
+  - **Column-accurate squiggly lines** - Highlights exact error locations
+  - **Diagnostic codes** - Shows error codes (e.g., `TNK-UNSUPPORTED-SYNTAX`)
+  - **Severity mapping** - Error/Warning/Info levels
+- **On-Demand Check** (V0.2.0) - Diagnostics run **only when you preview**, not on save
 
 ## Requirements
 
@@ -19,7 +22,7 @@ Transform Python to Rust directly in your editor!
 ### From VSIX
 
 ```bash
-code --install-extension tsuchinoko-0.1.0.vsix
+code --install-extension tsuchinoko-0.2.0.vsix
 ```
 
 ### From Source
@@ -29,7 +32,7 @@ cd vscode-extension
 npm install
 npm run compile
 npx vsce package
-code --install-extension tsuchinoko-0.1.0.vsix
+code --install-extension tsuchinoko-0.2.0.vsix
 ```
 
 ## Usage
@@ -37,6 +40,7 @@ code --install-extension tsuchinoko-0.1.0.vsix
 1. Open a Python file
 2. Press `Ctrl+Alt+P` (or `Cmd+Alt+P` on Mac)
 3. A side panel shows the transpiled Rust code
+4. Diagnostics are displayed if transpilation fails
 
 Or click "🚀 Rust Preview" in the status bar (bottom right).
 
@@ -45,8 +49,9 @@ Or click "🚀 Rust Preview" in the status bar (bottom right).
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `tsuchinoko.tnkPath` | `tnk` | Path to the tnk command |
-| `tsuchinoko.autoCheck` | `true` | Automatically check on save |
-| `tsuchinoko.checkDelay` | `500` | Delay before checking (ms) |
+
+> **Note**: `autoCheck` and `checkDelay` settings have been removed in v0.2.0.  
+> Diagnostics now run only when you execute the preview command.
 
 ## License
 

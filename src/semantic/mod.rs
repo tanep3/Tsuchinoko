@@ -23,17 +23,17 @@ mod analyze_types;
 pub mod builtins;
 pub mod coercion;
 pub mod emit_plan;
-pub mod lowering;  // V1.7.0
+pub mod lowering; // V1.7.0
 pub mod operators;
 mod scope;
 pub mod type_infer;
 mod types;
 
+pub use emit_plan::{build_emit_plan, EmitPlan, FuncEmitPlan};
 pub use operators::convert_binop;
 pub use scope::*;
 pub use type_infer::TypeInference;
 pub use types::*;
-pub use emit_plan::{build_emit_plan, EmitPlan, FuncEmitPlan};
 
 use crate::error::TsuchinokoError;
 use crate::ir::{HoistedVar, IrAugAssignOp, IrBinOp, IrExpr, IrExprKind, IrNode, IrUnaryOp};
@@ -120,19 +120,19 @@ impl SemanticAnalyzer {
             type_table: std::collections::HashMap::new(),
         }
     }
-    
+
     /// V1.7.0: Generate next ExprId
     fn next_expr_id(&mut self) -> crate::ir::ExprId {
         let id = crate::ir::ExprId(self.expr_id_counter);
         self.expr_id_counter += 1;
         id
     }
-    
+
     /// V1.7.0: Set type for an expression
     fn set_type(&mut self, id: crate::ir::ExprId, ty: Type) {
         self.type_table.insert(id, ty);
     }
-    
+
     /// V1.7.0: Create a new IrExpr with ID and record its type
     fn create_expr(&mut self, kind: crate::ir::IrExprKind, ty: Type) -> crate::ir::IrExpr {
         let id = self.next_expr_id();
@@ -654,9 +654,9 @@ impl SemanticAnalyzer {
 
     /// Preprocess top-level statements to normalize main function and guard blocks
     fn preprocess_top_level(&self, stmts: &[Stmt]) -> Vec<Stmt> {
-        let has_user_main = stmts.iter().any(|stmt| {
-            matches!(stmt, Stmt::FuncDef { name, .. } if name == "main")
-        });
+        let has_user_main = stmts
+            .iter()
+            .any(|stmt| matches!(stmt, Stmt::FuncDef { name, .. } if name == "main"));
         let mut new_stmts = Vec::new();
         // Pass: Flatten structure
         for stmt in stmts {
@@ -1345,29 +1345,31 @@ impl SemanticAnalyzer {
                     _ => false,
                 };
                 let mut skip_optional_wrap = false;
-                let ir_value =
-                    if matches!(expr_ty, Type::Any)
-                        && !matches!(ty, Type::Any | Type::Unknown)
-                        && !is_bridge_value
-                    {
-                        let conversion = match &ty {
-                            Type::Float => Some("f64"),
-                            Type::Int => Some("i64"),
-                            Type::String => Some("String"),
-                            Type::Bool => Some("bool"),
-                            _ => None,
-                        };
-                        if let Some(conv) = conversion {
-                            self.create_expr(IrExprKind::JsonConversion {
+                let ir_value = if matches!(expr_ty, Type::Any)
+                    && !matches!(ty, Type::Any | Type::Unknown)
+                    && !is_bridge_value
+                {
+                    let conversion = match &ty {
+                        Type::Float => Some("f64"),
+                        Type::Int => Some("i64"),
+                        Type::String => Some("String"),
+                        Type::Bool => Some("bool"),
+                        _ => None,
+                    };
+                    if let Some(conv) = conversion {
+                        self.create_expr(
+                            IrExprKind::JsonConversion {
                                 target: Box::new(ir_value),
                                 convert_to: conv.to_string(),
-                            }, ty.clone())
-                        } else {
-                            ir_value
-                        }
+                            },
+                            ty.clone(),
+                        )
                     } else {
                         ir_value
-                    };
+                    }
+                } else {
+                    ir_value
+                };
 
                 // Bridge結果はLoweringでFromTnkValueを挿入するため、OptionalのSomeラップだけ抑止する。
                 if matches!(ty, Type::Optional(_)) && is_bridge_value {
@@ -1378,17 +1380,25 @@ impl SemanticAnalyzer {
                 // This ensures emitter can correctly add .to_string() for String elements in tuples
                 // V1.7.0: Also wrap with TnkValue::from if target is Any/Optional<TnkValue> and value is not
                 // This is properly implementing structured type conversion rather than ad-hoc fixes.
-                
-                let is_target_any_or_unknown = matches!(ty, Type::Any | Type::Unknown) 
+
+                let is_target_any_or_unknown = matches!(ty, Type::Any | Type::Unknown)
                     || matches!(ty, Type::Optional(ref inner) if matches!(**inner, Type::Any | Type::Unknown));
 
                 // If the value is explicitly a structured literal (Dict/List), we MUST wrap it
                 // even if type inference says "Unknown" or "Any" (which might be imprecise).
-                let is_value_structured_literal = matches!(ir_value.kind, IrExprKind::Dict {..} | IrExprKind::List {..} | IrExprKind::Tuple {..});
+                let is_value_structured_literal = matches!(
+                    ir_value.kind,
+                    IrExprKind::Dict { .. } | IrExprKind::List { .. } | IrExprKind::Tuple { .. }
+                );
 
                 let should_wrap = is_target_any_or_unknown
-                    && (is_value_structured_literal || (!matches!(expr_ty, Type::Any) && !matches!(ir_value.kind, IrExprKind::TnkValueFrom(_) | IrExprKind::BridgeGet { .. })));
-                
+                    && (is_value_structured_literal
+                        || (!matches!(expr_ty, Type::Any)
+                            && !matches!(
+                                ir_value.kind,
+                                IrExprKind::TnkValueFrom(_) | IrExprKind::BridgeGet { .. }
+                            )));
+
                 let ir_value = if should_wrap {
                     self.create_expr(IrExprKind::TnkValueFrom(Box::new(ir_value)), Type::Any)
                 } else {
@@ -1402,10 +1412,13 @@ impl SemanticAnalyzer {
                         elements,
                     } = ir_value.kind
                     {
-                        self.create_expr(IrExprKind::List {
-                            elem_type: *elem_ty.clone(),
-                            elements,
-                        }, ty.clone())
+                        self.create_expr(
+                            IrExprKind::List {
+                                elem_type: *elem_ty.clone(),
+                                elements,
+                            },
+                            ty.clone(),
+                        )
                     } else {
                         ir_value
                     }
@@ -1421,23 +1434,30 @@ impl SemanticAnalyzer {
                 {
                     // If value is StringLit, add .to_string()
                     let ir_value = if matches!(ir_value.kind, IrExprKind::StringLit(_)) {
-                        self.create_expr(IrExprKind::MethodCall {
-                            target_type: Type::Unknown,
-                            target: Box::new(ir_value),
-                            method: "to_string".to_string(),
-                            args: vec![],
-                            callee_needs_bridge: false,
-                        }, Type::String)
+                        self.create_expr(
+                            IrExprKind::MethodCall {
+                                target_type: Type::Unknown,
+                                target: Box::new(ir_value),
+                                method: "to_string".to_string(),
+                                args: vec![],
+                                callee_needs_bridge: false,
+                            },
+                            Type::String,
+                        )
                     } else {
                         ir_value
                     };
-                    let some_func = self.create_expr(IrExprKind::Var("Some".to_string()), Type::Unknown);
-                    self.create_expr(IrExprKind::Call {
-                        func: Box::new(some_func),
-                        args: vec![ir_value],
-                        callee_may_raise: false,
-                        callee_needs_bridge: false,
-                    }, ty.clone())
+                    let some_func =
+                        self.create_expr(IrExprKind::Var("Some".to_string()), Type::Unknown);
+                    self.create_expr(
+                        IrExprKind::Call {
+                            func: Box::new(some_func),
+                            args: vec![ir_value],
+                            callee_may_raise: false,
+                            callee_needs_bridge: false,
+                        },
+                        ty.clone(),
+                    )
                 } else {
                     ir_value
                 };
@@ -1496,27 +1516,41 @@ impl SemanticAnalyzer {
                             if self.scope.depth() > self.func_base_depth {
                                 self.hoisted_var_candidates
                                     .entry(target.clone())
-                                    .or_insert((Type::Any, self.scope.depth(), self.func_base_depth));
+                                    .or_insert((
+                                        Type::Any,
+                                        self.scope.depth(),
+                                        self.func_base_depth,
+                                    ));
                             }
 
-                            let temp_var_expr = self.create_expr(IrExprKind::Var(temp_var.clone()), Type::Any);
+                            let temp_var_expr =
+                                self.create_expr(IrExprKind::Var(temp_var.clone()), Type::Any);
                             let i_expr = self.create_expr(IrExprKind::IntLit(i as i64), Type::Int);
-                            let cast_expr = self.create_expr(IrExprKind::Cast {
-                                target: Box::new(i_expr),
-                                ty: "usize".to_string(),
-                            }, Type::Unknown);
-                            let index_expr = self.create_expr(IrExprKind::Index {
-                                target: Box::new(temp_var_expr),
-                                index: Box::new(cast_expr),
-                            }, Type::Any);
+                            let cast_expr = self.create_expr(
+                                IrExprKind::Cast {
+                                    target: Box::new(i_expr),
+                                    ty: "usize".to_string(),
+                                },
+                                Type::Unknown,
+                            );
+                            let index_expr = self.create_expr(
+                                IrExprKind::Index {
+                                    target: Box::new(temp_var_expr),
+                                    index: Box::new(cast_expr),
+                                },
+                                Type::Any,
+                            );
 
-                            let index_access = self.create_expr(IrExprKind::MethodCall {
-                                target_type: Type::Any,
-                                target: Box::new(index_expr),
-                                method: "clone".to_string(),
-                                args: vec![],
-                                callee_needs_bridge: false,
-                            }, Type::Any);
+                            let index_access = self.create_expr(
+                                IrExprKind::MethodCall {
+                                    target_type: Type::Any,
+                                    target: Box::new(index_expr),
+                                    method: "clone".to_string(),
+                                    args: vec![],
+                                    callee_needs_bridge: false,
+                                },
+                                Type::Any,
+                            );
                             nodes.push(IrNode::VarDecl {
                                 name: target.clone(),
                                 ty: Type::Any,
@@ -1559,14 +1593,20 @@ impl SemanticAnalyzer {
                         let mut indices = Vec::new();
                         for i in 0..targets.len() {
                             let i_expr = self.create_expr(IrExprKind::IntLit(i as i64), Type::Int);
-                            let cast_expr = self.create_expr(IrExprKind::Cast {
-                                target: Box::new(i_expr),
-                                ty: "usize".to_string(),
-                            }, Type::Unknown);
-                            let index_expr = self.create_expr(IrExprKind::Index {
-                                target: Box::new(ir_value.clone()),
-                                index: Box::new(cast_expr),
-                            }, Type::Any);
+                            let cast_expr = self.create_expr(
+                                IrExprKind::Cast {
+                                    target: Box::new(i_expr),
+                                    ty: "usize".to_string(),
+                                },
+                                Type::Unknown,
+                            );
+                            let index_expr = self.create_expr(
+                                IrExprKind::Index {
+                                    target: Box::new(ir_value.clone()),
+                                    index: Box::new(cast_expr),
+                                },
+                                Type::Any,
+                            );
                             indices.push(index_expr);
                         }
                         self.create_expr(IrExprKind::Tuple(indices), Type::Any)
@@ -1689,9 +1729,7 @@ impl SemanticAnalyzer {
             _ => "complex_call".to_string(),
         }
     }
-
 }
-
 
 #[cfg(test)]
 mod tests;
