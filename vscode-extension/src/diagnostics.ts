@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { checkFile } from './transpiler';
+import { checkFile, TnkDiagnostic } from './transpiler';
 
 export const diagnosticCollection = vscode.languages.createDiagnosticCollection('tsuchinoko');
 
@@ -19,39 +19,50 @@ export async function updateDiagnostics(document: vscode.TextDocument): Promise<
     if (result.success) {
         diagnosticCollection.set(document.uri, []);
     } else {
-        const diagnostics = parseErrors(result.errors, document);
+        const diagnostics = convertDiagnostics(result.diagnostics, document);
         diagnosticCollection.set(document.uri, diagnostics);
     }
 }
 
-function parseErrors(errors: string[], document: vscode.TextDocument): vscode.Diagnostic[] {
-    const diagnostics: vscode.Diagnostic[] = [];
+function convertDiagnostics(
+    tnkDiags: TnkDiagnostic[],
+    document: vscode.TextDocument
+): vscode.Diagnostic[] {
+    return tnkDiags.map(diag => {
+        // Use accurate position information from diagnostic span
+        const startLine = Math.max(0, diag.span.line - 1); // Convert to 0-indexed
+        const startColumn = Math.max(0, diag.span.column - 1); // Convert to 0-indexed
+        const endLine = Math.max(0, diag.span.end_line - 1); // Convert to 0-indexed
+        const endColumn = Math.max(0, diag.span.end_column - 1); // Convert to 0-indexed
 
-    for (const error of errors) {
-        // Try to parse line number from error message
-        // Common patterns: "line 15:", "at line 15", "L15:"
-        const lineMatch = error.match(/(?:line|L|:)\s*(\d+)/i);
-        let line = 0;
+        // Ensure we don't exceed line length
+        const startLineText = startLine < document.lineCount ? document.lineAt(startLine).text : '';
+        const endLineText = endLine < document.lineCount ? document.lineAt(endLine).text : '';
 
-        if (lineMatch) {
-            line = Math.max(0, parseInt(lineMatch[1], 10) - 1);
-        }
+        const safeStartColumn = Math.min(startColumn, startLineText.length);
+        const safeEndColumn = Math.min(endColumn, endLineText.length);
 
         const range = new vscode.Range(
-            new vscode.Position(line, 0),
-            new vscode.Position(line, document.lineAt(Math.min(line, document.lineCount - 1)).text.length)
+            new vscode.Position(startLine, safeStartColumn),
+            new vscode.Position(endLine, safeEndColumn)
         );
 
-        const diagnostic = new vscode.Diagnostic(
-            range,
-            error,
-            vscode.DiagnosticSeverity.Error
-        );
+        // Map severity
+        const severity = mapSeverity(diag.severity);
+
+        const diagnostic = new vscode.Diagnostic(range, diag.message, severity);
         diagnostic.source = 'tsuchinoko';
-        diagnostic.code = 'TSUCHINOKO001';
+        diagnostic.code = diag.code;
 
-        diagnostics.push(diagnostic);
+        return diagnostic;
+    });
+}
+
+function mapSeverity(severity: string): vscode.DiagnosticSeverity {
+    switch (severity) {
+        case 'error': return vscode.DiagnosticSeverity.Error;
+        case 'warning': return vscode.DiagnosticSeverity.Warning;
+        case 'info': return vscode.DiagnosticSeverity.Information;
+        default: return vscode.DiagnosticSeverity.Error;
     }
-
-    return diagnostics;
 }

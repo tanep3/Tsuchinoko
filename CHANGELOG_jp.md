@@ -1,6 +1,79 @@
-# 変更履歴 (Changelog)
+# 変更履歴
 
-本プロジェクトの主要な変更点をここに記録します。
+このプロジェクトの注目すべき変更は全てこのファイルに記録されます。
+
+フォーマットは [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) に基づいており、
+このプロジェクトは [Semantic Versioning](https://semver.org/spec/v2.0.0.html) に準拠しています。
+
+## [1.7.0] - 2026-01-15 - Bridge Revolution - 相互運用性の完成
+
+### 追加 - Remote Object Handle パターン
+
+- **Python Worker との双方向通信**: Rust から Python オブジェクトを透過的に操作
+  - `call_method`: メソッド呼び出し (`df.head(10)`)
+  - `get_attribute`: 属性アクセス (`df.shape`, `df.columns`)
+  - `get_item`: 要素アクセス (`df["A"]`, `dict["key"]`, `arr[0]`)
+  - `slice`: スライス操作 (`arr[start:stop:step]`)
+  - `iter` / `iter_next_batch`: バッチ型イテレータ（IPC削減）
+
+### 追加 - Module Management
+
+- **ModuleTable**: トップレベル import を関数スコープのローカル変数に落とす問題を解決
+  - 全ての import 文を `ModuleTable` へ登録
+  - `bridge.get("alias")` を介した外部モジュールアクセス
+
+### 追加 - 診断システム強化
+
+- **未対応構文の診断強化**:
+  - `object()`, `compile()`, `memoryview()`, `bytearray()` を追加
+  - 診断アーキテクチャの正規ドキュメント化 (`diagnostic_architecture.md`)
+
+- **Worker Error 詳細化**:
+  - `error.op` フィールド追加（操作情報: cmd, target, key）
+  - Bridge 呼び出しエラーの人間可読化（JSON構造 → 通常メッセージ）
+
+### 追加 - VSCode Extension v0.2.0
+
+- **`--diag-json` 対応**: 正確な診断マーカー表示
+  - 行全体ではなく正確な範囲（column → end_column）
+  - 診断コード・重要度マッピング（error/warning/info）
+
+- **UX改善**:
+  - 自動チェック削除（プレビュー実行時のみ診断）
+  - うざい保存時チェックを廃止
+
+### 変更 - BuiltinTable アーキテクチャ
+
+- **構造データ化**: 手続き的ロジック → 宣言的テーブル
+  - `src/bridge/builtin_table.rs`: 26個の組み込み関数を構造定義
+  - `BuiltinSpec`: name, kind, ret_ty_resolver を一元管理
+
+- **責務の分離**:
+  - Semantic: BuiltinTable ルックアップ → `IrExprKind::BuiltinCall` 生成
+  - Lowering: `lower_builtin_call` で展開、`FromTnkValue` 自動挿入
+  - Emitter: 単なる出力のみ（意味解析ロジックなし）
+
+### 強化 - エラーハンドリング
+
+- **統一レスポンス形式**: `ok`/`error` Tagged Union
+- **エラーコード体系**: ProtocolError, StaleHandle, WorkerCrash, PythonException 等
+- **トレースバック保持**: Python 例外のスタックトレースを Rust 側へ伝播
+
+### テスト
+
+- **リグレッションテスト**: 96/96 成功 (100%)
+- **E2Eテスト**: Pandas (`v1_7_0_pandas_test.py`), Numpy, Security tests
+- **システムテスト**: 診断機能、Worker Error op
+
+### ドキュメント
+
+- **新規ドキュメント**:
+  - `diagnostic_architecture.md`: 診断アーキテクチャ解説
+  - `v1.7.0_requirements.md`: 要件定義書
+  - `v1.7.0_system_design.md`: システム設計書
+  - `v1.7.0_execution_plan.md`: 実装計画
+
+---
 
 ## [1.6.0] - 2026-01-10 - オブジェクト指向 & リソース管理
 

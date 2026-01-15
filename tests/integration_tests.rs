@@ -1,8 +1,20 @@
 //! Integration tests for Tsuchinoko transpiler
 
 use tsuchinoko::emitter::emit;
-use tsuchinoko::ir::{IrBinOp, IrExpr, IrNode};
-use tsuchinoko::semantic::Type;
+use tsuchinoko::ir::{ExprId, IrBinOp, IrExpr, IrExprKind, IrNode};
+use tsuchinoko::semantic::{build_emit_plan, Type};
+
+fn expr(kind: IrExprKind) -> IrExpr {
+    IrExpr {
+        id: ExprId(0),
+        kind,
+    }
+}
+
+fn emit_with_plan(ir: &[IrNode]) -> String {
+    let plan = build_emit_plan(ir);
+    emit(ir, &plan)
+}
 
 /// Test: Simple variable assignment
 /// Python: x: int = 10
@@ -14,10 +26,10 @@ fn test_simple_assignment_to_rust() {
         name: "x".to_string(),
         ty: Type::Int,
         mutable: false,
-        init: Some(Box::new(IrExpr::IntLit(10))),
+        init: Some(Box::new(expr(IrExprKind::IntLit(10)))),
     }];
 
-    let result = emit(&ir);
+    let result = emit_with_plan(&ir);
     assert_eq!(result.trim(), "let x: i64 = 10i64;");
 }
 
@@ -36,16 +48,17 @@ fn test_function_def_to_rust() {
         name: "add".to_string(),
         params: vec![("a".to_string(), Type::Int), ("b".to_string(), Type::Int)],
         ret: Type::Int,
-        body: vec![IrNode::Return(Some(Box::new(IrExpr::BinOp {
-            left: Box::new(IrExpr::Var("a".to_string())),
+        body: vec![IrNode::Return(Some(Box::new(expr(IrExprKind::BinOp {
+            left: Box::new(expr(IrExprKind::Var("a".to_string()))),
             op: IrBinOp::Add,
-            right: Box::new(IrExpr::Var("b".to_string())),
-        })))],
+            right: Box::new(expr(IrExprKind::Var("b".to_string()))),
+        }))))],
         hoisted_vars: vec![],
         may_raise: false,
+        needs_bridge: false,
     }];
 
-    let result = emit(&ir);
+    let result = emit_with_plan(&ir);
     assert!(result.contains("fn add(a: i64, b: i64) -> i64"));
     assert!(result.contains("return (a + b)"));
 }
@@ -59,22 +72,22 @@ fn test_function_def_to_rust() {
 #[test]
 fn test_if_statement_to_rust() {
     let ir = vec![IrNode::If {
-        cond: Box::new(IrExpr::BinOp {
-            left: Box::new(IrExpr::Var("x".to_string())),
+        cond: Box::new(expr(IrExprKind::BinOp {
+            left: Box::new(expr(IrExprKind::Var("x".to_string()))),
             op: IrBinOp::Gt,
-            right: Box::new(IrExpr::IntLit(0)),
-        }),
+            right: Box::new(expr(IrExprKind::IntLit(0))),
+        })),
         then_block: vec![IrNode::Assign {
             target: "y".to_string(),
-            value: Box::new(IrExpr::IntLit(1)),
+            value: Box::new(expr(IrExprKind::IntLit(1))),
         }],
         else_block: Some(vec![IrNode::Assign {
             target: "y".to_string(),
-            value: Box::new(IrExpr::IntLit(0)),
+            value: Box::new(expr(IrExprKind::IntLit(0))),
         }]),
     }];
 
-    let result = emit(&ir);
+    let result = emit_with_plan(&ir);
     // Parentheses around conditions are now stripped
     assert!(result.contains("if x > 0"));
     assert!(result.contains("y = 1"));
@@ -90,18 +103,19 @@ fn test_for_loop_to_rust() {
     let ir = vec![IrNode::For {
         var: "i".to_string(),
         var_type: Type::Int,
-        iter: Box::new(IrExpr::Range {
-            start: Box::new(IrExpr::IntLit(0)),
-            end: Box::new(IrExpr::IntLit(10)),
-        }),
-        body: vec![IrNode::Expr(IrExpr::Call {
+        iter: Box::new(expr(IrExprKind::Range {
+            start: Box::new(expr(IrExprKind::IntLit(0))),
+            end: Box::new(expr(IrExprKind::IntLit(10))),
+        })),
+        body: vec![IrNode::Expr(expr(IrExprKind::Call {
             callee_may_raise: false,
-            func: Box::new(IrExpr::Var("println".to_string())),
-            args: vec![IrExpr::Var("i".to_string())],
-        })],
+            callee_needs_bridge: false,
+            func: Box::new(expr(IrExprKind::Var("println".to_string()))),
+            args: vec![expr(IrExprKind::Var("i".to_string()))],
+        }))],
     }];
 
-    let result = emit(&ir);
+    let result = emit_with_plan(&ir);
     // Range currently emits with i64 suffixes
     assert!(result.contains("for i in 0i64..10i64"));
 }
@@ -115,13 +129,17 @@ fn test_list_to_vec() {
         name: "nums".to_string(),
         ty: Type::List(Box::new(Type::Int)),
         mutable: false,
-        init: Some(Box::new(IrExpr::List {
+        init: Some(Box::new(expr(IrExprKind::List {
             elem_type: Type::Int,
-            elements: vec![IrExpr::IntLit(1), IrExpr::IntLit(2), IrExpr::IntLit(3)],
-        })),
+            elements: vec![
+                expr(IrExprKind::IntLit(1)),
+                expr(IrExprKind::IntLit(2)),
+                expr(IrExprKind::IntLit(3)),
+            ],
+        }))),
     }];
 
-    let result = emit(&ir);
+    let result = emit_with_plan(&ir);
     assert!(result.contains("let nums: Vec<i64> = vec![1i64, 2i64, 3i64]"));
 }
 
@@ -149,15 +167,15 @@ fn test_mutable_variable() {
             name: "x".to_string(),
             ty: Type::Int,
             mutable: true,
-            init: Some(Box::new(IrExpr::IntLit(10))),
+            init: Some(Box::new(expr(IrExprKind::IntLit(10)))),
         },
         IrNode::Assign {
             target: "x".to_string(),
-            value: Box::new(IrExpr::IntLit(20)),
+            value: Box::new(expr(IrExprKind::IntLit(20))),
         },
     ];
 
-    let result = emit(&ir);
+    let result = emit_with_plan(&ir);
     assert!(result.contains("let mut x: i64 = 10"));
     assert!(result.contains("x = 20"));
 }

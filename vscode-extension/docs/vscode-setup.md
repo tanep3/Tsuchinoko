@@ -12,7 +12,7 @@
 ### Option 1: Install from .vsix file
 
 ```bash
-code --install-extension tsuchinoko-0.1.0.vsix
+code --install-extension tsuchinoko-0.2.0.vsix
 ```
 
 ### Option 2: Build from Source
@@ -22,7 +22,7 @@ cd vscode-extension
 npm install
 npm run compile
 npx vsce package
-code --install-extension tsuchinoko-0.1.0.vsix
+code --install-extension tsuchinoko-0.2.0.vsix
 ```
 
 ## Usage
@@ -33,11 +33,11 @@ code --install-extension tsuchinoko-0.1.0.vsix
 2. Press `Ctrl+Alt+P` (or `Cmd+Alt+P` on Mac)
 3. A side panel will show the transpiled Rust code
 
-### Real-time Diagnostics
+### Real-time Diagnostics (V0.2.0)
 
-- Unsupported syntax will be highlighted with red squiggly lines
-- Hover over the highlighted code to see error details
-- Diagnostics update automatically when you save the file
+- **Column-accurate squiggly lines** using `--diag-json`
+- Diagnostics show **only when you run the preview** (not on save)
+- Hover over highlighted code to see error details with diagnostic codes
 
 ### Commands
 
@@ -53,8 +53,8 @@ Open VS Code Settings (`Cmd+,`) and search for "Tsuchinoko":
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `tsuchinoko.tnkPath` | `tnk` | Path to the `tnk` command |
-| `tsuchinoko.autoCheck` | `true` | Automatically check on save |
-| `tsuchinoko.checkDelay` | `500` | Delay before checking (ms) |
+
+> **Note**: `autoCheck` and `checkDelay` settings have been removed in v0.2.0.
 
 ## Troubleshooting
 
@@ -68,12 +68,12 @@ Open VS Code Settings (`Cmd+,`) and search for "Tsuchinoko":
 
 ### Preview not updating
 
-- Save the file (`Cmd+S`) to trigger refresh
+- Run the preview command again (`Ctrl+Alt+P`)
 - Check the Output panel (`View > Output > Tsuchinoko`) for errors
 
 ### Diagnostics not showing
 
-- Ensure `tsuchinoko.autoCheck` is enabled
+- Diagnostics appear only when running the preview command
 - Check if the file has `.py` extension
 
 ## Uninstall

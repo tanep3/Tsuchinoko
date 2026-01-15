@@ -1,8 +1,8 @@
 # Tsuchinoko システム設計書
 
 > **著者**: Tane Channel Technology  
-> **バージョン**: 1.6.0  
-> **最終更新**: 2026-01-10
+> **バージョン**: 1.7.0  
+> **最終更新**: 2026-01-15
 
 ---
 
@@ -37,6 +37,7 @@ flowchart TB
         AST[AST<br/>抽象構文木]
         SEM[Semantic Analyzer<br/>意味解析・型推論]
         IR[IR<br/>中間表現]
+        LOW[Lowering<br/>正規化・組み込み展開]
         EMIT[Emitter<br/>Rustコード生成]
     end
     
@@ -44,7 +45,7 @@ flowchart TB
         RS[Rust Source<br/>.rs]
     end
     
-    PY --> LEX --> PARSE --> AST --> SEM --> IR --> EMIT --> RS
+    PY --> LEX --> PARSE --> AST --> SEM --> IR --> LOW --> EMIT --> RS
 ```
 
 ### 2.2 処理パイプライン
@@ -56,7 +57,127 @@ flowchart TB
 | 3 | AST Builder | Parse Tree | AST | 抽象構文木構築 |
 | 4 | Semantic | AST | Typed AST | 型推論・スコープ解決 |
 | 5 | IR Generator | Typed AST | IR | 中間表現生成 |
-| 6 | Emitter | IR | Rust Code | コード出力 |
+| 6 | Lowering | IR | 正規化IR | 組み込み展開・型変換挿入 |
+| 7 | Emitter | 正規化IR | Rust Code | コード出力 |
+
+---
+
+### 2.3 宣言的組み込み管理とIR正規化（V1.7.0）
+
+V1.7.0 では、組み込み関数やブリッジ呼び出しを「宣言データ」と「正規化処理」に分離し、構造的に管理する。
+
+#### 設計原則
+
+- **Semantic は「事実の特定」に専念**  
+  例: `len`, `sorted`, `set` などを `BuiltinId` として確定し、型テーブルに記録する。
+- **BuiltinTable は宣言データの唯一の真実**  
+  関数名・種別（Bridge/Native/Intrinsic）・戻り値推論はここで定義する。
+- **Lowering が正規化を担当**  
+  `BuiltinCall` を `BridgeCall`/`MethodCall`/`Sorted` 等に展開し、型の不一致があれば `FromTnkValue` を挿入する。
+- **Emitter は構造化IRの機械的出力**  
+  RawCode 依存を最小化し、IRの構造を忠実に Rust 構文へ反映する。
+
+#### BuiltinTable（宣言データ）
+
+```rust
+pub enum BuiltinKind {
+    Bridge { target: &'static str },
+    NativeMethod { method: &'static str },
+    Intrinsic { op: IntrinsicOp },
+}
+
+pub struct BuiltinSpec {
+    pub id: BuiltinId,
+    pub name: &'static str,
+    pub kind: BuiltinKind,
+    pub ret_ty_resolver: fn(args: &[Type]) -> Type,
+}
+```
+
+#### 代表的な構造化IR
+
+- `BuiltinCall`: 組み込み呼び出しの確定（Semantic で生成）
+- `Sorted`: `sorted(...)` の構造化表現
+- `StaticCall`: `Type::method(...)` など静的呼び出しの構造化
+- `ConstRef`: `std::f64::consts::PI` 等の定数参照
+- `FromTnkValue`: ブリッジ戻り値の標準変換
+
+#### RawCode の扱い（方針と棚卸し）
+
+RawCode は原則排除し、構造化で表現できるものは IR で保持する。  
+現時点で例外的に RawCode を残すのは **文字列スライスの特殊処理**（`s[::n]`, `s[::-1]`）のみ。
+
+理由:
+Rust の `chars().step_by()` / `rev()` は構文変換での特殊ケースが多く、IR だけでの表現が煩雑なため。
+
+**残存（意図的）**
+- 文字列スライスの特殊処理  
+  - 例: `s[::n]`, `s[::-1]`  
+  - 生成: `s.chars().step_by(n)` / `s.chars().rev()`  
+  - 理由: Rust の文字列操作が特殊で、構造化IRのみで表現すると複雑化するため。
+
+**排除済み（構造化へ移行）**
+- `zip` / `enumerate` の map 本体
+- `dict -> HashMap` 変換の map 本体
+- `any` / `all` の predicate
+- `sorted`（`Sorted` IR）
+- `items` の owned 化（Closure + Tuple）
+- native constant / static call（`ConstRef` / `StaticCall`）
+
+#### Native バインディングの構造化
+
+`module_table` の native binding は `ConstRef` や `MethodCall` を通じて構造化出力する。  
+従来の `generate_native_code` は廃止し、`NativeBinding` を直接参照する。
+
+### 2.4 変換時診断（TnkDiagnostics）
+
+変換時エラーは **TsuchinokoError（生成コード実行時）とは別レイヤ** として扱う。  
+検知は分散（parse/semantic/lowering）、出力は一括（Emitter前）とする。
+
+#### 診断収集と出力フロー
+
+```mermaid
+flowchart TB
+    PARSE[Parser] --> DIAG[TnkDiagnostics<br/>ErrorSink]
+    SEM[Semantic] --> DIAG
+    LOW[Lowering] --> DIAG
+    DIAG -->|has_errors| STOP[Emitter前で中断]
+    STOP --> OUT1[stdout: 人間向けテキスト]
+    STOP --> OUT2[stderr: JSON診断 (--diag-json 指定時のみ)]
+```
+
+#### 診断データ構造（最小項目）
+- `code`: 例 `TNK-UNSUPPORTED-SYNTAX`
+- `message`: ユーザ向け説明
+- `severity`: `Error` / `Warning`
+- `span`: `file/line/column/range`
+- `phase`: `parse/semantic/lowering`
+- `meta`: バージョン等のメタ情報
+
+#### CLI/VSCode 出力方針
+- **CLI**: stdout に短いエラーメッセージ（人間向け）
+- **VSCode**: `--diag-json` を付与して stderr の JSON を解析し複数診断を一括表示
+- **JSON は失敗時のみ出力**（`--diag-json` 指定時）
+
+> [!NOTE]
+> 行・カラムは **ソーススキャンで検知できるものは正確**に出力する。  
+> AST/IR 経由の検知は **暫定で 1:1** を出力し、後続フェーズでSpan導入により改善する。
+
+### 2.5 未対応機能ガード（UnsupportedFeatureRegistry）
+
+未対応機能は **中央レジストリ** でガードし、検知は各フェーズで行う。  
+解除は **unsupported から削除して supported に移す** ことで行う。
+
+#### ガード構造（概念）
+- `UnsupportedFeature` enum に機能一覧を集約
+- `UnsupportedFeatureRegistry` で ON/OFF 管理
+- `guard(feature, span, phase, sink)` で診断を追加
+
+#### 解除手順（将来対応時）
+1. 実装を追加
+2. `docs/unsupported_features.md` / `_jp.md` から削除
+3. `docs/supported_features.md` / `_jp.md` に追記
+4. 回帰テストで確認
 
 ---
 
@@ -81,7 +202,8 @@ tsuchinoko/
 │   │   ├── mod.rs
 │   │   ├── scope.rs         # スコープ管理
 │   │   ├── types.rs         # 型システム
-│   │   └── inference.rs     # 型推論
+│   │   ├── type_infer.rs    # 型推論
+│   │   └── lowering.rs      # IR正規化（V1.7.0）
 │   ├── ir/
 │   │   ├── mod.rs
 │   │   └── nodes.rs         # IR構造体
@@ -91,6 +213,7 @@ tsuchinoko/
 │   ├── bridge/              # V1.2.0: Import ブリッジ
 │   │   ├── mod.rs           # PythonBridge ランタイム
 │   │   ├── module_table.rs  # 方式選択テーブル
+│   │   ├── builtin_table.rs # 組み込み宣言テーブル（V1.7.0）
 │   │   ├── worker.rs        # 埋め込み Python ワーカー
 │   │   └── tsuchinoko_error.rs  # V1.5.2: エラー型定義
 │   └── error.rs             # エラー定義
@@ -146,6 +269,7 @@ import 文を含む Python コードを Rust で動作させるためのトリ�
 flowchart TB
     subgraph Bridge["bridge/ Module"]
         TABLE[module_table.rs]
+        BUILTIN[builtin_table.rs]
         WORKER[worker.rs]
         RUNTIME[mod.rs]
     end
@@ -156,6 +280,7 @@ flowchart TB
     end
     
     TABLE --> RUNTIME
+    BUILTIN --> RUNTIME
     WORKER --> RUNTIME
     RUNTIME --> RUST
     RUST <-->|NDJSON| PYTHON
@@ -278,6 +403,18 @@ pub struct TsuchinokoError {
     cause: Option<Box<TsuchinokoError>>,  // 例外チェーン
 }
 ```
+
+#### bare raise（再送）の扱い
+
+- `raise` 単体は **except 内でのみ有効**
+- 直前の例外を再送する（例外チェーン維持）
+- except 外での bare raise は **無効構文としてエラー扱い**
+
+#### panic → InternalError 変換
+
+- `catch_unwind` により panic を回収
+- `TsuchinokoError::new("InternalError", ...)` へ変換して返す
+- 目的は **診断のための保険**（Python例外の意味論とは独立）
 
 #### 2パス may_raise 解析
 
@@ -618,9 +755,52 @@ pub enum TsuchinokoError {
 }
 ```
 
+### 7.2 実行時例外（生成コード）
+
+生成された Rust コードは Python 例外を `Result<T, TsuchinokoError>` で扱う。
+
+| 例 | 変換後 |
+|----|--------|
+| `raise ValueError("x")` | `return Err(TsuchinokoError::new("ValueError","x",None))` |
+| `raise RuntimeError("x") from e` | `return Err(TsuchinokoError::new("RuntimeError","x",Some(e)))` |
+| `raise`（bare） | except 内のみ再送、外ではエラー |
+
+### 7.3 外部境界の例外
+
+PyO3 / py_bridge 経由のエラーは `panic` ではなく `Err(TsuchinokoError)` へ変換し、  
+try/except による捕捉対象として扱う。
+
 ---
 
-## 8. 依存クレート
+## 8. 実行エントリとスコープ
+
+### 8.1 Python実行モデルとの対応
+
+Python には以下の2系統の実行スタイルがある。
+
+- **トップレベルのベタ書き**
+- **`if __name__ == "__main__": main()` ガード実行**
+
+Rust は `fn main()` だけのため、変換時に統一ルールを適用する。
+
+#### 変換規約
+
+| Python | Rust変換 |
+|-------|----------|
+| トップレベルのベタ書き | `fn main()` の本文に展開 |
+| `if __name__ == "__main__": main()` | `fn _main_tsuchinoko()` を生成し、`main()` から呼ぶ |
+
+### 8.2 スコープ整合
+
+Pythonではブロック内で定義した変数も関数スコープで参照できるが、  
+Rustではブロック外に漏れない。  
+そのため、変換器は **ブロック内初回定義の変数を関数スコープに hoist し `Option<T>` で宣言**する。
+
+これにより、トップレベルと `__main__` ガードのどちらでも同一のスコープ規則が保たれる。
+
+---
+
+## 9. 依存クレート
 
 | クレート | バージョン | 用途 |
 |---------|-----------|------|
@@ -649,3 +829,72 @@ pub enum TsuchinokoError {
 - 旧Python実装: `src_v0.5/`
 - 旧ドキュメント: `docs_old/`
 - pest公式: https://pest.rs/
+### 3.7 V1.7.0 Remote Object Handle パターン
+
+V1.7.0 では、Python Worker との双方向通信により、Rust から Python オブジェクトを透過的に操作可能にする。
+
+#### アーキテクチャ
+
+```mermaid
+flowchart TB
+    subgraph Rust[\"Rust Runtime\"]
+        HANDLE[PyObjectHandle\u003cbr\u003e{id: String}]
+        BRIDGE[PythonBridge]
+        MODULE[ModuleTable]
+    end
+    
+    subgraph Worker[\"Python Worker\"]
+        STORE[_OBJECT_STORE\u003cbr\u003eDict[str, Any]]
+        DISPATCH[Command Dispatcher]
+    end
+    
+    HANDLE --> BRIDGE
+    MODULE --> BRIDGE
+    BRIDGE <--> |NDJSON| DISPATCH
+    DISPATCH <--> STORE
+```
+
+#### Handle管理
+
+- **Rust側**: `PyObjectHandle { id: String }` のみ保持（Opaque Handle）
+- **Python Worker側**: `_OBJECT_STORE: Dict[str, Any]` で実体管理
+- **ライフサイクル**: Rust の `Drop` トレイトで自動的に `delete` コマンド送信
+
+#### ModuleTable
+
+トップレベル import を `ModuleTable` で一元管理し、スコープ問題を解決。
+
+```python
+# Python
+import pandas as pd
+df = pd.read_csv("data.csv")
+```
+
+↓
+
+```rust
+// Rust（概念）
+bridge.import("pandas", "pd");  // ModuleTable に登録
+let df = bridge.get("pd").call_method("read_csv", &[...]);  // 取得して操作
+```
+
+#### RPC コマンドセット
+
+| コマンド | 用途 | 例 |
+|---------|------|----|
+| `call_method` | メソッド呼び出し | `df.head(10)` |
+| `get_attribute` | 属性アクセス | `df.shape` |
+| `get_item` | 要素アクセス | `df["A"]` |
+| `slice` | スライス | `arr[start:stop:step]` |
+| `iter` / `iter_next_batch` | バッチ型イテレータ | `for x in obj` |
+| `delete` | Handle解放 | 自動（Drop時） |
+
+#### エラーハンドリング
+
+- 統一レスポンス形式: `ok` / `error` Tagged Union
+- エラーコード体系: `ProtocolError`, `StaleHandle`, `PythonException` 等
+- `error.op` フィールド: 失敗したコマンド情報を保持
+
+詳細は `docs/old_versions/v1.7.0_requirements.md` および `docs/old_versions/v1.7.0_system_design.md` を参照。
+
+---

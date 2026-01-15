@@ -694,6 +694,12 @@ fn parse_class_body(
             continue;
         }
 
+        // Allow `pass` as an empty class body statement
+        if line_trim == "pass" {
+            i += 1;
+            continue;
+        }
+
         // Parse field: field_name: type (for dataclass style)
         let line_num = i + 1;
         if let Some(colon_pos) = line_trim.find(':') {
@@ -1473,6 +1479,14 @@ fn parse_line(line: &str, line_num: usize) -> Result<Option<Stmt>, TsuchinokoErr
 
     // V1.5.2: Try to parse as raise statement
     // Supports: raise ValueError("msg") and raise ValueError("msg") from e
+    if line == "raise" {
+        return Ok(Some(Stmt::Raise {
+            exception_type: String::new(),
+            message: Expr::StringLiteral(String::new()),
+            cause: None,
+            line: line_num,
+        }));
+    }
     if line.starts_with("raise ") {
         let rest = line.strip_prefix("raise ").unwrap().trim();
 

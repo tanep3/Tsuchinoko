@@ -53,3 +53,9 @@ src/bin/test.rs
 vscode-extension/node_modules/
 vscode-extension/out/
 vscode-extension/*.vsix
+
+# Agent
+.geminiignore
+.gemini/
+.skills/
+GEMINI.md

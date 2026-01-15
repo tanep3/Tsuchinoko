@@ -5,6 +5,76 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-01-15 - Bridge Revolution - Complete Interoperability
+
+### Added - Remote Object Handle Pattern
+
+- **Bidirectional Communication with Python Worker**: Transparently manipulate Python objects from Rust
+  - `call_method`: Method invocation (`df.head(10)`)
+  - `get_attribute`: Attribute access (`df.shape`, `df.columns`)
+  - `get_item`: Element access (`df["A"]`, `dict["key"]`, `arr[0]`)
+  - `slice`: Slice operation (`arr[start:stop:step]`)
+  - `iter` / `iter_next_batch`: Batched iterator (IPC reduction)
+
+### Added - Module Management
+
+- **ModuleTable**: Resolved the issue of top-level imports falling into function-scoped local variables
+  - All import statements registered to `ModuleTable`
+  - External module access via `bridge.get("alias")`
+
+### Added - Diagnostic System Enhancement
+
+- **Enhanced unsupported syntax diagnostics**:
+  - Added `object()`, `compile()`, `memoryview()`, `bytearray()`
+  - Formalized diagnostic architecture documentation (`diagnostic_architecture.md`)
+
+- **Worker Error Details**:
+  - Added `error.op` field (operation info: cmd, target, key)
+  - Human-readable Bridge call errors (JSON structure → normal messages)
+
+### Added - VSCode Extension v0.2.0
+
+- **`--diag-json` support**: Accurate diagnostic markers
+  - Precise range (column → end_column) instead of entire line
+  - Diagnostic code & severity mapping (error/warning/info)
+
+- **UX Improvements**:
+  - Removed auto-check (diagnostics only on preview execution)
+  - Eliminated annoying save-time checks
+
+### Changed - BuiltinTable Architecture
+
+- **Structured Data**: Procedural logic → Declarative table
+  - `src/bridge/builtin_table.rs`: Structural definition of 26 built-in functions
+  - `BuiltinSpec`: Centralized management of name, kind, ret_ty_resolver
+
+- **Separation of Concerns**:
+  - Semantic: BuiltinTable lookup → `IrExprKind::BuiltinCall` generation
+  - Lowering: Expansion via `lower_builtin_call`, automatic `FromTnkValue` insertion
+  - Emitter: Simple output only (no semantic analysis logic)
+
+### Enhanced - Error Handling
+
+- **Unified Response Format**: `ok`/`error` Tagged Union
+- **Error Code System**: ProtocolError, StaleHandle, WorkerCrash, PythonException, etc.
+- **Traceback Preservation**: Propagate Python exception stack traces to Rust
+
+### Tests
+
+- **Regression Tests**: 96/96 passed (100%)
+- **E2E Tests**: Pandas (`v1_7_0_pandas_test.py`), Numpy, Security tests
+- **System Tests**: Diagnostic features, Worker Error op
+
+### Documentation
+
+- **New Documents**:
+  - `diagnostic_architecture.md`: Diagnostic architecture explanation
+  - `v1.7.0_requirements.md`: Requirements specification
+  - `v1.7.0_system_design.md`: System design
+  - `v1.7.0_execution_plan.md`: Implementation plan
+
+---
+
 ## [1.6.0] - 2026-01-10 - OOP & Resource Management
 
 ### Added - Resource Management

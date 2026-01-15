@@ -2,6 +2,13 @@
 
 This document lists Python features NOT currently supported by Tsuchinoko transpiler.
 
+## Guard Policy (V1.7.0)
+
+Unsupported features are guarded by a centralized registry.
+
+- **Guard ON**: items listed in this document
+- **Guard OFF**: items removed from this document and listed in `supported_features.md`
+
 ## Language Constructs
 
 ### Statements

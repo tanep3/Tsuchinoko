@@ -1,15 +1,99 @@
-//! IR Expression Definitions
-//!
-//! 中間表現での式を定義する。
-//! リテラル、変数参照、演算、関数呼び出し、その他の式を含む。
-
 use super::nodes::IrNode;
 use super::ops::{IrBinOp, IrUnaryOp};
 use crate::semantic::Type;
+use serde::{Deserialize, Serialize};
 
-/// IR 式の型
-#[derive(Debug, Clone)]
-pub enum IrExpr {
+/// 式の一意な ID
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ExprId(pub u32);
+
+/// 組み込み関数の識別子
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum BuiltinId {
+    Len,
+    Sum,
+    Any,
+    All,
+    Range,
+    Enumerate,
+    Zip,
+    Int,
+    Float,
+    Str,
+    List,
+    Tuple,
+    Dict,
+    Abs,
+    Min,
+    Max,
+    Round,
+    Input,
+    Chr,
+    Ord,
+    Bin,
+    Hex,
+    Oct,
+    Print,      // V1.7.0
+    IsInstance, // V1.7.0
+    Open,       // V1.7.0
+    Sorted,     // V1.7.0
+    Set,        // V1.7.0
+}
+
+impl BuiltinId {
+    /// Rust での対応する関数名を返す
+    pub fn to_rust_name(&self) -> &'static str {
+        match self {
+            BuiltinId::Len => "len",
+            BuiltinId::Sum => "sum",
+            BuiltinId::Any => "any",
+            BuiltinId::All => "all",
+            BuiltinId::Range => "range",
+            BuiltinId::Enumerate => "enumerate",
+            BuiltinId::Zip => "zip",
+            BuiltinId::Int => "int",
+            BuiltinId::Float => "float",
+            BuiltinId::Str => "str",
+            BuiltinId::List => "list",
+            BuiltinId::Tuple => "tuple",
+            BuiltinId::Dict => "dict",
+            BuiltinId::Abs => "abs",
+            BuiltinId::Min => "min",
+            BuiltinId::Max => "max",
+            BuiltinId::Round => "round",
+            BuiltinId::Input => "input",
+            BuiltinId::Chr => "chr",
+            BuiltinId::Ord => "ord",
+            BuiltinId::Bin => "bin",
+            BuiltinId::Hex => "hex",
+            BuiltinId::Oct => "oct",
+            BuiltinId::Print => "print",
+            BuiltinId::IsInstance => "isinstance",
+            BuiltinId::Open => "open",
+            BuiltinId::Sorted => "sorted",
+            BuiltinId::Set => "set",
+        }
+    }
+}
+
+/// 言語組み込みの特殊演算 (論理演算など)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IntrinsicOp {
+    // 基本的な組み込み関数扱い
+    Basic,
+}
+
+/// IR 式
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IrExpr {
+    pub id: ExprId,
+    pub kind: IrExprKind,
+}
+
+/// IR 式の型（実体）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum IrExprKind {
     // --- リテラル ---
     /// 整数リテラル
     IntLit(i64),
@@ -45,7 +129,11 @@ pub enum IrExpr {
         args: Vec<IrExpr>,
         /// V1.5.2: 呼び出し先が may_raise (Result を返す) かどうか
         callee_may_raise: bool,
+        /// V1.7.0: 呼び出し先が PythonBridge を必要とするかどうか
+        callee_needs_bridge: bool,
     },
+    /// 静的メソッド呼び出し (e.g., Type::method(...))
+    StaticCall { path: String, args: Vec<IrExpr> },
     /// メソッド呼び出し (e.g., arr.len())
     MethodCall {
         target: Box<IrExpr>,
@@ -53,6 +141,8 @@ pub enum IrExpr {
         args: Vec<IrExpr>,
         /// ターゲットの型 (Set/List/Dict/Class 判別用)
         target_type: Type,
+        /// V1.7.0: 呼び出し先が PythonBridge を必要とするかどうか
+        callee_needs_bridge: bool,
     },
     /// PyO3モジュール呼び出し (np.array(...), pd.DataFrame(...))
     PyO3Call {
@@ -60,12 +150,60 @@ pub enum IrExpr {
         method: String,
         args: Vec<IrExpr>,
     },
-    /// PyO3メソッド呼び出し (Type::Any対象)
+    /// PyO3メソッド呼び出し (Type::Any対象) - Deprecated in V1.7.0 favor of BridgeMethodCall
     PyO3MethodCall {
         target: Box<IrExpr>,
         method: String,
         args: Vec<IrExpr>,
     },
+    /// V1.7.0: ブリッジ経由のメソッド呼び出し (obj.method(...))
+    BridgeMethodCall {
+        target: Box<IrExpr>,
+        method: String,
+        args: Vec<IrExpr>,
+        keywords: Vec<(String, IrExpr)>,
+    },
+    /// V1.7.0: ブリッジ経由の直接呼び出し (func(...))
+    BridgeCall {
+        target: Box<IrExpr>,
+        args: Vec<IrExpr>,
+        keywords: Vec<(String, IrExpr)>,
+    },
+    /// V1.7.0: ブリッジ経由の属性アクセス (obj.attr)
+    BridgeAttributeAccess {
+        target: Box<IrExpr>,
+        attribute: String,
+    },
+    /// V1.7.0: ブリッジ経由のアイテムアクセス (obj[key])
+    BridgeItemAccess {
+        target: Box<IrExpr>,
+        index: Box<IrExpr>,
+    },
+    /// V1.7.0: ブリッジ経由のスライス (obj[start:stop:step])
+    BridgeSlice {
+        target: Box<IrExpr>,
+        start: Box<IrExpr>,
+        stop: Box<IrExpr>,
+        step: Box<IrExpr>,
+    },
+    /// V1.7.0: 構造化された組み込み関数呼び出し
+    BuiltinCall { id: BuiltinId, args: Vec<IrExpr> },
+    /// V1.7.0: sorted の構造化表現
+    Sorted {
+        iter: Box<IrExpr>,
+        key: Option<Box<IrExpr>>,
+        reverse: bool,
+    },
+
+    // --- Conversions (V1.7.0 Option B) ---
+    /// Reference (&expr) - Used for Zero-Copy Bridge calls
+    Ref(Box<IrExpr>),
+    /// TnkValue conversion (TnkValue::from(expr))
+    TnkValueFrom(Box<IrExpr>),
+    /// V1.7.0: ブリッジ経由のモジュール取得 (bridge.get("alias"))
+    BridgeGet { alias: String },
+    /// V1.7.0: ブリッジの戻り値 (TnkValue) から期待型への標準変換
+    FromTnkValue { value: Box<IrExpr>, to_type: Type },
 
     // --- コレクション ---
     /// リスト/Vec リテラル
@@ -148,7 +286,7 @@ pub enum IrExpr {
     /// f-string (format! マクロ)
     FString {
         parts: Vec<String>,
-        values: Vec<IrExpr>,
+        values: Vec<(IrExpr, Type)>,
     },
     /// 条件式 (if test { body } else { orelse })
     IfExp {
@@ -162,6 +300,8 @@ pub enum IrExpr {
     BoxNew(Box<IrExpr>),
     /// 明示的キャスト (expr as type)
     Cast { target: Box<IrExpr>, ty: String },
+    /// 定数参照 (native constantなど)
+    ConstRef { path: String },
     /// 生Rustコード (IRで表現できないパターン用)
     RawCode(String),
     /// JSON変換 (PyO3戻り値用)
@@ -187,17 +327,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_builtin_id_to_rust_name() {
+        assert_eq!(BuiltinId::Len.to_rust_name(), "len");
+        assert_eq!(BuiltinId::Dict.to_rust_name(), "dict");
+        assert_eq!(BuiltinId::IsInstance.to_rust_name(), "isinstance");
+    }
+
+    #[test]
     fn test_ir_expr_int_lit() {
-        let expr = IrExpr::IntLit(42);
-        if let IrExpr::IntLit(n) = expr {
+        let expr = IrExpr {
+            id: ExprId(0),
+            kind: IrExprKind::IntLit(42),
+        };
+        if let IrExprKind::IntLit(n) = expr.kind {
             assert_eq!(n, 42);
         }
     }
 
     #[test]
     fn test_ir_expr_var() {
-        let expr = IrExpr::Var("x".to_string());
-        if let IrExpr::Var(name) = expr {
+        let expr = IrExpr {
+            id: ExprId(1),
+            kind: IrExprKind::Var("x".to_string()),
+        };
+        if let IrExprKind::Var(name) = expr.kind {
             assert_eq!(name, "x");
         }
     }

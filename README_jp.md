@@ -4,18 +4,19 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.6.0-green.svg)](Cargo.toml)
-[![Coverage](https://img.shields.io/badge/Python構文カバレッジ-58%25-blue.svg)](#機能ドキュメント)
-[![Changelog](https://img.shields.io/badge/History-変更履歴-blue.svg)](CHANGELOG_jp.md)
+[![Version](https://img.shields.io/badge/Version-1.7.0-green.svg)](Cargo.toml)
+[![Coverage](https://img.shields.io/badge/Python構文網羅率-57%25-blue.svg)](#機能ドキュメント)
+[![Changelog](https://img.shields.io/badge/履歴-Changelog-blue.svg)](CHANGELOG_jp.md)
 
-[🇺🇸 English version](README.md)
+[🇺🇸 English Version](README.md)
 
 ## 概要
 
-TsuchinokoはPythonの型ヒント付きコードをRustに変換するトランスパイラです。
-Pythonの読みやすい構文でアルゴリズムロジックを書き、Rustの安全性とパフォーマンスを得ることができます。
+Tsuchinoko（ツチノコ）は、型ヒント付きPythonコードをRustコードへ変換するトランスパイラです。  
+Pythonの読みやすい構文でアルゴリズムを書き、Rustの安全性とパフォーマンスを得られます。  
+ツチノコは日本の伝説上の蛇のような未確認生物です。このツールも、Pythonという一つのものを予想外のもの（Rust！）に変身させます。
 
-> **カバレッジ**: Python構文機能の58%(86機能)をサポート。変数、演算子、制御フロー、関数、クラス（継承含む）、@property、データ構造、コレクション(list/dict/set)、文字列メソッド、リソース管理(with文)、Result型によるロバストなエラー処理など、アルゴリズムプログラミングに必要な基本構造をカバーしています。
+> **実装網羅率**: Python構文機能の57%（151機能中86機能）をサポート。アルゴリズムプログラミングに必要な基本構成要素をカバー：変数、演算子、制御フロー、関数、クラス（継承付き）、@property、データ構造、コレクション（list/dict/set）、文字列メソッド、リソース管理（with文）、Result型による堅牢なエラー処理。など、アルゴリズムプログラミングに必要な基本構造をカバーしています。
 
 ## 設計理念 (Design Philosophy)
 

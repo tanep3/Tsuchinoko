@@ -5,7 +5,7 @@
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
-use tsuchinoko::transpile;
+use tsuchinoko::transpile_with_diagnostics;
 
 /// Tsuchinoko - Python to Rust Transpiler
 #[derive(Parser, Debug)]
@@ -30,9 +30,17 @@ struct Cli {
     #[arg(short, long)]
     debug: bool,
 
+    /// Dump Intermediate Representation (IR) and exit
+    #[arg(long)]
+    dump_ir: bool,
+
     /// Check only (don't generate output)
     #[arg(short, long)]
     check: bool,
+
+    /// Emit JSON diagnostics to stderr (on failure only)
+    #[arg(long)]
+    diag_json: bool,
 
     /// PyO3 version for generated project (default: "0" = latest major)
     #[arg(long, default_value = "0")]
@@ -55,8 +63,36 @@ fn main() -> Result<()> {
         println!("[DEBUG] Source length: {} bytes", source.len());
     }
 
+    // V1.7.0: IR Dump mode
+    if cli.dump_ir {
+        let ir = match tsuchinoko::analyze_to_ir_with_diagnostics(&source, Some(&cli.input)) {
+            Ok(ir) => ir,
+            Err(diags) => {
+                print!("{}", diags.to_text());
+                if cli.diag_json {
+                    eprintln!("{}", diags.to_json());
+                }
+                std::process::exit(1);
+            }
+        };
+        println!("=== Intermediate Representation (IR) ===");
+        for (i, node) in ir.iter().enumerate() {
+            println!("[{:03}] {:?}", i, node);
+        }
+        return Ok(());
+    }
+
     // Transpile Python to Rust
-    let rust_code = transpile(&source)?;
+    let rust_code = match transpile_with_diagnostics(&source, Some(&cli.input)) {
+        Ok(code) => code,
+        Err(diags) => {
+            print!("{}", diags.to_text());
+            if cli.diag_json {
+                eprintln!("{}", diags.to_json());
+            }
+            std::process::exit(1);
+        }
+    };
 
     if cli.debug {
         println!("[DEBUG] Generated Rust code:");
@@ -72,12 +108,12 @@ fn main() -> Result<()> {
     // V1.4.0: Check if external libraries are used (PythonBridge indicates external imports)
     let uses_external_libs = rust_code.contains("PythonBridge");
 
-    // V1.6.0: Check if **kwargs is used (HashMap<String, serde_json::Value>)
-    let uses_kwargs = rust_code.contains("HashMap<String, serde_json::Value>");
+    // V1.6.0: Check if **kwargs is used (HashMap<String, TnkValue>)
+    let uses_kwargs = rust_code.contains("HashMap<String, TnkValue>");
 
     // V1.4.0: Enforce --project when external libraries are used
     if uses_external_libs && cli.project.is_none() {
-        eprintln!("Error: This code uses external Python libraries.");
+        eprintln!("Error: This code uses external Python libraries via PythonBridge.");
         eprintln!("       Please use --project option to generate a complete project:");
         eprintln!();
         eprintln!(
@@ -86,8 +122,8 @@ fn main() -> Result<()> {
         );
         eprintln!();
         eprintln!("       The --project option generates a Cargo project with:");
-        eprintln!("         - bridge.rs: Python worker communication module");
-        eprintln!("         - Cargo.toml: Dependencies (serde, serde_json)");
+        eprintln!("         - bridge/ mod.rs: Python worker communication module");
+        eprintln!("         - Cargo.toml: Dependencies (serde, serde_json, uuid, thiserror)");
         eprintln!();
         eprintln!("       After generation, run:");
         eprintln!("         source venv/bin/activate");
@@ -106,6 +142,7 @@ fn main() -> Result<()> {
         );
         eprintln!();
         eprintln!("       The --project option generates a Cargo project with:");
+        eprintln!("         - bridge/ mod.rs: Python protocol module (TnkValue)");
         eprintln!("         - Cargo.toml: Dependencies (serde, serde_json)");
         eprintln!();
         eprintln!("       After generation, run:");
@@ -150,6 +187,11 @@ fn generate_project(name: &str, rust_code: &str, pyo3_version: &str) -> Result<(
         .and_then(|s| s.to_str())
         .unwrap_or(name);
 
+    // V1.7.0 Fix: Clean up output directory to prevent stale file conflicts (e.g. bridge.rs vs bridge/mod.rs)
+    if std::path::Path::new(name).exists() {
+        let _ = fs::remove_dir_all(name);
+    }
+
     // Create project directory
     fs::create_dir_all(format!("{name}/src"))?;
 
@@ -164,6 +206,11 @@ fn generate_project(name: &str, rust_code: &str, pyo3_version: &str) -> Result<(
     if uses_serde || uses_bridge {
         dependencies.push_str("serde = { version = \"1.0\", features = [\"derive\"] }\n");
         dependencies.push_str("serde_json = \"1.0\"\n");
+    }
+
+    if uses_bridge {
+        dependencies.push_str("uuid = { version = \"1.19.0\", features = [\"v4\"] }\n");
+        dependencies.push_str("thiserror = \"1.0\"\n"); // bridge_error uses thiserror
     }
 
     if uses_pyo3 {
@@ -187,10 +234,58 @@ edition = "2021"
     let gitignore = "/target\n";
     fs::write(format!("{name}/.gitignore"), gitignore)?;
 
-    // If using PythonBridge, generate embedded bridge module
+    // If using PythonBridge, generate embedded bridge module structure
     if uses_bridge {
-        let bridge_rs = generate_bridge_module();
-        fs::write(format!("{name}/src/bridge.rs"), bridge_rs)?;
+        fs::create_dir_all(format!("{name}/src/bridge/python"))?;
+        fs::create_dir_all(format!("{name}/src/bridge/strategies"))?;
+
+        // Copy Bridge Files
+        fs::write(
+            format!("{name}/src/bridge/mod.rs"),
+            include_str!("bridge/runtime_mod.rs"),
+        )?;
+        fs::write(
+            format!("{name}/src/bridge/protocol.rs"),
+            include_str!("bridge/protocol.rs"),
+        )?;
+        fs::write(
+            format!("{name}/src/bridge/bridge_error.rs"),
+            include_str!("bridge/bridge_error.rs"),
+        )?;
+        fs::write(
+            format!("{name}/src/bridge/tsuchinoko_error.rs"),
+            include_str!("bridge/tsuchinoko_error.rs"),
+        )?;
+        // fs::write(format!("{name}/src/bridge/module_table.rs"), include_str!("bridge/module_table.rs"))?; // Compiler-only
+        // fs::write(format!("{name}/src/bridge/builtin_table.rs"), include_str!("bridge/builtin_table.rs"))?; // Compiler-only
+        fs::write(
+            format!("{name}/src/bridge/type_inference.rs"),
+            include_str!("bridge/type_inference.rs"),
+        )?;
+
+        // Copy Strategies
+        fs::write(
+            format!("{name}/src/bridge/strategies/mod.rs"),
+            include_str!("bridge/strategies/mod.rs"),
+        )?;
+        fs::write(
+            format!("{name}/src/bridge/strategies/native.rs"),
+            include_str!("bridge/strategies/native.rs"),
+        )?;
+        fs::write(
+            format!("{name}/src/bridge/strategies/pyo3.rs"),
+            include_str!("bridge/strategies/pyo3.rs"),
+        )?;
+        fs::write(
+            format!("{name}/src/bridge/strategies/resident.rs"),
+            include_str!("bridge/strategies/resident.rs"),
+        )?;
+
+        // Copy Python Worker
+        fs::write(
+            format!("{name}/src/bridge/python/worker.py"),
+            include_str!("bridge/python/worker.py"),
+        )?;
     }
 
     // Create main.rs with transpiled code
@@ -199,7 +294,13 @@ edition = "2021"
         "use tsuchinoko::bridge::PythonBridge;",
         "mod bridge;\nuse bridge::PythonBridge;",
     );
-    let fixed_code = fixed_code.replace("tsuchinoko::bridge::PythonBridge", "bridge::PythonBridge");
+    // Replace specific imports if needed, but mod bridge; makes bridge module available.
+    // The transpiled code usually uses tsuchinoko::bridge::protocol::TnkValue etc.
+    // We need to support `tsuchinoko::bridge::` path replacement for full compatibility.
+    // Replace full path with `bridge::`
+    let fixed_code = fixed_code.replace("tsuchinoko::bridge::", "bridge::");
+    // Just in case (double check)
+    let fixed_code = fixed_code.replace("use tsuchinoko::bridge::", "use bridge::");
 
     let main_rs = format!(
         r#"// Generated by Tsuchinoko - Python to Rust Transpiler
@@ -211,174 +312,4 @@ edition = "2021"
     fs::write(format!("{name}/src/main.rs"), main_rs)?;
 
     Ok(())
-}
-
-/// Generate self-contained bridge module for PythonBridge
-fn generate_bridge_module() -> String {
-    // Embed worker.py as a string constant
-    let worker_py = include_str!("bridge/worker.py");
-
-    // Build bridge.rs using string concatenation to avoid format! escaping issues
-    let mut code = String::new();
-    code.push_str("//! PythonBridge - Self-contained module for Resident Python Worker\n");
-    code.push_str("//! Generated by Tsuchinoko\n\n");
-    code.push_str("use std::io::{BufRead, BufReader, Write};\n");
-    code.push_str("use std::process::{Child, Command, Stdio};\n");
-    code.push_str("use std::sync::atomic::{AtomicU64, Ordering};\n\n");
-    code.push_str("/// Embedded Python worker code\n");
-    // Use r#####"..."##### to safely embed Python code containing """, #, etc.
-    code.push_str("const WORKER_CODE: &str = r#####\"\n");
-    code.push_str(worker_py);
-    code.push_str("\"#####;\n\n");
-    // Add display_value helper function
-    code.push_str("/// Display serde_json::Value in human-readable format\n");
-    code.push_str("/// For Value::String, return the content without quotes\n");
-    code.push_str("pub fn display_value(value: &serde_json::Value) -> String {\n");
-    code.push_str("    match value {\n");
-    code.push_str("        serde_json::Value::String(s) => s.clone(),\n");
-    code.push_str("        other => other.to_string(),\n");
-    code.push_str("    }\n");
-    code.push_str("}\n\n");
-    // Add PythonBridge implementation
-    code.push_str(r#"/// Python worker communication manager
-pub struct PythonBridge {
-    process: Child,
-    request_id: AtomicU64,
-}
-
-impl PythonBridge {
-    /// Start Python worker
-    pub fn new() -> Result<Self, String> {
-        let process = Command::new("python")
-            .args(["-u", "-c", WORKER_CODE])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|e| format!("Failed to spawn Python worker: {}", e))?;
-
-        Ok(Self {
-            process,
-            request_id: AtomicU64::new(1),
-        })
-    }
-
-    fn send_request(&mut self, request: serde_json::Value) -> Result<serde_json::Value, String> {
-        let stdin = self.process.stdin.as_mut()
-            .ok_or("Failed to get stdin")?;
-        writeln!(stdin, "{}", request.to_string())
-            .map_err(|e| format!("Failed to write to stdin: {}", e))?;
-        stdin.flush()
-            .map_err(|e| format!("Failed to flush stdin: {}", e))?;
-
-        let stdout = self.process.stdout.as_mut()
-            .ok_or("Failed to get stdout")?;
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        reader.read_line(&mut line)
-            .map_err(|e| format!("Failed to read from stdout: {}", e))?;
-
-        let response: serde_json::Value = serde_json::from_str(&line)
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
-
-        if response["ok"].as_bool() == Some(true) {
-            Ok(response["result"].clone())
-        } else {
-            Err(format!("Python error: {}", response["error"]))
-        }
-    }
-
-    fn call_raw(&mut self, target: &str, args: &[serde_json::Value]) -> Result<serde_json::Value, String> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let request = serde_json::json!({
-            "id": id,
-            "op": "call",
-            "target": target,
-            "args": args,
-        });
-
-        self.send_request(request)
-    }
-
-    pub fn call_i64(&mut self, target: &str, args: &[serde_json::Value]) -> Result<i64, String> {
-        let result = self.call_raw(target, args)?;
-        result.as_i64().ok_or_else(|| format!("Expected i64, got: {}", result))
-    }
-
-    pub fn call_f64(&mut self, target: &str, args: &[serde_json::Value]) -> Result<f64, String> {
-        let result = self.call_raw(target, args)?;
-        result.as_f64().ok_or_else(|| format!("Expected f64, got: {}", result))
-    }
-
-    pub fn call_string(&mut self, target: &str, args: &[serde_json::Value]) -> Result<String, String> {
-        let result = self.call_raw(target, args)?;
-        result.as_str().map(|s| s.to_string()).ok_or_else(|| format!("Expected string, got: {}", result))
-    }
-
-    pub fn call_vec_i64(&mut self, target: &str, args: &[serde_json::Value]) -> Result<Vec<i64>, String> {
-        let result = self.call_raw(target, args)?;
-        result.as_array()
-            .ok_or_else(|| format!("Expected array, got: {}", result))?
-            .iter()
-            .map(|v| v.as_i64().ok_or_else(|| format!("Expected i64 in array, got: {}", v)))
-            .collect()
-    }
-
-    pub fn call_vec_f64(&mut self, target: &str, args: &[serde_json::Value]) -> Result<Vec<f64>, String> {
-        let result = self.call_raw(target, args)?;
-        result.as_array()
-            .ok_or_else(|| format!("Expected array, got: {}", result))?
-            .iter()
-            .map(|v| v.as_f64().ok_or_else(|| format!("Expected f64 in array, got: {}", v)))
-            .collect()
-    }
-
-    pub fn call_json<T: serde::de::DeserializeOwned>(&mut self, target: &str, args: &[serde_json::Value]) -> Result<T, String> {
-        let result = self.call_raw(target, args)?;
-        serde_json::from_value(result).map_err(|e| format!("Type conversion failed: {}", e))
-    }
-
-    pub fn call_json_method<T: serde::de::DeserializeOwned>(
-        &mut self,
-        handle: serde_json::Value,
-        method: &str,
-        args: &[serde_json::Value],
-    ) -> Result<T, String> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let request = serde_json::json!({
-            "id": id,
-            "op": "method",
-            "handle": handle,
-            "method": method,
-            "args": args,
-        });
-
-        let result = self.send_request(request)?;
-        serde_json::from_value(result).map_err(|e| format!("Method result type conversion failed: {}", e))
-    }
-
-    pub fn shutdown(&mut self) -> Result<(), String> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let request = serde_json::json!({
-            "id": id,
-            "op": "shutdown",
-        });
-
-        if let Some(stdin) = self.process.stdin.as_mut() {
-            let _ = writeln!(stdin, "{}", request.to_string());
-            let _ = stdin.flush();
-        }
-
-        self.process.wait().map_err(|e| format!("Failed to wait for worker: {}", e))?;
-        Ok(())
-    }
-}
-
-impl Drop for PythonBridge {
-    fn drop(&mut self) {
-        let _ = self.shutdown();
-    }
-}
-"#);
-    code
 }

@@ -607,6 +607,24 @@ fn test_parse_raise_from() {
     }
 }
 
+#[test]
+fn test_parse_raise_reraise() {
+    let result = parse_line("raise", 1).unwrap();
+    if let Some(Stmt::Raise {
+        exception_type,
+        message,
+        cause,
+        ..
+    }) = result
+    {
+        assert!(exception_type.is_empty());
+        assert!(matches!(message, Expr::StringLiteral(_)));
+        assert!(cause.is_none());
+    } else {
+        panic!("Expected Stmt::Raise for bare raise");
+    }
+}
+
 // --- parse: Assert ---
 #[test]
 fn test_parse_assert() {

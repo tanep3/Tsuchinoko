@@ -20,9 +20,9 @@ pub struct TsuchinokoError {
 
 impl TsuchinokoError {
     /// 新しいエラーを作成
-    pub fn new(kind: &str, message: &str, cause: Option<TsuchinokoError>) -> Self {
+    pub fn new(kind: impl Into<String>, message: impl std::fmt::Display, cause: Option<TsuchinokoError>) -> Self {
         Self {
-            kind: kind.to_string(),
+            kind: kind.into(),
             message: message.to_string(),
             cause: cause.map(Box::new),
             line: 0,
@@ -30,18 +30,18 @@ impl TsuchinokoError {
     }
     
     /// 行番号付きでエラーを作成
-    pub fn with_line(kind: &str, message: &str, line: usize, cause: Option<TsuchinokoError>) -> Self {
+    pub fn with_line(kind: impl Into<String>, message: impl Into<String>, line: usize, cause: Option<TsuchinokoError>) -> Self {
         Self {
-            kind: kind.to_string(),
-            message: message.to_string(),
+            kind: kind.into(),
+            message: message.into(),
             cause: cause.map(Box::new),
             line,
         }
     }
     
     /// 内部エラー（panic回収用）を作成
-    pub fn internal(message: &str) -> Self {
-        Self::new("InternalError", message, None)
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::new("InternalError", message.into(), None)
     }
 }
 

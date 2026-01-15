@@ -6,28 +6,92 @@
 //! # Author
 //! Tane Channel Technology
 
+#![allow(clippy::only_used_in_recursion)]
+
 pub mod bridge;
+pub mod diagnostics;
 pub mod emitter;
 pub mod error;
 pub mod ir;
 pub mod lexer;
 pub mod parser;
 pub mod semantic;
+pub mod unsupported_features;
+pub mod utils;
 
 use anyhow::Result;
 use std::path::Path;
 
-/// Transpile Python source code to Rust source code
-pub fn transpile(source: &str) -> Result<String> {
+/// Analyze Python source code and return the Intermediate Representation (IR)
+pub fn analyze_to_ir(source: &str) -> Result<Vec<ir::IrNode>> {
     // 1. Parse Python source to AST
     let program = parser::parse(source)?;
 
     // 2. Semantic analysis: AST -> IR
     let ir = semantic::analyze(&program)?;
 
-    // 3. Emit Rust code
-    let rust_code = emitter::emit(&ir);
+    Ok(ir)
+}
 
+/// Analyze Python source code and return IR or diagnostics
+pub fn analyze_to_ir_with_diagnostics(
+    source: &str,
+    file: Option<&Path>,
+) -> std::result::Result<Vec<ir::IrNode>, diagnostics::TnkDiagnostics> {
+    let registry = unsupported_features::UnsupportedFeatureRegistry::default();
+    let mut diags = diagnostics::scan_unsupported_syntax(source, file, &registry);
+    if diags.has_errors() {
+        return Err(diags);
+    }
+
+    let program = match parser::parse(source) {
+        Ok(p) => p,
+        Err(err) => {
+            diags.extend(diagnostics::from_error(&err, file));
+            return Err(diags);
+        }
+    };
+
+    diags.extend(diagnostics::scan_unsupported_ast(&program, file, &registry));
+    if diags.has_errors() {
+        return Err(diags);
+    }
+
+    let ir = match semantic::analyze(&program) {
+        Ok(ir) => ir,
+        Err(err) => {
+            diags.extend(diagnostics::from_error(&err, file));
+            return Err(diags);
+        }
+    };
+
+    diags.extend(diagnostics::scan_unsupported_ir(&ir, file, &registry));
+    if diags.has_errors() {
+        return Err(diags);
+    }
+
+    Ok(ir)
+}
+
+/// Transpile Python source code to Rust source code
+pub fn transpile(source: &str) -> Result<String> {
+    let ir = analyze_to_ir(source)?;
+
+    // 3. Emit Rust code
+    let plan = semantic::build_emit_plan(&ir);
+    let rust_code = emitter::emit(&ir, &plan);
+
+    Ok(rust_code)
+}
+
+/// Transpile Python source code to Rust source code with diagnostics
+pub fn transpile_with_diagnostics(
+    source: &str,
+    file: Option<&Path>,
+) -> std::result::Result<String, diagnostics::TnkDiagnostics> {
+    let ir = analyze_to_ir_with_diagnostics(source, file)?;
+    let plan = semantic::build_emit_plan(&ir);
+    let rust_code = emitter::emit(&ir, &plan);
     Ok(rust_code)
 }
 

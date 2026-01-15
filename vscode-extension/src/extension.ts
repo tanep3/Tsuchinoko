@@ -39,9 +39,15 @@ export function activate(context: vscode.ExtensionContext) {
         outputChannel.appendLine(`Transpiling: ${filePath}`);
 
         try {
+            // Run diagnostics before transpiling
+            await updateDiagnostics(editor.document);
+
             const rustCode = await transpileFile(filePath);
             showPreview(context, rustCode, path.basename(filePath));
         } catch (error: any) {
+            // Show diagnostics on error to help user understand the problem
+            await updateDiagnostics(editor.document);
+
             vscode.window.showErrorMessage(`Transpilation failed: ${error.message}`);
             outputChannel.appendLine(`Error: ${error.message}`);
         }
@@ -66,17 +72,6 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showErrorMessage(`Transpilation failed: ${error.message}`);
         }
     });
-
-    // Auto-check on save
-    const config = vscode.workspace.getConfiguration('tsuchinoko');
-    if (config.get('autoCheck', true)) {
-        const onSave = vscode.workspace.onDidSaveTextDocument((document) => {
-            if (document.languageId === 'python') {
-                updateDiagnostics(document);
-            }
-        });
-        context.subscriptions.push(onSave);
-    }
 
     // Create status bar button
     const statusBarItem = vscode.window.createStatusBarItem(

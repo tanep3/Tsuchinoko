@@ -12,7 +12,7 @@
 ### 方法 1: .vsix ファイルからインストール
 
 ```bash
-code --install-extension tsuchinoko-0.1.0.vsix
+code --install-extension tsuchinoko-0.2.0.vsix
 ```
 
 ### 方法 2: ソースからビルド
@@ -22,7 +22,7 @@ cd vscode-extension
 npm install
 npm run compile
 npx vsce package
-code --install-extension tsuchinoko-0.1.0.vsix
+code --install-extension tsuchinoko-0.2.0.vsix
 ```
 
 ## 使い方
@@ -33,11 +33,11 @@ code --install-extension tsuchinoko-0.1.0.vsix
 2. `Ctrl+Alt+P` (Mac: `Cmd+Alt+P`) を押す
 3. サイドパネルに変換された Rust コードが表示される
 
-### リアルタイム診断
+### リアルタイム診断 (V0.2.0)
 
-- 非対応の構文は赤い波線でハイライトされます
-- ハイライトされた箇所にカーソルを合わせるとエラー詳細が表示されます
-- 診断はファイル保存時に自動的に更新されます
+- **カラム単位の波線**: `--diag-json` による正確なハイライト
+- 診断は**プレビュー実行時のみ**表示（保存時は実行されません）
+- ハイライトされた箇所にカーソルを合わせると診断コード付きエラー詳細が表示されます
 
 ### コマンド
 
@@ -53,8 +53,8 @@ VS Code 設定 (`Cmd+,`) を開き、「Tsuchinoko」で検索:
 | 設定 | デフォルト | 説明 |
 |------|----------|------|
 | `tsuchinoko.tnkPath` | `tnk` | `tnk` コマンドのパス |
-| `tsuchinoko.autoCheck` | `true` | 保存時に自動チェック |
-| `tsuchinoko.checkDelay` | `500` | チェック実行までの遅延 (ms) |
+
+> **注意**: `autoCheck` と `checkDelay` 設定は v0.2.0 で削除されました。
 
 ## トラブルシューティング
 
@@ -68,12 +68,12 @@ VS Code 設定 (`Cmd+,`) を開き、「Tsuchinoko」で検索:
 
 ### プレビューが更新されない
 
-- ファイルを保存 (`Cmd+S`) して更新をトリガー
+- プレビューコマンドを再実行 (`Ctrl+Alt+P`)
 - 出力パネル (`表示 > 出力 > Tsuchinoko`) でエラーを確認
 
 ### 診断が表示されない
 
-- `tsuchinoko.autoCheck` が有効か確認
+- 診断はプレビューコマンド実行時のみ表示されます
 - ファイルの拡張子が `.py` か確認
 
 ## アンインストール

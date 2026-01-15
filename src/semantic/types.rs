@@ -1,7 +1,8 @@
 //! Type definitions
+use serde::{Deserialize, Serialize};
 
 /// Rust types
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Type {
     Int,                        // i64
     Float,                      // f64
@@ -31,6 +32,7 @@ impl Type {
     /// Convert Python type hint to Rust type
     pub fn from_python_hint(name: &str, params: &[Type]) -> Self {
         match name {
+            "Any" | "any" | "object" => Type::Any,
             "int" => Type::Int,
             "float" => Type::Float,
             "str" => Type::String,
@@ -92,7 +94,6 @@ impl Type {
             {
                 Type::Struct(name.to_string())
             }
-            "Any" | "any" | "object" => Type::Any,
             // PyO3 module types (np.ndarray, pd.DataFrame, etc.)
             name if name.contains('.') => Type::Any,
             _ => Type::Unknown,
@@ -151,25 +152,27 @@ impl Type {
                 params,
                 ret,
                 is_boxed,
+                may_raise,
                 ..
             } => {
                 let p: Vec<_> = params.iter().map(|t| t.to_rust_string()).collect();
+                let ret_str = if *may_raise {
+                    format!("Result<{}, TsuchinokoError>", ret.to_rust_string())
+                } else {
+                    ret.to_rust_string()
+                };
                 if *is_boxed {
-                    // Use Arc<dyn Fn(...) + Send + Sync> for Clone support
-                    format!(
-                        "std::sync::Arc<dyn Fn({}) -> {} + Send + Sync>",
-                        p.join(", "),
-                        ret.to_rust_string()
-                    )
+                    // Use Rc<dyn Fn(...)> for boxed callables (type aliases, fields)
+                    format!("std::rc::Rc<dyn Fn({}) -> {}>", p.join(", "), ret_str)
                 } else {
                     // Use fn(...) -> ... for raw function pointers (items)
-                    format!("fn({}) -> {}", p.join(", "), ret.to_rust_string())
+                    format!("fn({}) -> {}", p.join(", "), ret_str)
                 }
             }
             Type::Unit => "()".to_string(),
             Type::Struct(name) => name.clone(),
-            Type::Any => "serde_json::Value".to_string(),
-            Type::Unknown => "serde_json::Value".to_string(),
+            Type::Any => "TnkValue".to_string(),
+            Type::Unknown => "TnkValue".to_string(),
         }
     }
 
@@ -247,6 +250,38 @@ impl Type {
             _ => false,
         }
     }
+
+    /// V1.7.0: Generate idiomatic Rust default value for this type
+    /// This is used for safe fallback returns in TryBlock or complex flow.
+    pub fn to_default_value(&self) -> String {
+        match self {
+            Type::Int => "0i64".to_string(),
+            Type::Float => "0.0".to_string(),
+            Type::String => "String::new()".to_string(),
+            Type::Bool => "false".to_string(),
+            Type::List(_) => "vec![]".to_string(),
+            Type::Set(_) => "std::collections::HashSet::new()".to_string(),
+            Type::Tuple(types) => {
+                let inner: Vec<_> = types.iter().map(|t| t.to_default_value()).collect();
+                format!("({})", inner.join(", "))
+            }
+            Type::Dict(_, _) => "std::collections::HashMap::new()".to_string(),
+            Type::Optional(_) => "None".to_string(),
+            Type::Any | Type::Unknown => "TnkValue::Value { value: None }".to_string(),
+            Type::Unit => "()".to_string(),
+            Type::Ref(inner) => {
+                // Return a mock static ref if needed, but usually we shouldn't fall back to refs.
+                // For simplicity, return default of inner (might require leak/static)
+                // Actually, Tsuchinoko functions usually return owned values or Result.
+                format!("&{}", inner.to_default_value())
+            }
+            Type::Struct(name) => {
+                // Assumes Default trait or minimal init
+                format!("{}::default()", name)
+            }
+            _ => "todo!(\"default value for this type\")".to_string(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -270,5 +305,114 @@ mod tests {
         assert_eq!(Type::Int.to_rust_string(), "i64");
         assert_eq!(Type::String.to_rust_string(), "String");
         assert_eq!(Type::List(Box::new(Type::Int)).to_rust_string(), "Vec<i64>");
+    }
+
+    #[test]
+    fn test_type_from_python_hint_dict_default() {
+        let ty = Type::from_python_hint("dict", &[]);
+        assert_eq!(
+            ty,
+            Type::Dict(Box::new(Type::Unknown), Box::new(Type::Unknown))
+        );
+    }
+
+    #[test]
+    fn test_type_from_python_hint_tuple_empty_returns_list_unknown() {
+        let ty = Type::from_python_hint("tuple", &[]);
+        assert_eq!(ty, Type::List(Box::new(Type::Unknown)));
+    }
+
+    #[test]
+    fn test_type_from_python_hint_tuple_params() {
+        let ty = Type::from_python_hint("tuple", &[Type::Int, Type::String]);
+        assert_eq!(ty, Type::Tuple(vec![Type::Int, Type::String]));
+    }
+
+    #[test]
+    fn test_type_from_python_hint_optional() {
+        let ty = Type::from_python_hint("Optional", &[Type::Int]);
+        assert_eq!(ty, Type::Optional(Box::new(Type::Int)));
+    }
+
+    #[test]
+    fn test_type_from_python_hint_set() {
+        let ty = Type::from_python_hint("set", &[Type::Int]);
+        assert_eq!(ty, Type::Set(Box::new(Type::Int)));
+    }
+
+    #[test]
+    fn test_type_from_python_hint_callable_list_params() {
+        let ty = Type::from_python_hint("Callable", &[Type::List(Box::new(Type::Int)), Type::Bool]);
+        if let Type::Func {
+            params,
+            ret,
+            is_boxed,
+            ..
+        } = ty
+        {
+            assert_eq!(params, vec![Type::Int]);
+            assert_eq!(*ret, Type::Bool);
+            assert!(is_boxed);
+        } else {
+            panic!("Expected Func type");
+        }
+    }
+
+    #[test]
+    fn test_type_from_python_hint_callable_tuple_params() {
+        let ty = Type::from_python_hint(
+            "Callable",
+            &[Type::Tuple(vec![Type::Int, Type::String]), Type::Float],
+        );
+        if let Type::Func {
+            params,
+            ret,
+            is_boxed,
+            ..
+        } = ty
+        {
+            assert_eq!(params, vec![Type::Int, Type::String]);
+            assert_eq!(*ret, Type::Float);
+            assert!(is_boxed);
+        } else {
+            panic!("Expected Func type");
+        }
+    }
+
+    #[test]
+    fn test_type_from_python_hint_struct_name() {
+        let ty = Type::from_python_hint("Point", &[]);
+        assert_eq!(ty, Type::Struct("Point".to_string()));
+    }
+
+    #[test]
+    fn test_type_from_python_hint_dotted_name_any() {
+        let ty = Type::from_python_hint("np.ndarray", &[]);
+        assert_eq!(ty, Type::Any);
+    }
+
+    #[test]
+    fn test_type_to_rust_string_dict() {
+        let ty = Type::Dict(Box::new(Type::Int), Box::new(Type::String));
+        assert_eq!(
+            ty.to_rust_string(),
+            "std::collections::HashMap<i64, String>"
+        );
+    }
+
+    #[test]
+    fn test_type_to_rust_string_optional() {
+        let ty = Type::Optional(Box::new(Type::Bool));
+        assert_eq!(ty.to_rust_string(), "Option<bool>");
+    }
+
+    #[test]
+    fn test_type_to_default_value_dict_optional_tuple() {
+        let dict = Type::Dict(Box::new(Type::Int), Box::new(Type::String));
+        let opt = Type::Optional(Box::new(Type::Int));
+        let tup = Type::Tuple(vec![Type::Int, Type::Bool]);
+        assert_eq!(dict.to_default_value(), "std::collections::HashMap::new()");
+        assert_eq!(opt.to_default_value(), "None");
+        assert_eq!(tup.to_default_value(), "(0i64, false)");
     }
 }
