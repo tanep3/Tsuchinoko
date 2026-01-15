@@ -694,6 +694,12 @@ fn parse_class_body(
             continue;
         }
 
+        // Allow `pass` as an empty class body statement
+        if line_trim == "pass" {
+            i += 1;
+            continue;
+        }
+
         // Parse field: field_name: type (for dataclass style)
         let line_num = i + 1;
         if let Some(colon_pos) = line_trim.find(':') {

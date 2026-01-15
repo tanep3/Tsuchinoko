@@ -5,7 +5,7 @@
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
-use tsuchinoko::transpile;
+use tsuchinoko::transpile_with_diagnostics;
 
 /// Tsuchinoko - Python to Rust Transpiler
 #[derive(Parser, Debug)]
@@ -38,6 +38,10 @@ struct Cli {
     #[arg(short, long)]
     check: bool,
 
+    /// Emit JSON diagnostics to stderr (on failure only)
+    #[arg(long)]
+    diag_json: bool,
+
     /// PyO3 version for generated project (default: "0" = latest major)
     #[arg(long, default_value = "0")]
     pyo3_version: String,
@@ -61,7 +65,16 @@ fn main() -> Result<()> {
 
     // V1.7.0: IR Dump mode
     if cli.dump_ir {
-        let ir = tsuchinoko::analyze_to_ir(&source)?;
+        let ir = match tsuchinoko::analyze_to_ir_with_diagnostics(&source, Some(&cli.input)) {
+            Ok(ir) => ir,
+            Err(diags) => {
+                print!("{}", diags.to_text());
+                if cli.diag_json {
+                    eprintln!("{}", diags.to_json());
+                }
+                std::process::exit(1);
+            }
+        };
         println!("=== Intermediate Representation (IR) ===");
         for (i, node) in ir.iter().enumerate() {
             println!("[{:03}] {:?}", i, node);
@@ -70,7 +83,16 @@ fn main() -> Result<()> {
     }
 
     // Transpile Python to Rust
-    let rust_code = transpile(&source)?;
+    let rust_code = match transpile_with_diagnostics(&source, Some(&cli.input)) {
+        Ok(code) => code,
+        Err(diags) => {
+            print!("{}", diags.to_text());
+            if cli.diag_json {
+                eprintln!("{}", diags.to_json());
+            }
+            std::process::exit(1);
+        }
+    };
 
     if cli.debug {
         println!("[DEBUG] Generated Rust code:");

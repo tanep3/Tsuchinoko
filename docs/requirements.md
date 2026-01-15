@@ -233,7 +233,8 @@ flowchart LR
 **変換時診断の出力要件（V1.7.0）**
 - 変換不能は **検知点で収集** し、**Emitter前に一括出力** する
 - VSCode には **複数件をまとめて通知** する
-- CLI は **stdoutに人間向けテキスト**、**stderrにJSON診断** を出力（失敗時のみ）
+- CLI は **stdoutに人間向けテキスト** を出力（失敗時のみ）
+- JSON 診断は **`--diag-json` 指定時のみ stderr に出力** する
 
 **診断情報の最小項目**
 - `code`: 例 `TNK-UNSUPPORTED-SYNTAX`
@@ -241,6 +242,10 @@ flowchart LR
 - `severity`: `Error` / `Warning`
 - `span`: `file/line/column/range`
 - `phase`: `parse/semantic/lowering`
+
+> [!NOTE]
+> 行・カラムは **ソーススキャンで検知できるものは正確**に出力する。  
+> AST/IR 経由の検知は **暫定で 1:1** を出力し、後続フェーズでSpan導入により改善する。
 
 #### 3.5.2 実行時（生成コード）エラー
 

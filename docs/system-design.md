@@ -143,7 +143,7 @@ flowchart TB
     LOW[Lowering] --> DIAG
     DIAG -->|has_errors| STOP[Emitter前で中断]
     STOP --> OUT1[stdout: 人間向けテキスト]
-    STOP --> OUT2[stderr: JSON診断 失敗時のみ]
+    STOP --> OUT2[stderr: JSON診断 (--diag-json 指定時のみ)]
 ```
 
 #### 診断データ構造（最小項目）
@@ -156,8 +156,12 @@ flowchart TB
 
 #### CLI/VSCode 出力方針
 - **CLI**: stdout に短いエラーメッセージ（人間向け）
-- **VSCode**: stderr の JSON を解析して複数診断を一括表示
-- **JSON は失敗時のみ出力**
+- **VSCode**: `--diag-json` を付与して stderr の JSON を解析し複数診断を一括表示
+- **JSON は失敗時のみ出力**（`--diag-json` 指定時）
+
+> [!NOTE]
+> 行・カラムは **ソーススキャンで検知できるものは正確**に出力する。  
+> AST/IR 経由の検知は **暫定で 1:1** を出力し、後続フェーズでSpan導入により改善する。
 
 ### 2.5 未対応機能ガード（UnsupportedFeatureRegistry）
 
