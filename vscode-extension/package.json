@@ -1,8 +1,8 @@
 {
     "name": "tsuchinoko",
     "displayName": "Tsuchinoko",
-    "description": "Python to Rust transpiler - Preview and diagnostics in VS Code",
-    "version": "0.1.0",
+    "description": "Python to Rust transpiler with live preview",
+    "version": "0.2.0",
     "publisher": "TaneChannelTechnology",
     "repository": {
         "type": "git",

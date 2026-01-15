@@ -5,6 +5,26 @@ import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { execSync } from 'child_process';
 
+// Type definitions for diagnostic JSON output
+export interface TnkDiagnostic {
+    severity: 'error' | 'warning' | 'info';
+    code: string;
+    message: string;
+    span: {
+        file: string;
+        line: number;
+        column: number;
+        end_line: number;
+        end_column: number;
+    };
+    phase: string;
+}
+
+export interface CheckResult {
+    success: boolean;
+    diagnostics: TnkDiagnostic[];
+}
+
 function getTnkPath(): string {
     const config = vscode.workspace.getConfiguration('tsuchinoko');
     return config.get('tnkPath', 'tnk');
@@ -45,7 +65,7 @@ export async function transpileFile(pythonFilePath: string): Promise<string> {
     const tnkPath = getTnkPath();
     const outputDir = getOutputDir();
     const hash = getHash(pythonFilePath);
-    
+
     // Check if file has imports (excluding typing)
     if (hasImports(pythonFilePath)) {
         // Use --project for files with imports
@@ -63,14 +83,14 @@ async function transpileSimple(
     hash: string
 ): Promise<string> {
     const outputPath = path.join(outputDir, `preview_${hash}.rs`);
-    
+
     try {
         execSync(`"${tnkPath}" "${pythonFilePath}" -o "${outputPath}"`, {
             encoding: 'utf-8',
             timeout: 30000,
             windowsHide: true
         });
-        
+
         return fs.readFileSync(outputPath, 'utf-8');
     } catch (error: any) {
         const stderr = error.stderr || error.message;
@@ -86,12 +106,12 @@ async function transpileWithProject(
 ): Promise<string> {
     const projectDir = path.join(outputDir, `project_${hash}`);
     const mainRsPath = path.join(projectDir, 'src', 'main.rs');
-    
+
     // Clean up old project if exists
     if (fs.existsSync(projectDir)) {
         fs.rmSync(projectDir, { recursive: true, force: true });
     }
-    
+
     try {
         // Generate Cargo project with --project
         execSync(`"${tnkPath}" "${pythonFilePath}" --project "${projectDir}"`, {
@@ -99,11 +119,11 @@ async function transpileWithProject(
             timeout: 60000,  // Longer timeout for project generation
             windowsHide: true
         });
-        
+
         // Read the generated main.rs
         if (fs.existsSync(mainRsPath)) {
             const rustCode = fs.readFileSync(mainRsPath, 'utf-8');
-            
+
             // Add header comment indicating this is a project build
             const header = `// 📦 Generated with --project (imports detected)
 // Full project at: ${projectDir}
@@ -120,18 +140,54 @@ async function transpileWithProject(
     }
 }
 
-export async function checkFile(pythonFilePath: string): Promise<{ success: boolean; errors: string[] }> {
+export async function checkFile(pythonFilePath: string): Promise<CheckResult> {
     const tnkPath = getTnkPath();
 
     try {
-        execSync(`"${tnkPath}" "${pythonFilePath}" --check`, {
+        // Try with --diag-json first
+        const result = execSync(`"${tnkPath}" "${pythonFilePath}" --check --diag-json`, {
             encoding: 'utf-8',
             timeout: 10000,
             windowsHide: true
         });
-        return { success: true, errors: [] };
+
+        // If successful, no diagnostics
+        return { success: true, diagnostics: [] };
     } catch (error: any) {
-        const stderr = error.stderr || error.message;
-        return { success: false, errors: [stderr] };
+        const stderr = error.stderr || '';
+
+        // Try to parse JSON diagnostics from stderr
+        try {
+            const jsonMatch = stderr.match(/\{[\s\S]*"diagnostics"[\s\S]*\}/m);
+            if (jsonMatch) {
+                const diagJson = JSON.parse(jsonMatch[0]);
+                return {
+                    success: false,
+                    diagnostics: diagJson.diagnostics || []
+                };
+            }
+        } catch (parseError) {
+            // JSON parsing failed, fall back to legacy text-based error
+        }
+
+        // Fallback: create a simple diagnostic from error message
+        const fallbackDiag: TnkDiagnostic = {
+            severity: 'error',
+            code: 'TSUCHINOKO-ERROR',
+            message: stderr || error.message || 'Unknown error',
+            span: {
+                file: pythonFilePath,
+                line: 1,
+                column: 1,
+                end_line: 1,
+                end_column: 2
+            },
+            phase: 'unknown'
+        };
+
+        return {
+            success: false,
+            diagnostics: [fallbackDiag]
+        };
     }
 }
