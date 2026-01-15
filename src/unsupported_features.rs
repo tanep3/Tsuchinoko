@@ -46,6 +46,10 @@ pub enum UnsupportedFeature {
     BuiltinHash,
     BuiltinFormat,
     BuiltinRepr,
+    BuiltinObject,
+    BuiltinCompile,
+    BuiltinMemoryview,
+    BuiltinBytearray,
 }
 
 #[derive(Debug, Clone)]
@@ -115,6 +119,10 @@ impl Default for UnsupportedFeatureRegistry {
             UnsupportedFeature::BuiltinHash,
             UnsupportedFeature::BuiltinFormat,
             UnsupportedFeature::BuiltinRepr,
+            UnsupportedFeature::BuiltinObject,
+            UnsupportedFeature::BuiltinCompile,
+            UnsupportedFeature::BuiltinMemoryview,
+            UnsupportedFeature::BuiltinBytearray,
         ]
         .into_iter()
         .collect();

@@ -989,7 +989,7 @@ impl std::fmt::Display for TnkValue {{
                 let iter_target = self.emit_expr(iter);
                 let iter_call = "py_bridge.iter(&__iter_target)";
                 let iter_mapped = format!(
-                    "{}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))",
+                    "{}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))",
                     iter_call
                 );
                 let iter_handle_expr = if self.current_func_returns_result {
@@ -999,7 +999,7 @@ impl std::fmt::Display for TnkValue {{
                 };
                 let batch_call = "py_bridge.iter_next_batch(&__iter_handle, 1000)";
                 let batch_mapped = format!(
-                    "{}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))",
+                    "{}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))",
                     batch_call
                 );
                 let batch_expr = if self.current_func_returns_result {
@@ -1255,13 +1255,13 @@ impl std::fmt::Display for TnkValue {{
                      // Bind exception
                      if self.current_func_returns_result {
                          result.push_str(&format!(
-                             "{}let {} = TsuchinokoError::new(\"Exception\", &format!(\"{{:?}}\", __exc), None);\n",
+                             "{}let {} = TsuchinokoError::new(\"Exception\", &format!(\"{{}}\", __exc), None);\n",
                              "    ".repeat(self.indent), to_snake_case(var_name)
                          ));
                      } else {
                          // Fallback string binding
                          result.push_str(&format!(
-                            "{}let {} = format!(\"{{:?}}\", __exc);\n",
+                            "{}let {} = format!(\"{{}}\", __exc);\n",
                              "    ".repeat(self.indent), to_snake_case(var_name)
                          ));
                      }
@@ -3052,7 +3052,7 @@ impl std::fmt::Display for TnkValue {{
                         format!("py_bridge.call_method(&{}, {:?}, &[{}], None)", target_str, method, args_str)
                     };
                     let mapped = format!(
-                        "{}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))",
+                        "{}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))",
                         call_code
                     );
                     if self.current_func_returns_result {
@@ -3077,7 +3077,7 @@ impl std::fmt::Display for TnkValue {{
                     };
                     
                     let mapped = format!(
-                        "{{ let mut kw = std::collections::HashMap::new(); {}{} {} }}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))",
+                        "{{ let mut kw = std::collections::HashMap::new(); {}{} {} }}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))",
                         kw_setup_code,
                         kw_inserts,
                         call_code
@@ -3104,7 +3104,7 @@ impl std::fmt::Display for TnkValue {{
                 if keywords.is_empty() {
                     let call_code = format!("{}.call(&[{}], None)", target_str, args_str);
                     let mapped = format!(
-                        "{}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))",
+                        "{}.map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))",
                         call_code
                     );
                     if self.current_func_returns_result {
@@ -3121,7 +3121,7 @@ impl std::fmt::Display for TnkValue {{
                         kw_inserts.push_str(&format!("kw.insert({:?}.to_string(), kw_val_{}); ", k, i));
                     }
                     let mapped = format!(
-                        "({{ let mut kw = std::collections::HashMap::new(); {}{} {}.call(&[{}], Some(&kw)) }}).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))",
+                        "({{ let mut kw = std::collections::HashMap::new(); {}{} {}.call(&[{}], Some(&kw)) }}).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))",
                         kw_setup_code, kw_inserts, target_str, args_str
                     );
                     if self.current_func_returns_result {
@@ -3147,12 +3147,12 @@ impl std::fmt::Display for TnkValue {{
                 
                 if use_method_syntax {
                      format!(
-                        "{}.get_attribute(\"{}\").map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
+                        "{}.get_attribute(\"{}\").map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))?",
                         target_str, attribute
                     )
                 } else {
                     format!(
-                        "py_bridge.get_attribute(&{}, \"{}\").map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
+                        "py_bridge.get_attribute(&{}, \"{}\").map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))?",
                         target_str, attribute
                     )
                 }
@@ -3169,7 +3169,7 @@ impl std::fmt::Display for TnkValue {{
                 };
 
                 format!(
-                    "py_bridge.get_item(&{}, &{}).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
+                    "py_bridge.get_item(&{}, &{}).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))?",
                     target_str, index_str
                 )
             }
@@ -3207,7 +3207,7 @@ impl std::fmt::Display for TnkValue {{
                 };
 
                 format!(
-                    "py_bridge.slice(&{}, {}, {}, {}).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{:?}}\", e), None))?",
+                    "py_bridge.slice(&{}, {}, {}, {}).map_err(|e| TsuchinokoError::new(\"BridgeError\", &format!(\"{{}}\", e), None))?",
                     target_str, start_str, stop_str, step_str
                 )
             }

@@ -43,8 +43,20 @@ def get_session(session_id):
 
 # --- Protocol Helpers ---
 
-def make_response(req_id, value=None, meta=None, error=None):
+def make_response(req_id, value=None, meta=None, error=None, op_info=None):
+    """レスポンス生成（統一インターフェース）
+    
+    Args:
+        req_id: リクエストID
+        value: 成功時の戻り値
+        meta: メタ情報
+        error: エラー辞書
+        op_info: オペレーション情報（エラー時にerror.opに付与）
+    """
     if error:
+        # op_infoがあればerror辞書に追加
+        if op_info:
+            error["op"] = op_info
         return {"kind": "error", "req_id": req_id, "error": error}
     return {"kind": "ok", "req_id": req_id, "value": value, "meta": meta}
 
@@ -196,99 +208,224 @@ def handle_call_function(cmd):
     """
     session_id = cmd["session_id"]
     target_str = cmd["target"]
-    args = [decode_value(a, session_id) for a in cmd["args"]]
-    kwargs = {k: decode_value(v, session_id) for k, v in (cmd.get("kwargs") or {}).items()}
+    args_raw = cmd["args"]
+    kwargs_raw = cmd.get("kwargs") or {}
+    args = [decode_value(a, session_id) for a in args_raw]
+    kwargs = {k: decode_value(v, session_id) for k, v in kwargs_raw.items()}
+
+    # オペレーション情報を先に構築
+    op_info = {
+        "cmd": "call_function",
+        "target": target_str,
+        "args": args_raw,
+        "kwargs": kwargs_raw
+    }
 
     if is_forbidden_target(target_str):
-        return make_response(cmd.get("req_id"), error={"code": "SecurityViolation", "message": f"Forbidden function call: {target_str}"})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "SecurityViolation", "message": f"Forbidden function call: {target_str}"},
+            op_info=op_info
+        )
     
     func = None
     try:
         func = resolve_callable(target_str, session_id)
     except ImportError:
-         return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": "ImportError", "message": f"Module implementation not found: {target_str}"})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "PythonException", "py_type": "ImportError", "message": f"Module implementation not found: {target_str}"},
+            op_info=op_info
+        )
     except AttributeError:
-         return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": "AttributeError", "message": f"Attribute not found: {target_str}"})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "PythonException", "py_type": "AttributeError", "message": f"Attribute not found: {target_str}"},
+            op_info=op_info
+        )
     except Exception as e:
-         return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e), "traceback": traceback.format_exc()})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e), "traceback": traceback.format_exc()},
+            op_info=op_info
+        )
 
     try:
         result = func(*args, **kwargs)
         return make_response(cmd.get("req_id"), value=encode_value(result, session_id))
     except Exception as e:
-        return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e), "traceback": traceback.format_exc()})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e), "traceback": traceback.format_exc()},
+            op_info=op_info
+        )
 
 def handle_call_method(cmd):
     session_id = cmd["session_id"]
     target = cmd["target"]
     method_name = cmd["method"]
-    args = [decode_value(a, session_id) for a in cmd["args"]]
-    kwargs = {k: decode_value(v, session_id) for k, v in (cmd.get("kwargs") or {}).items()}
+    args_raw = cmd["args"]
+    kwargs_raw = cmd.get("kwargs") or {}
+    args = [decode_value(a, session_id) for a in args_raw]
+    kwargs = {k: decode_value(v, session_id) for k, v in kwargs_raw.items()}
+
+    # オペレーション情報を先に構築
+    op_info = {
+        "cmd": "call_method",
+        "target": target,
+        "method": method_name,
+        "args": args_raw,
+        "kwargs": kwargs_raw
+    }
 
     if is_forbidden_name(method_name):
-        return make_response(cmd.get("req_id"), error={"code": "SecurityViolation", "message": f"Forbidden method call: {method_name}"})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "SecurityViolation", "message": f"Forbidden method call: {method_name}"},
+            op_info=op_info
+        )
     
     try:
         obj = resolve_target(target, session_id)
     except ValueError as e:
         if "StaleHandle" in str(e):
-             return make_response(cmd.get("req_id"), error={"code": "StaleHandle", "message": str(e)})
-        return make_response(cmd.get("req_id"), error={"code": "ProtocolError", "message": str(e)})
+            return make_response(
+                cmd.get("req_id"), 
+                error={"code": "StaleHandle", "message": str(e)},
+                op_info=op_info
+            )
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "ProtocolError", "message": str(e)},
+            op_info=op_info
+        )
 
     if not hasattr(obj, method_name):
-         return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": "AttributeError", "message": f"{type(obj)} has no attribute {method_name}"})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "PythonException", "py_type": "AttributeError", "message": f"{type(obj)} has no attribute {method_name}"},
+            op_info=op_info
+        )
     
     func = getattr(obj, method_name)
     try:
         result = func(*args, **kwargs)
         return make_response(cmd.get("req_id"), value=encode_value(result, session_id))
     except Exception as e:
-        return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e), "traceback": traceback.format_exc()})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e), "traceback": traceback.format_exc()},
+            op_info=op_info
+        )
 
 def handle_get_attribute(cmd):
     session_id = cmd["session_id"]
     target = cmd["target"]
     attr_name = cmd["name"]
     
+    # オペレーション情報を先に構築
+    op_info = {
+        "cmd": "get_attribute",
+        "target": target,
+        "name": attr_name
+    }
+    
     if attr_name.startswith("_"):
-        return make_response(cmd.get("req_id"), error={"code": "SecurityViolation", "message": "Access to private attributes is forbidden"})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "SecurityViolation", "message": "Access to private attributes is forbidden"},
+            op_info=op_info
+        )
     if is_forbidden_name(attr_name):
-        return make_response(cmd.get("req_id"), error={"code": "SecurityViolation", "message": f"Forbidden attribute access: {attr_name}"})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "SecurityViolation", "message": f"Forbidden attribute access: {attr_name}"},
+            op_info=op_info
+        )
 
     try:
         obj = resolve_target(target, session_id)
     except ValueError as e:
         if "StaleHandle" in str(e):
-             return make_response(cmd.get("req_id"), error={"code": "StaleHandle", "message": str(e)})
-        return make_response(cmd.get("req_id"), error={"code": "ProtocolError", "message": str(e)})
+            return make_response(
+                cmd.get("req_id"), 
+                error={"code": "StaleHandle", "message": str(e)},
+                op_info=op_info
+            )
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "ProtocolError", "message": str(e)},
+            op_info=op_info
+        )
 
     try:
         result = getattr(obj, attr_name)
         return make_response(cmd.get("req_id"), value=encode_value(result, session_id))
     except Exception as e:
-        return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e)})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e)},
+            op_info=op_info
+        )
 
 def handle_get_item(cmd):
     session_id = cmd["session_id"]
     target = cmd["target"]
-    key = decode_value(cmd["key"], session_id)
+    key_raw = cmd["key"]  # TnkValue形式を保持
+    key = decode_value(key_raw, session_id)
+    
+    # オペレーション情報を先に構築（宣言的）
+    op_info = {
+        "cmd": "get_item",
+        "target": target,
+        "key": key_raw  # 元のTnkValue形式を保持
+    }
     
     try:
         obj = resolve_target(target, session_id)
     except ValueError as e:
         if "StaleHandle" in str(e):
-             return make_response(cmd.get("req_id"), error={"code": "StaleHandle", "message": str(e)})
-        return make_response(cmd.get("req_id"), error={"code": "ProtocolError", "message": str(e)})
+            return make_response(
+                cmd.get("req_id"), 
+                error={"code": "StaleHandle", "message": str(e)},
+                op_info=op_info
+            )
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "ProtocolError", "message": str(e)},
+            op_info=op_info
+        )
 
     try:
         result = obj[key]
         return make_response(cmd.get("req_id"), value=encode_value(result, session_id))
     except Exception as e:
-        return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e)})
+        return make_response(
+            cmd.get("req_id"), 
+            error={
+                "code": "PythonException", 
+                "py_type": type(e).__name__, 
+                "message": str(e),
+                "traceback": traceback.format_exc()
+            },
+            op_info=op_info
+        )
 
 def handle_slice(cmd):
     session_id = cmd["session_id"]
     target_id = cmd["target"]
+    start_raw = cmd["start"]
+    stop_raw = cmd["stop"]
+    step_raw = cmd["step"]
+    
+    # オペレーション情報を先に構築
+    op_info = {
+        "cmd": "slice",
+        "target": target_id,
+        "start": start_raw,
+        "stop": stop_raw,
+        "step": step_raw
+    }
     
     def decode_slice_arg(arg):
         if arg["kind"] == "value":
@@ -305,19 +442,31 @@ def handle_slice(cmd):
             raise ValueError(f"Invalid slice arg kind: {arg['kind']}")
 
     try:
-        start = decode_slice_arg(cmd["start"])
-        stop = decode_slice_arg(cmd["stop"])
-        step = decode_slice_arg(cmd["step"])
+        start = decode_slice_arg(start_raw)
+        stop = decode_slice_arg(stop_raw)
+        step = decode_slice_arg(step_raw)
         
         if step == 0:
-             return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": "ValueError", "message": "slice step cannot be zero"})
+            return make_response(
+                cmd.get("req_id"), 
+                error={"code": "PythonException", "py_type": "ValueError", "message": "slice step cannot be zero"},
+                op_info=op_info
+            )
 
     except Exception as e:
-         return make_response(cmd.get("req_id"), error={"code": "TypeMismatch", "message": str(e)})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "TypeMismatch", "message": str(e)},
+            op_info=op_info
+        )
 
     session = get_session(session_id)
     if target_id not in session["objects"]:
-        return make_response(cmd.get("req_id"), error={"code": "StaleHandle", "message": f"Handle {target_id} not found"})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "StaleHandle", "message": f"Handle {target_id} not found"},
+            op_info=op_info
+        )
     
     obj = session["objects"][target_id]
     try:
@@ -325,15 +474,29 @@ def handle_slice(cmd):
         result = obj[sl]
         return make_response(cmd.get("req_id"), value=encode_value(result, session_id))
     except Exception as e:
-         return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e)})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e)},
+            op_info=op_info
+        )
 
 def handle_iter(cmd):
     session_id = cmd["session_id"]
     target_id = cmd["target"]
     
+    # オペレーション情報を先に構築
+    op_info = {
+        "cmd": "iter",
+        "target": target_id
+    }
+    
     session = get_session(session_id)
     if target_id not in session["objects"]:
-        return make_response(cmd.get("req_id"), error={"code": "StaleHandle", "message": f"Handle {target_id} not found"})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "StaleHandle", "message": f"Handle {target_id} not found"},
+            op_info=op_info
+        )
     
     obj = session["objects"][target_id]
     try:
@@ -350,16 +513,31 @@ def handle_iter(cmd):
             "session_id": session_id
         })
     except Exception as e:
-        return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e)})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e)},
+            op_info=op_info
+        )
 
 def handle_iter_next_batch(cmd):
     session_id = cmd["session_id"]
     target_id = cmd["target"]
     batch_size = cmd.get("batch_size", 1000)
     
+    # オペレーション情報を先に構築
+    op_info = {
+        "cmd": "iter_next_batch",
+        "target": target_id,
+        "batch_size": batch_size
+    }
+    
     session = get_session(session_id)
     if target_id not in session["objects"]:
-        return make_response(cmd.get("req_id"), error={"code": "StaleHandle", "message": f"Handle {target_id} not found"})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "StaleHandle", "message": f"Handle {target_id} not found"},
+            op_info=op_info
+        )
     
     it = session["objects"][target_id]
     items = []
@@ -371,7 +549,11 @@ def handle_iter_next_batch(cmd):
     except StopIteration:
         done = True
     except Exception as e:
-        return make_response(cmd.get("req_id"), error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e)})
+        return make_response(
+            cmd.get("req_id"), 
+            error={"code": "PythonException", "py_type": type(e).__name__, "message": str(e)},
+            op_info=op_info
+        )
     
     return make_response(cmd.get("req_id"), value={"kind": "list", "items": items}, meta={"done": done})
 

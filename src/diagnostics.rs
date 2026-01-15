@@ -482,6 +482,50 @@ pub fn scan_unsupported_syntax(
                 ));
             }
         }
+        if registry.is_enabled(UF::BuiltinObject) {
+            if let Some(col) = find_builtin_call(&line, "object") {
+                let span = span_for_line(file, line_no, col + 1, "object".len());
+                diags.add(error_diag(
+                    "TNK-UNSUPPORTED-SYNTAX",
+                    "unsupported builtin: object()".to_string(),
+                    span,
+                    "parse",
+                ));
+            }
+        }
+        if registry.is_enabled(UF::BuiltinCompile) {
+            if let Some(col) = find_builtin_call(&line, "compile") {
+                let span = span_for_line(file, line_no, col + 1, "compile".len());
+                diags.add(error_diag(
+                    "TNK-UNSUPPORTED-SYNTAX",
+                    "unsupported builtin: compile()".to_string(),
+                    span,
+                    "parse",
+                ));
+            }
+        }
+        if registry.is_enabled(UF::BuiltinMemoryview) {
+            if let Some(col) = find_builtin_call(&line, "memoryview") {
+                let span = span_for_line(file, line_no, col + 1, "memoryview".len());
+                diags.add(error_diag(
+                    "TNK-UNSUPPORTED-SYNTAX",
+                    "unsupported builtin: memoryview()".to_string(),
+                    span,
+                    "parse",
+                ));
+            }
+        }
+        if registry.is_enabled(UF::BuiltinBytearray) {
+            if let Some(col) = find_builtin_call(&line, "bytearray") {
+                let span = span_for_line(file, line_no, col + 1, "bytearray".len());
+                diags.add(error_diag(
+                    "TNK-UNSUPPORTED-SYNTAX",
+                    "unsupported builtin: bytearray()".to_string(),
+                    span,
+                    "parse",
+                ));
+            }
+        }
 
         if registry.is_enabled(UF::MultipleInheritance) && line.trim_start().starts_with("class ") {
             if let Some(paren_start) = line.find('(') {
